@@ -91,9 +91,20 @@
 - 目标/假设：K-CMS 的三种合并变体都因“有损合并/聚类”在 final Top1 上落后基线。改为不合并的结构：所有任务共享同一个 A（任务 0 后冻结），每个任务只训练 B 和 scale；最终模型可以精确等价地保存为“共享 A + 求和 B”。LoRA 总量从 3.686M 降到 0.369M（减少 90%），远超 40% 验收线；由于每个任务仍有专属 B，期望 final Top1 不落后于 SD-LoRA。
 - 改动：新增 `backbone/sa_lora.py`、`models/sa_sdlora.py`、factory 注册、两个配置与队列脚本；共享 A 用固定正交初始化（任务 0 后可选择继续训练 A，当前实验先冻结）。
 - 理论依据：SA-LoRA（共享 A 解耦低秩适应，2026）观察到 down-projection A 是任务无关/可迁移的，up-projection B 保留任务差异；LoRA 任务向量可加性（Task Arithmetic 系列）保证共享 A 下 B 可直接求和。SLAO（Merge before Forget）也利用 LoRA 的 A/B 不对称性。
-- 结果（C100 已完成，INR 运行中）：
+- 结果：
   - C100 seed1993：final Top1=86.53，AvgAcc=91.70，Forgetting=7.47。
-  - 对照：SD-LoRA 基线 86.89 / 91.44 / 5.58。
+  - ImageNet-R seed1995：final Top1=77.59，AvgAcc=82.82，Forgetting=6.16。
+  - 对照：C100 基线 86.89 / 91.44 / 5.58；INR 基线 78.76 / 83.13 / 5.61。
   - 合并后 LoRA 参数：368,640（共享 A 24×7680 + 求和 B 24×7680），为基线 3,686,400 的 10%（减少 90%）。
-- 分析：Shared-A 的 AvgAcc 明显超过基线（+0.26），前 8 个任务全程领先（Task 8 后 +0.38），但 Task 9/10 的 final Top1（87.02/86.53）略低于基线（87.12/86.89），遗忘也偏高。说明 r=10 的共享子空间容量可能仍偏小，或 A 只在 Task 0 训练不够。
-- 下一步：INR 完成后，若同样接近但不达标，运行 EXP-005：Shared-A rank 10→16（合并参数 589,824，仍减 84%），并考虑 A 跨任务持续训练。
+- 分析：Shared-A 在 C100 上 AvgAcc 超过基线（+0.26）但 final Top1 差 0.36；在 INR 上 final Top1 差 1.17、AvgAcc 差 0.31。r=10 共享子空间容量不足，尤其对 ImageNet-R。
+- 下一步：运行 EXP-005：Shared-A rank 10→20（合并参数 737,280，仍减 80%），A 仍在 Task 0 训练后冻结。
+
+## EXP-005 Shared-A 提高秩（rank 20，参数仍减 80%）
+
+- 日期：2026-08-05
+- 状态：运行中
+- 目标/假设：EXP-004 证明共享 A 方向平均精度可行，但 r=10 容量不够（INR -1.17）。把 rank 提高到 20，最终合并参数 737,280 = 基线 20%（减少 80%），仍远超 40% 验收线；期望 final Top1 在两个数据集上追平/超过基线。
+- 改动：仅新增配置（无代码改动）：`exps/sa_sdlora_r20_c100_seed1993.json`、`exps/sa_sdlora_r20_inr_seed1995.json`。
+- 理论依据：LoRA 秩决定适配子空间容量；SD-LoRA 论文及 SA-LoRA 均指出秩与容量-遗忘权衡直接相关。
+- 结果：待运行。
+- 分析：待运行后填写。

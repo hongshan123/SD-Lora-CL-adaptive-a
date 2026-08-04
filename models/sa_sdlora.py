@@ -22,6 +22,7 @@ class Learner(SDLoraLearner):
             filepath=self.args["filepath"],
             cur_task_index=self._cur_task,
             shared_a_orthogonal=self.args.get("sa_shared_a_orthogonal", True),
+            train_a_all_tasks=self.args.get("sa_train_a_all_tasks", False),
             delete_per_task_files=self.args.get("sa_delete_per_task_files", False),
         )
         model.out_dim = 768

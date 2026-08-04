@@ -114,6 +114,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         index=True,
         cur_task_index=None,
         shared_a_orthogonal=True,
+        train_a_all_tasks=False,
         delete_per_task_files=False,
     ):
         super().__init__()
@@ -122,6 +123,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.save_file = filepath
         self.increment = increment
         self.shared_a_orthogonal = bool(shared_a_orthogonal)
+        self.train_a_all_tasks = bool(train_a_all_tasks)
         self.delete_per_task_files = bool(delete_per_task_files)
         self.base_vit = vit_model
 
@@ -190,11 +192,14 @@ class SharedALoRA_ViT_timm(nn.Module):
             self.w_As.extend([a_q, a_v])
             self.w_Bs.extend([b_q, b_v])
 
-            if self.task_id > 0:
+            if self.task_id > 0 and not self.train_a_all_tasks:
                 a_q.weight.data.copy_(shared_a[offset].to(a_q.weight.dtype))
                 a_v.weight.data.copy_(shared_a[offset + 1].to(a_v.weight.dtype))
                 a_q.weight.requires_grad_(False)
                 a_v.weight.requires_grad_(False)
+            elif self.task_id > 0:
+                a_q.weight.data.copy_(shared_a[offset].to(a_q.weight.dtype))
+                a_v.weight.data.copy_(shared_a[offset + 1].to(a_v.weight.dtype))
             elif self.shared_a_orthogonal:
                 a_q.weight.data.copy_(
                     _fixed_orthogonal_down(

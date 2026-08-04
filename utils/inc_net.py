@@ -35,6 +35,19 @@ def get_backbone(args, pretrained=False):
                 filepath=args["filepath"],
                 cur_task_index=0,
             )
+        elif routed_model_name == "sa_sdlora":
+            from backbone.sa_lora import SharedALoRA_ViT_timm
+
+            model = SharedALoRA_ViT_timm(
+                vit_model=model.eval(),
+                r=args.get("lora_rank", 10),
+                num_classes=10,
+                increment=args["increment"],
+                filepath=args["filepath"],
+                cur_task_index=0,
+                shared_a_orthogonal=args.get("sa_shared_a_orthogonal", True),
+                delete_per_task_files=args.get("sa_delete_per_task_files", False),
+            )
         else:
             model = LoRA_ViT_timm(
                 vit_model=model.eval(),

@@ -300,9 +300,9 @@ class SharedALoRA_ViT_timm(nn.Module):
             norm_a = torch.norm(a_w)
             for task_id in range(current_task):
                 b_i = self.saved_b_tasks[task_id][idx].cpu().float()
-                s_i = self.wrapped_param_prev[task_id].param.detach().float()
+                s_i = self.wrapped_param_prev[task_id].param.detach().cpu().float()
                 total = total + s_i * b_i / (norm_a * torch.norm(b_i) + 1e-8)
-            s_cur = self.wrapped_param[0].param.detach().float()
+            s_cur = self.wrapped_param[0].param.detach().cpu().float()
             total = total + s_cur * w_b.weight.detach().cpu().float()
             merged_b.append(total.cpu())
         torch.save(

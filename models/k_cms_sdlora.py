@@ -118,6 +118,9 @@ class Learner(SDLoraLearner):
             k_cms_shared_freeze_down_after_task0=self.args.get(
                 "k_cms_shared_freeze_down_after_task0", False
             ),
+            k_cms_delete_consolidated_files=self.args.get(
+                "k_cms_delete_consolidated_files", False
+            ),
             cms_scale_merge_mode=self.args.get("cms_scale_merge_mode", "separate"),
         )
         model.out_dim = 768

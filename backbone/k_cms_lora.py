@@ -326,6 +326,7 @@ class KCMSLoRA_ViT_timm(nn.Module):
         k_cms_shared_lora_layers=0,
         k_cms_shared_fixed_orthogonal_down=True,
         k_cms_shared_freeze_down_after_task0=False,
+        k_cms_delete_consolidated_files=False,
         cms_scale_merge_mode="separate",
     ):
         super(KCMSLoRA_ViT_timm, self).__init__()
@@ -360,6 +361,9 @@ class KCMSLoRA_ViT_timm(nn.Module):
         )
         self.k_cms_shared_freeze_down_after_task0 = bool(
             k_cms_shared_freeze_down_after_task0
+        )
+        self.k_cms_delete_consolidated_files = bool(
+            k_cms_delete_consolidated_files
         )
         self.cms_scale_merge_mode = cms_scale_merge_mode
         self.save_file = filepath
@@ -1143,6 +1147,16 @@ class KCMSLoRA_ViT_timm(nn.Module):
             },
             _join_path(filename, "k_cms_state.pt"),
         )
+        if self.k_cms_delete_consolidated_files:
+            for task_id in range(start, cutoff):
+                if task_id in deferred_tasks:
+                    continue
+                for suffix in ("lora_w_a_", "lora_w_b_"):
+                    path = _join_path(
+                        filename, "{}{}.pt".format(suffix, task_id)
+                    )
+                    if os.path.exists(path):
+                        os.remove(path)
         print(
             "[K-CMS-SDLoRA] Consolidated tasks {}-{} into {} clusters.".format(
                 start, cutoff - 1, len(clusters)

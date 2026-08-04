@@ -616,7 +616,7 @@ class KCMSLoRA_ViT_timm(nn.Module):
 
     def _cluster_scale_tensor(self, cluster, default_scale):
         num_lora_blocks = self._num_lora_blocks()
-        if self.cms_scale_merge_mode != "separate":
+        if self.cms_scale_merge_mode == "effective_delta":
             base = torch.ones(num_lora_blocks, dtype=torch.float32)
         else:
             base_value = cluster.get("scale", torch.tensor([default_scale]))
@@ -654,7 +654,7 @@ class KCMSLoRA_ViT_timm(nn.Module):
         old_scale=1.0,
         new_scale=1.0,
     ):
-        if self.cms_scale_merge_mode == "effective_delta":
+        if self.cms_scale_merge_mode in ("effective_delta", "scale_weighted"):
             new_delta = self._task_scale_for_layer(new_scale, lora_index) * (
                 new_b.float() @ new_a.float()
             )
@@ -681,7 +681,7 @@ class KCMSLoRA_ViT_timm(nn.Module):
                 ref_a=low_a if low_a is not None else None,
             )
 
-        if self.cms_scale_merge_mode == "effective_delta":
+        if self.cms_scale_merge_mode in ("effective_delta", "scale_weighted"):
             return _delta_to_lora(merged_delta, self.cms_low_rank)
         if low_a is None or low_b is None:
             return _svd_merge(None, None, new_a, new_b, self.cms_low_rank)
@@ -728,7 +728,7 @@ class KCMSLoRA_ViT_timm(nn.Module):
             "tasks": [task_id],
             "scale": (
                 self._initial_cluster_scale(scale)
-                if self.cms_scale_merge_mode == "separate"
+                if self.cms_scale_merge_mode != "effective_delta"
                 else torch.Tensor([1.0])
             ),
         }

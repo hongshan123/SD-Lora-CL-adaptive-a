@@ -46,6 +46,9 @@
 - 改动：`backbone/k_cms_lora.py` 新增 `cms_scale_merge_mode="scale_weighted"`（方向用 scale 加权，幅度仍存于 cluster scale）；新增两个配置与队列脚本。
 - 配置：`exps/k4_anchor_scale_weighted_c100.json`（C100 seed1993）、`exps/seed_1995_k4_bal002_scale_weighted_inr.json`（INR seed1995）。
 - 理论依据：SD-LoRA（ICLR 2025）明确将 LoRA 分解为幅度（scale）与方向（归一化低秩增量）分别学习；合并时忽略幅度会丢失任务重要性信息。文献检索将在本实验分析后补充。
-- 结果：待运行。
-- 分析：待运行后填写。
-- 下一步：若提升明显，则完成验收复跑；若无效，尝试 magnitude-norm 修正或 rank/共享方向。
+- 结果（C100 已完成，INR 运行中）：
+  - C100 seed1993：final Top1=86.29，AvgAcc=91.55，Forgetting=5.96。
+  - 对照：SD-LoRA 基线 86.89 / 91.44 / 5.58；历史 separate k4_anchor 86.62 / 91.57 / 5.62。
+- 分析：scale_weighted 在 C100 上 final Top1 比基线和历史 separate 都低，AvgAcc 略高于基线但低于历史 separate；方向加权没有带来收益，反而遗忘变大。可能原因：(1) scale 是补偿归一化的幅度，不代表任务重要性；(2) 后续任务的 low_scale 会继续学习，合并时方向的选择影响有限；(3) 真正瓶颈是固定 rank=10 聚类里任务方向随合并数量增加被压缩（rank collapse）。
+- 文献对照：CT-Merging（arXiv:2607.20561）指出合并时系数幅度需要显式处理；Subspace-Boosted Model Merging（arXiv:2506.16506）证明 Task Arithmetic 类合并随专家数增加发生 rank collapse。本实验结果更支持“容量/rank 是主要瓶颈，幅度加权是次要因素”。
+- 下一步：INR 结果出来后，若同样未提升，改为“提高聚类容量但保持 ≥40% 参数缩减”：k=4、cms_low_rank=15（参数 2.212M，恰为基线 60%），合并模式回退 separate。

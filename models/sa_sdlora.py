@@ -36,3 +36,5 @@ class Learner(SDLoraLearner):
                 "[SharedA-SDLoRA] saved merged LoRA after task %d",
                 self._cur_task,
             )
+            if self._cur_task == data_manager.nb_tasks - 1:
+                raw_network.backbone.cleanup_per_task_files(self.args["filepath"])

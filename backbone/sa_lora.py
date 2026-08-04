@@ -276,7 +276,12 @@ class SharedALoRA_ViT_timm(nn.Module):
             _join_path(filename, SA_STATE_FILENAME),
         )
         self.save_merged_lora(filename)
-        if self.delete_per_task_files:
+
+    def cleanup_per_task_files(self, filename: str) -> None:
+        """Delete per-task B files after the final task; merged LoRA remains."""
+        if not self.delete_per_task_files:
+            return
+        for task_id in range(self.task_id):
             path = _join_path(filename, "sa_lora_w_b_{}.pt".format(task_id))
             if os.path.exists(path):
                 os.remove(path)

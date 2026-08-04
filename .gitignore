@@ -1,0 +1,21 @@
+# datasets and generated artifacts
+data/
+workspace/
+logs/
+*.log
+*.tar.gz
+
+# checkpoint / experiment output directories
+CF100_*/
+ImageNetR_*/
+seed_1995_*/
+.runtime_*/
+
+# python caches
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# misc
+Untitled
+.DS_Store

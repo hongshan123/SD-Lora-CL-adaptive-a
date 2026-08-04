@@ -1,0 +1,60 @@
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,1,2,3 \
+torchrun --standalone --nproc_per_node=4 main.py --config=./exps/sdlora_c100.json
+
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,1,2,3 \
+torchrun --standalone --nproc_per_node=4 main.py --config=./exps/cms_sdlora_c100.json
+
+
+#三个不同的merge策略在CMS-sdlora上的效果测试
+cd /home/zhaoyang/SD-Lora-CL
+
+nohup bash -lc '
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,3 torchrun --standalone --nproc_per_node=2 main.py --config=./exps/cms_sdlora_decouple_c100.json > cms_sdlora_decouple_c100.log 2>&1
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,3 torchrun --standalone --nproc_per_node=2 main.py --config=./exps/cms_sdlora_orthogonalize_c100.json > cms_sdlora_orthogonalize_c100.log 2>&1
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,3 torchrun --standalone --nproc_per_node=2 main.py --config=./exps/cms_sdlora_do_c100.json > cms_sdlora_do_c100.log 2>&1
+' > cms_do_ablation_queue.log 2>&1 &
+
+
+#加入kmerge++策略后的三个实验
+cd /home/zhaoyang/SD-Lora-CL
+
+nohup bash -lc '
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,3 torchrun --standalone --nproc_per_node=2 main.py --config=./exps/k_cms_sdlora_kmergepp_s00_c100.json > k_cms_kmergepp_s00_c100.log 2>&1
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,3 torchrun --standalone --nproc_per_node=2 main.py --config=./exps/k_cms_sdlora_kmergepp_s02_c100.json > k_cms_kmergepp_s02_c100.log 2>&1
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,3 torchrun --standalone --nproc_per_node=2 main.py --config=./exps/k_cms_sdlora_kmergepp_adaptive_c100.json > k_cms_kmergepp_adaptive_c100.log 2>&1
+' > k_cms_kmergepp_queue.log 2>&1 &
+
+
+
+#对于不同lora前的缩放系数，放入lora后再融合模型
+cd /home/zhaoyang/SD-Lora-CL
+
+nohup bash -lc '
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nproc_per_node=4 main.py --config=./exps/cms_sdlora_effective_delta_c100.json > cms_sdlora_effective_delta_c100.log 2>&1
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nproc_per_node=4 main.py --config=./exps/k_cms_sdlora_effective_delta_c100.json > k_cms_sdlora_effective_delta_c100.log 2>&1
+' > effective_delta_queue.log 2>&1 &
+
+
+nohup bash -lc '
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nproc_per_node=4 main.py --config=./exps/k_cms_sdlora_effective_delta_c100.json > k_cms_sdlora_effective_delta_c100.log 2>&1
+' > effective_delta_queue.log 2>&1 &
+
+
+
+cd /home/zhaoyang/SD-Lora-CL
+
+nohup bash -lc 'HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nproc_per_node=4 main.py --config=./exps/k_cms_sdlora_kmergepp_s02_c100.json > k_cms_kmergepp_s02_c100_recent=0_k=4.log 2>&1' &
+
+
+
+
+
+
+
+cd /home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL/backbone
+
+nohup bash -lc '
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nproc_per_node=4 main.py --config=./exps/seed_1995_k3_cms_sd.json > seed_1995_k3_inr.log 2>&1
+
+HF_ENDPOINT=https://hf-mirror.com CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nproc_per_node=4 main.py --config=./exps/seed_1995_k4_cms_sd.json > seed_1995_k4_inr.log 2>&1
+' > imagenetr_cms_kcms_queue_seed1995.log 2>&1 &

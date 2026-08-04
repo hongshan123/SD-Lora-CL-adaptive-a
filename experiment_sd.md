@@ -77,8 +77,12 @@
 - 目标/假设：EXP-001/002 的共性是 final 任务（8-10）下滑；保留最近 2 个任务的显式 LoRA（不合并进簇），旧 8 个任务进入 4 个聚类。参数 = 2×368,640 + 4×368,640 = 2.212M = 基线 60%，仍满足 ≥40% 缩减。期望 final Top1 ≥ 基线。
 - 改动：仅新增配置（无代码改动）：`exps/k4_anchor_recent2_c100.json`、`exps/seed_1995_k4_bal002_recent2_inr.json`。
 - 理论依据：SD-LoRA/K-CMS 原始设计即“最近任务残差 + 旧任务压缩记忆”（recent tasks 保留塑性）；Subspace-Boosted 也提示合并任务越多信息损失越大，减少合并数量应降低干扰。
-- 结果：待运行。
-- 分析：待运行后填写。
+- 结果：
+  - C100 seed1993：final Top1=86.39，AvgAcc=91.32，Forgetting=6.37。
+  - ImageNet-R seed1995：final Top1=78.19，AvgAcc=82.88，Forgetting=6.53。
+  - 对照：C100 基线 86.89 / 91.44 / 5.58；INR 基线 78.76 / 83.13 / 5.61。
+- 分析：recent=2 没有解决 final Top1 缺口（C100 -0.50，INR -0.57），遗忘反而变差。结合 EXP-001/002，K-CMS 有损合并路线的三种结构变体全部未达标；共性问题是聚类/合并后的低秩表示无法完全复现逐任务 LoRA 行为。
+- 结论：放弃 K-CMS 有损合并方向，转入 EXP-004 共享 A 结构。
 
 ## EXP-004 Shared-A SD-LoRA（共享 A + 每任务 B，参数降至基线 ~10%）
 

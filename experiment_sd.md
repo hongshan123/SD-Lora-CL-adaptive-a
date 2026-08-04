@@ -79,3 +79,13 @@
 - 理论依据：SD-LoRA/K-CMS 原始设计即“最近任务残差 + 旧任务压缩记忆”（recent tasks 保留塑性）；Subspace-Boosted 也提示合并任务越多信息损失越大，减少合并数量应降低干扰。
 - 结果：待运行。
 - 分析：待运行后填写。
+
+## EXP-004 Shared-A SD-LoRA（共享 A + 每任务 B，参数降至基线 ~10%）
+
+- 日期：2026-08-05
+- 状态：代码完成、冒烟测试通过；待 EXP-003 结束后运行
+- 目标/假设：K-CMS 的三种合并变体都因“有损合并/聚类”在 final Top1 上落后基线。改为不合并的结构：所有任务共享同一个 A（任务 0 后冻结），每个任务只训练 B 和 scale；最终模型可以精确等价地保存为“共享 A + 求和 B”。LoRA 总量从 3.686M 降到 0.369M（减少 90%），远超 40% 验收线；由于每个任务仍有专属 B，期望 final Top1 不落后于 SD-LoRA。
+- 改动：新增 `backbone/sa_lora.py`、`models/sa_sdlora.py`、factory 注册、两个配置与队列脚本；共享 A 用固定正交初始化（任务 0 后可选择继续训练 A，当前实验先冻结）。
+- 理论依据：SA-LoRA（共享 A 解耦低秩适应，2026）观察到 down-projection A 是任务无关/可迁移的，up-projection B 保留任务差异；LoRA 任务向量可加性（Task Arithmetic 系列）保证共享 A 下 B 可直接求和。SLAO（Merge before Forget）也利用 LoRA 的 A/B 不对称性。
+- 结果：待运行。
+- 分析：待运行后填写。

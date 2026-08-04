@@ -20,6 +20,8 @@ def get_model(model_name, args):
         from models.finetune import Learner
     elif name == "sdlora":
         from models.sdlora import Learner
+    elif name == "sa_sdlora":
+        from models.sa_sdlora import Learner
     elif name == "proto_routed_sdlora":
         from models.proto_routed_sdlora import Learner
     elif name == "class_proto_routed_sdlora":

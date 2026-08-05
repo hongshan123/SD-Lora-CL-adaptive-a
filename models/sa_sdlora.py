@@ -10,7 +10,9 @@ from torch.utils.data import DataLoader
 
 from backbone.lrpt import (
     apply_transport,
+    bias_relative_error,
     fit_low_rank_transport,
+    fit_rank_residuals,
     transport_prediction_error,
 )
 from backbone.sa_lora import SharedALoRA_ViT_timm
@@ -58,6 +60,7 @@ class Learner(SDLoraLearner):
             )
         self._lrpt_rank = int(args.get("lrpt_rank", args.get("lora_rank", 10)))
         self._lrpt_reg = float(args.get("lrpt_reg", 1e-2))
+        self._lrpt_diagnostics = bool(args.get("lrpt_diagnostics", True))
         self._lrpt_pre_features = None
 
     def update_network(self, index=True, task_index=None):
@@ -130,9 +133,12 @@ class Learner(SDLoraLearner):
                 )
                 raw_network.backbone.cleanup_per_task_files(self.args["filepath"])
 
-    def _extract_current_task_features(self, data_manager, task_index=None):
-        """Extract L2-normalized features of the current task's training data
-        (test transform, no augmentation) with the current model state."""
+    def _extract_current_task_features(
+        self, data_manager, task_index=None, normalize=False
+    ):
+        """Extract features of the current task's training data (test transform,
+        no augmentation) with the current model state. By default returns raw
+        features; pass normalize=True for the L2-normalized classifier space."""
         if task_index is None:
             task_index = self._cur_task
         cur_classes = np.arange(
@@ -156,18 +162,20 @@ class Learner(SDLoraLearner):
             for _, inputs, _ in loader:
                 inputs = inputs.to(self._device, non_blocking=True)
                 feats = raw_network.backbone(inputs)
-                features.append(
-                    F.normalize(feats, p=2, dim=1).detach().cpu()
-                )
+                if normalize:
+                    feats = F.normalize(feats, p=2, dim=1)
+                features.append(feats.detach().cpu())
         return torch.cat(features, dim=0)
 
     def _apply_lrpt_to_old_prototypes(self, data_manager):
         """Fit the low-rank transport from the paired current-task features and
         recursively move all previously stored prototypes into the updated
         feature space. The transport itself is discarded after application."""
-        z_old = self._lrpt_pre_features
-        z_new = self._extract_current_task_features(data_manager)
+        z_old_raw = self._lrpt_pre_features
+        z_new_raw = self._extract_current_task_features(data_manager)
         self._lrpt_pre_features = None
+        z_old = F.normalize(z_old_raw, p=2, dim=1)
+        z_new = F.normalize(z_new_raw, p=2, dim=1)
 
         u, v = fit_low_rank_transport(
             z_old,
@@ -176,6 +184,24 @@ class Learner(SDLoraLearner):
             reg=self._lrpt_reg,
         )
         rel_err, _ = transport_prediction_error(z_old, z_new, u, v)
+        if self._lrpt_diagnostics:
+            diag_norm = fit_rank_residuals(
+                z_old, z_new, (10, 16, 32, 768), reg=self._lrpt_reg
+            )
+            diag_raw = fit_rank_residuals(
+                z_old_raw.to(torch.float32),
+                z_new_raw.to(torch.float32),
+                (10, 16, 32, 768),
+                reg=self._lrpt_reg,
+            )
+            bias_rel = bias_relative_error(z_old, z_new)
+            logging.info(
+                "[SharedA-SDLoRA] LRPT-DIAG task %d norm=%s raw=%s bias_rel=%.4f",
+                self._cur_task,
+                {k: round(v, 4) for k, v in diag_norm.items()},
+                {k: round(v, 4) for k, v in diag_raw.items()},
+                bias_rel,
+            )
         logging.info(
             "[SharedA-SDLoRA] LRPT task %d: rank=%d reg=%.2e relative_drift_error=%.4f",
             self._cur_task,

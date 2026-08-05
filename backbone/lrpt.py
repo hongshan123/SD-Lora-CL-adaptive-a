@@ -95,3 +95,33 @@ def transport_prediction_error(
     rel = float(torch.linalg.norm(residual.double()) / denom)
     frac = float(torch.linalg.norm(pred.double()) / torch.linalg.norm(z_new.double()))
     return rel, frac
+
+
+def fit_rank_residuals(
+    z_old: torch.Tensor,
+    z_new: torch.Tensor,
+    ranks: tuple[int, ...],
+    reg: float = 1e-2,
+) -> dict[int, float]:
+    """Relative drift residual after fitting a rank-r transport for each rank."""
+    out = {}
+    for rank in ranks:
+        if rank <= 0 or rank > z_old.shape[1]:
+            continue
+        u, v = fit_low_rank_transport(z_old, z_new, rank=rank, reg=reg)
+        rel, _ = transport_prediction_error(z_old, z_new, u, v)
+        out[rank] = rel
+    return out
+
+
+def bias_relative_error(
+    z_old: torch.Tensor,
+    z_new: torch.Tensor,
+) -> float:
+    """Relative drift residual after subtracting only the global mean shift."""
+    drift = z_new - z_old
+    denom = torch.linalg.norm(drift.double())
+    if denom <= 0:
+        return 0.0
+    centered = drift - drift.mean(dim=0, keepdim=True)
+    return float(torch.linalg.norm(centered.double()) / denom)

@@ -8,7 +8,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backbone.lrpt import (
     apply_transport,
+    bias_relative_error,
     fit_low_rank_transport,
+    fit_rank_residuals,
     transport_prediction_error,
 )
 
@@ -83,3 +85,18 @@ def test_transport_prediction_error_is_zero_for_exact_fit():
     rel, frac = transport_prediction_error(x, y, u_fit, v_fit)
     assert rel == pytest.approx(0.0, abs=1e-6)
     assert frac == pytest.approx(1.0, abs=1e-6)
+
+
+def test_fit_rank_residuals_decrease_with_rank():
+    x, y, _, _ = _make_paired_features(noise=1e-5)
+    residuals = fit_rank_residuals(x, y, (2, 4, 6), reg=1e-6)
+    assert set(residuals.keys()) == {2, 4, 6}
+    assert residuals[2] > residuals[4] > residuals[6]
+
+
+def test_bias_relative_error_is_between_zero_and_one():
+    x = torch.randn(100, 16)
+    y = x + 0.3 + 0.1 * torch.randn(100, 16)
+    rel = bias_relative_error(x, y)
+    assert 0.0 <= rel <= 1.0
+    assert rel < 1.0

@@ -181,3 +181,10 @@
 - **验证**：用修复后代码重建 EXP-009 INR/C100 的 `sa_merged_lora.pt`；`verify_sa_consistency.py` 固定输入下 feature max diff 9.5e-6 / 2.0e-5，prototype logit max diff 2.7e-7 / 3.0e-7，全部 PASS。参数审计：INR LoRA+原型 2,181,130（59.17%）、C100 2,104,330（57.08%），均 ≤ 2,211,840。
 - **注意**：正在运行的 INR LRPT 进程加载的是修复前代码，跑完后需用修复后代码重建 merged 再验证。
 - **下一步**：等待 INR LRPT 完成；解析 final Top1/AvgAcc/Forgetting；若达标启动 C100。
+
+## 2026-08-05 23:35-23:45 INR v1 结果与 LRPT 起始任务缺口
+
+- **观察**：v1 INR seed1995 完成：final Top1=79.63（基线 78.76、EXP-009 79.34）、AvgAcc=83.08（EXP-009 82.47）、Forgetting=6.52（EXP-009 7.26）；离线原型复算 79.63 一致；参数 2,181,130 ≤ 预算。LRPT 每任务 relative_drift_error ≈ 0.89–0.93。
+- **判断**：指标方向正确（AvgAcc 提高 0.61、Forgetting 改善 0.74），但日志审计发现 `_cur_task >= 1` 导致 task0→task1 的第一次漂移未补偿：LRPT 从 task2 才开始（“LRPT task 2”为第一条日志），task1 的旧原型在 task1 评估期未更新。这不满足“递归更新全部旧原型”的设计，v1 不能作为验收。
+- **修复**：捕获条件改为 `_cur_task >= 0`（task1 前 `_cur_task=0` 捕获 state0→state1 配对特征）；配置改用 v2 输出目录避免旧产物污染；commit `306eb74`。
+- **下一步**：重跑 INR v2（23:40 启动）；确认日志出现 “LRPT task 1” 后再判门槛；达标后跑 C100 v2。

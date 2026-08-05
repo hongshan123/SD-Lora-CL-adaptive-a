@@ -188,3 +188,11 @@
 - **判断**：指标方向正确（AvgAcc 提高 0.61、Forgetting 改善 0.74），但日志审计发现 `_cur_task >= 1` 导致 task0→task1 的第一次漂移未补偿：LRPT 从 task2 才开始（“LRPT task 2”为第一条日志），task1 的旧原型在 task1 评估期未更新。这不满足“递归更新全部旧原型”的设计，v1 不能作为验收。
 - **修复**：捕获条件改为 `_cur_task >= 0`（task1 前 `_cur_task=0` 捕获 state0→state1 配对特征）；配置改用 v2 输出目录避免旧产物污染；commit `306eb74`。
 - **下一步**：重跑 INR v2（23:40 启动）；确认日志出现 “LRPT task 1” 后再判门槛；达标后跑 C100 v2。
+
+## 2026-08-06 00:17-00:30 INR v2 达标与离线审计
+
+- **观察**：INR v2 完成，LRPT 从 task1 起共应用 9 次：final Top1=79.24（基线 78.76，EXP-009 79.34 回退 0.10）、AvgAcc=83.03（EXP-009 +0.56）、Forgetting=6.31（EXP-009 改善 0.95）。门槛判定：Final 两项均过；Forgetting 差 0.047 未达 6.26，但 AvgAcc 83.03 ≥ 82.97，**INR 达标**。
+- **判断**：v1（缺第一次漂移补偿）final 79.63 更高，但 v2 才满足“递归更新全部旧原型”的定义；v2 的 task1 提升明显（87.06 vs 85.62），说明第一次补偿有效，最终序列变化符合预期。
+- **离线审计**：原型+merged 复算 79.24 与日志一致；consistency PASS；参数 2,181,130 ≤ 2,211,840；单卡 batch32 推理 FLOPs 1.129e12、吞吐 414.8 img/s、峰值显存 577.7 MiB。
+- **风险**：INR 通过但余量薄（AvgAcc +0.06、Forgetting 差 0.047）；C100 需 Final ≥88.22 且 Forgetting ≤7.08 或 AvgAcc ≥92.57，是更严格的确认。
+- **下一步**：启动 C100 v2（00:30 左右）；期间准备多 seed 队列与消融（普通 transport / 无 LRPT / 无 prototype）。

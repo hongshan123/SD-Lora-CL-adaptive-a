@@ -211,3 +211,9 @@
   - affine 比 plain rank10/16 都好（92.42→92.45、7.63→7.37），但仍差一点。
 - 分析：affine 提升拟合（residual 0.83 vs 0.88）与次要指标，但未达门槛。下一步在类均值空间诊断 transport 拟合质量（原型迁移真正关心类中心），并测 affine rank10（C100 上 plain rank10 是最好基线）。
 - 下一步：INR affine rank10 先跑（含类均值诊断）；若达标再跑 C100 affine rank10；随后补 full-rank 消融。
+- 结果（INR affine rank10，达标）：final Top1=79.29、AvgAcc=83.00、Forgetting=6.61（Final ≥79.14 ✓、AvgAcc ≥82.97 ✓）。
+- 结果（classmean LRPT：类均值空间 affine rank16+bias；INR 未达标）：
+  - final Top1=78.84（≥78.76 ✓，但相对 EXP-009 回退 0.50 > 0.20 ✗）、AvgAcc=82.65（门槛 82.97 ✗）、Forgetting=7.07。
+  - 拟合 residual 大幅下降（classmean rank16 ≈ 0.12–0.16 vs sample ≈ 0.83–0.86），但指标反而变差：对当前类均值过拟合，transport 不迁移到旧类原型。
+- 结论：类均值拟合是错误方向；回到样本空间 affine LRPT。当前最优 C100 候选是 affine rank10（plain rank10 v2 92.42/7.63 + bias 预期再提升）。
+- 下一步：C100 affine rank10 运行中；若仍不过，补 full-rank 消融并评估 LoRA 结构驱动漂移基（E²-LoRA 启发）。

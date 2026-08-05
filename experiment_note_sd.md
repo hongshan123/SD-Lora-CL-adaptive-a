@@ -223,3 +223,10 @@
 - **观察**：C100 affine（rank16+bias）final Top1=88.39、AvgAcc=92.45、Forgetting=7.37；仍差门槛（AvgAcc -0.12、Forgetting -0.29），但比 plain rank10/16 均更好。INR affine 已达标（79.38/83.03/6.79）。
 - **判断**：bias 有正向作用但不足。下一步先做类均值空间诊断（当前 transport 拟合在样本空间，而迁移目标是类原型；类中心拟合可能更直接），并测 affine rank10。
 - **下一步**：INR affine rank10（含类均值诊断）→ C100 affine rank10 → full-rank 消融。
+
+## 2026-08-06 06:22-06:35 classmean LRPT 失败，回到样本空间 affine
+
+- **观察**：INR classmean（类均值 affine rank16+bias）final=78.84、AvgAcc=82.65、Forgetting=7.07，**未过门槛**（Final 相对 EXP-009 回退 0.50、AvgAcc 差 0.32）。虽然 classmean 拟合 residual 仅 0.12–0.16（样本空间 0.83+），但指标全面变差。
+- **判断**：对当前任务类中心过拟合，transport 不迁移到旧类；诊断指标（拟合残差）与最终指标不一致。放弃 classmean 拟合方向。
+- **当前最优**：INR 侧 affine rank10（79.29/83.00/6.61）与 affine rank16（79.38/83.03/6.79）都过；C100 侧 affine rank16 最佳（88.39/92.45/7.37，差门槛 0.12/0.29）。正在跑 C100 affine rank10。
+- **下一步**：若 C100 affine rank10 仍不过，跑 full-rank 消融看上限；同时检索 LoRA 输出漂移基（E²-LoRA）等结构性方案。

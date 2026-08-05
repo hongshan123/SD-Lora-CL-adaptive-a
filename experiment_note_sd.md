@@ -230,3 +230,9 @@
 - **判断**：对当前任务类中心过拟合，transport 不迁移到旧类；诊断指标（拟合残差）与最终指标不一致。放弃 classmean 拟合方向。
 - **当前最优**：INR 侧 affine rank10（79.29/83.00/6.61）与 affine rank16（79.38/83.03/6.79）都过；C100 侧 affine rank16 最佳（88.39/92.45/7.37，差门槛 0.12/0.29）。正在跑 C100 affine rank10。
 - **下一步**：若 C100 affine rank10 仍不过，跑 full-rank 消融看上限；同时检索 LoRA 输出漂移基（E²-LoRA）等结构性方案。
+
+## 2026-08-06 07:32-07:45 C100 affine rank10 接近门槛，引入阻尼
+
+- **观察**：C100 affine rank10 final=88.58、AvgAcc=92.46、Forgetting=7.12，与门槛仅差 0.11/0.04，是目前最优。INR affine rank10 已过（79.29/83.00/6.61）。
+- **判断**：transport 可能轻微过度校正；加入阻尼 λ=0.5（应用时缩放 U,V,b 的补偿量）尝试在保持 final Top1 的同时改善 Forgetting/AvgAcc。
+- **下一步**：INR d05 先跑；达标后 C100 d05。若仍差，考虑 λ=0.75/0.25 或 full-rank 上限消融。

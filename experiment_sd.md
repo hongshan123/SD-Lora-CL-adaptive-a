@@ -217,3 +217,9 @@
   - 拟合 residual 大幅下降（classmean rank16 ≈ 0.12–0.16 vs sample ≈ 0.83–0.86），但指标反而变差：对当前类均值过拟合，transport 不迁移到旧类原型。
 - 结论：类均值拟合是错误方向；回到样本空间 affine LRPT。当前最优 C100 候选是 affine rank10（plain rank10 v2 92.42/7.63 + bias 预期再提升）。
 - 下一步：C100 affine rank10 运行中；若仍不过，补 full-rank 消融并评估 LoRA 结构驱动漂移基（E²-LoRA 启发）。
+- 结果（C100 affine rank10，最接近门槛）：
+  - final Top1=**88.58**（≥86.89 ✓；≥88.22 ✓）
+  - AvgAcc=**92.46**（门槛 92.57 ✗，差 0.11）
+  - Forgetting=**7.12**（门槛 7.08 ✗，差 0.04）
+  - 这是目前 C100 最佳配置（plain rank10 92.42/7.63、affine rank16 92.45/7.37）。
+- 下一步：测试 transport 阻尼 λ=0.5（缩放漂移补偿，减少过度校正）。INR d05 先跑，达标后 C100 d05。

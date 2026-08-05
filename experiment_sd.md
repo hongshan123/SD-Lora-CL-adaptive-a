@@ -188,4 +188,10 @@
   - 每任务 `relative_drift_error` ≈ 0.91–0.96（rank=10，reg=1e-2），即闭式 rank-10 transport 在 1-epoch 训练下只解释约 4–9% 的漂移范数；正式 20-epoch 训练是否改善需看完整实验。
 - 分析：初版实现冒烟中发现末任务 `_extract_current_task_features` 的 task_index 越界（修复为默认当前任务、训练前显式传 `_cur_task+1`）；修复后全流程通过。v1 完整运行后又发现 `_cur_task >= 1` 守卫把第一次漂移（task0→task1）跳过：task1 的 pre-update 捕获条件应为 `>= 0`，否则旧原型在 task1 期间未补偿、且 task2 的 transport 从 state1→state2 无法补回 state0→state1。已修复（commit `306eb74`）并重跑 INR v2。
 - 独立复验（v2）：离线脚本用存储原型 + merged 骨干复算 final Top1=79.24，与训练日志一致；`verify_sa_consistency.py` PASS（feature diff 1.1e-5，prototype logit diff 2.8e-7）；参数量 2,181,130（59.17%）≤ 预算 2,211,840；merged 推理 FLOPs 1.129e12/batch32、吞吐 414.8 img/s、峰值显存 577.7 MiB（单卡 batch32）。
-- 下一步：INR 单数据集达标，启动 CIFAR-100 seed1993 v2；门槛 C100 final Top1 ≥ 86.89 且 ≥ 88.22（相对 EXP-009 88.42 回退 ≤0.20），Forgetting ≤ 7.08 或 AvgAcc ≥ 92.57。
+- 结果（CIFAR-100 seed1993 v2，完成但未达第二轮门槛）：
+  - final Top1=**88.43**（基线 86.89 ✓；EXP-009 88.42，+0.01，回退 ≤0.20 ✓）
+  - AvgAcc=**92.42**（EXP-009 92.07，+0.35；门槛 92.57 ✗，差 0.15）
+  - Forgetting=**7.63**（EXP-009 8.08，改善 0.45；门槛 ≤7.08 ✗）
+  - 曲线 [98.3, 96.3, 95.2, 93.92, 92.86, 91.35, 91.23, 88.72, 87.92, 88.43]
+- 分析（C100 未过）：LRPT 每任务 relative_drift_error ≈ 0.87–0.91，rank-10 transport 只解释约 9–13% 的漂移范数；INR 侧 AvgAcc 提升 +0.56 勉强过线，C100 提升 +0.35 不足。Final Top1 基本持平（+0.01），说明 LRPT 对最终任务影响小，瓶颈在旧原型漂移补偿容量。
+- 下一步：LRPT rank 10 → 16（预算口径允许：U,V 任务内驻留、应用后丢弃；若持久化 24,576 仍 ≤ 剩余 30,710）。先跑 INR rank16 确认不伤 INR，再跑 C100 rank16；同时可测 full-rank 普通 transport 作为消融上限。

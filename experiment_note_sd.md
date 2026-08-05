@@ -196,3 +196,10 @@
 - **离线审计**：原型+merged 复算 79.24 与日志一致；consistency PASS；参数 2,181,130 ≤ 2,211,840；单卡 batch32 推理 FLOPs 1.129e12、吞吐 414.8 img/s、峰值显存 577.7 MiB。
 - **风险**：INR 通过但余量薄（AvgAcc +0.06、Forgetting 差 0.047）；C100 需 Final ≥88.22 且 Forgetting ≤7.08 或 AvgAcc ≥92.57，是更严格的确认。
 - **下一步**：启动 C100 v2（00:30 左右）；期间准备多 seed 队列与消融（普通 transport / 无 LRPT / 无 prototype）。
+
+## 2026-08-06 01:29-01:40 C100 v2 未过门槛，进入 LRPT 容量迭代
+
+- **观察**：C100 v2 完成：final Top1=88.43（门槛 88.22 ✓）、AvgAcc=92.42（门槛 92.57 ✗，差 0.15）、Forgetting=7.63（门槛 7.08 ✗）。LRPT 9 次全部应用，relative_drift_error 0.87–0.91。
+- **判断**：单 seed 双数据集验收未达成。Final Top1 两数据集都过（INR 79.24、C100 88.43），但“AvgAcc 双数据集均 +0.5 或 Forgetting 双数据集均 -1.0”的次要指标门槛没过（C100 AvgAcc +0.35、Forgetting -0.45）。根因指向 transport 容量：rank-10 只解释约 10% 漂移。
+- **风险**：rank16 若仍不足，备选：(1) 调低 reg 增强拟合；(2) full-rank 普通 transport 作上限诊断（若显著更好，说明线性容量问题而非结构问题）；(3) 若 full-rank 也不够，说明单任务特征配对不足以估计跨任务漂移，需要按失败分析检索新方向。
+- **下一步**：启动 INR rank16；达标后跑 C100 rank16；随后补 full-rank 消融。

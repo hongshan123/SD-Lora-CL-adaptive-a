@@ -194,4 +194,8 @@
   - Forgetting=**7.63**（EXP-009 8.08，改善 0.45；门槛 ≤7.08 ✗）
   - 曲线 [98.3, 96.3, 95.2, 93.92, 92.86, 91.35, 91.23, 88.72, 87.92, 88.43]
 - 分析（C100 未过）：LRPT 每任务 relative_drift_error ≈ 0.87–0.91，rank-10 transport 只解释约 9–13% 的漂移范数；INR 侧 AvgAcc 提升 +0.56 勉强过线，C100 提升 +0.35 不足。Final Top1 基本持平（+0.01），说明 LRPT 对最终任务影响小，瓶颈在旧原型漂移补偿容量。
-- 下一步：LRPT rank 10 → 16（预算口径允许：U,V 任务内驻留、应用后丢弃；若持久化 24,576 仍 ≤ 剩余 30,710）。先跑 INR rank16 确认不伤 INR，再跑 C100 rank16；同时可测 full-rank 普通 transport 作为消融上限。
+- 结果（LRPT rank16 迭代）：
+  - INR seed1995：final Top1=79.28、AvgAcc=83.12、Forgetting=6.48（单数据集门槛仍过：Final ≥79.14 ✓，AvgAcc ≥82.97 ✓）。
+  - C100 seed1993：final Top1=88.26、AvgAcc=92.37、Forgetting=7.80（门槛未过：AvgAcc 差 0.20、Forgetting 差 0.72；且比 rank10 的 92.42/7.63 略差）。
+- 容量诊断（C100 rank16 每任务）：norm 空间 rank10≈0.87–0.91、rank16≈0.85–0.89、rank32≈0.82–0.86、full≈0.57–0.62；raw 空间 full≈0.53–0.63；bias 单独解释 ≈0.89–0.91。结论：rank 提升收益有限，full-rank 可解释约 40–47% 漂移，但低秩（10/16）只解释约 10–15%。
+- 下一步：测试 affine LRPT（rank16 + 全局漂移偏置 b，闭式、无额外网络；b 与 U,V 均任务内驻留、用后即弃）。先跑 INR affine，达标后再跑 C100 affine；同时把 full-rank 普通 transport 作为上限消融。

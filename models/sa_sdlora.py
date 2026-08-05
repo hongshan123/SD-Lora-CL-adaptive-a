@@ -86,7 +86,7 @@ class Learner(SDLoraLearner):
         if (
             self._lrpt_enabled
             and self._is_main_process()
-            and self._cur_task >= 1
+            and self._cur_task >= 0
         ):
             self._lrpt_pre_features = self._extract_current_task_features(
                 data_manager,

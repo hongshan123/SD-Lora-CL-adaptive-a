@@ -1,5 +1,5 @@
 {
-    "prefix": "lrpt_sa_sdlora_proto_inr_seed1995",
+    "prefix": "lrpt_sa_sdlora_proto_inr_seed1995_v2",
     "dataset": "imagenetr",
     "memory_size": 0,
     "memory_per_class": 0,
@@ -13,7 +13,7 @@
     "seed": [1995],
     "optimizer": "adam",
     "scheduler": "constant",
-    "filepath": "./ImageNetR_LRPT_SA_SDLORA_PROTO_SEED1995/",
+    "filepath": "./ImageNetR_LRPT_SA_SDLORA_PROTO_SEED1995_v2/",
     "init_epoch": 20,
     "init_lr": 0.01,
     "init_milestones": [10000],

@@ -11,6 +11,8 @@ from torch.utils.data import DataLoader
 from backbone.lrpt import (
     apply_transport,
     bias_relative_error,
+    fit_affine_low_rank_transport,
+    fit_affine_rank_residuals,
     fit_low_rank_transport,
     fit_rank_residuals,
     transport_prediction_error,
@@ -60,6 +62,7 @@ class Learner(SDLoraLearner):
             )
         self._lrpt_rank = int(args.get("lrpt_rank", args.get("lora_rank", 10)))
         self._lrpt_reg = float(args.get("lrpt_reg", 1e-2))
+        self._lrpt_bias = bool(args.get("lrpt_bias", False))
         self._lrpt_diagnostics = bool(args.get("lrpt_diagnostics", True))
         self._lrpt_pre_features = None
 
@@ -177,13 +180,27 @@ class Learner(SDLoraLearner):
         z_old = F.normalize(z_old_raw, p=2, dim=1)
         z_new = F.normalize(z_new_raw, p=2, dim=1)
 
-        u, v = fit_low_rank_transport(
-            z_old,
-            z_new,
-            rank=self._lrpt_rank,
-            reg=self._lrpt_reg,
-        )
-        rel_err, _ = transport_prediction_error(z_old, z_new, u, v)
+        if self._lrpt_bias:
+            u, v, bias = fit_affine_low_rank_transport(
+                z_old,
+                z_new,
+                rank=self._lrpt_rank,
+                reg=self._lrpt_reg,
+            )
+            rel_err, _ = transport_prediction_error(
+                z_old, z_new, u, v, bias=bias
+            )
+        else:
+            u, v, bias = (
+                *fit_low_rank_transport(
+                    z_old,
+                    z_new,
+                    rank=self._lrpt_rank,
+                    reg=self._lrpt_reg,
+                ),
+                None,
+            )
+            rel_err, _ = transport_prediction_error(z_old, z_new, u, v)
         if self._lrpt_diagnostics:
             diag_norm = fit_rank_residuals(
                 z_old, z_new, (10, 16, 32, 768), reg=self._lrpt_reg
@@ -194,12 +211,23 @@ class Learner(SDLoraLearner):
                 (10, 16, 32, 768),
                 reg=self._lrpt_reg,
             )
+            diag_affine_norm = fit_affine_rank_residuals(
+                z_old, z_new, (10, 16, 32, 768), reg=self._lrpt_reg
+            )
+            diag_affine_raw = fit_affine_rank_residuals(
+                z_old_raw.to(torch.float32),
+                z_new_raw.to(torch.float32),
+                (10, 16, 32, 768),
+                reg=self._lrpt_reg,
+            )
             bias_rel = bias_relative_error(z_old, z_new)
             logging.info(
-                "[SharedA-SDLoRA] LRPT-DIAG task %d norm=%s raw=%s bias_rel=%.4f",
+                "[SharedA-SDLoRA] LRPT-DIAG task %d norm=%s raw=%s affine_norm=%s affine_raw=%s bias_rel=%.4f",
                 self._cur_task,
                 {k: round(v, 4) for k, v in diag_norm.items()},
                 {k: round(v, 4) for k, v in diag_raw.items()},
+                {k: round(v, 4) for k, v in diag_affine_norm.items()},
+                {k: round(v, 4) for k, v in diag_affine_raw.items()},
                 bias_rel,
             )
         logging.info(
@@ -218,8 +246,13 @@ class Learner(SDLoraLearner):
             )
             return
         old = torch.load(path, map_location="cpu", weights_only=True)
-        updated = apply_transport(old, u, v)
+        updated = apply_transport(old, u, v, bias=bias)
         torch.save(updated, path)
+        if bias is not None:
+            logging.info(
+                "[SharedA-SDLoRA] LRPT bias norm=%.4f",
+                float(torch.linalg.norm(bias)),
+            )
         logging.info(
             "[SharedA-SDLoRA] LRPT moved %d old prototypes to updated feature space",
             len(updated),

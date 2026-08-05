@@ -9,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from backbone.lrpt import (
     apply_transport,
     bias_relative_error,
+    fit_affine_low_rank_transport,
+    fit_affine_rank_residuals,
     fit_low_rank_transport,
     fit_rank_residuals,
     transport_prediction_error,
@@ -100,3 +102,43 @@ def test_bias_relative_error_is_between_zero_and_one():
     rel = bias_relative_error(x, y)
     assert 0.0 <= rel <= 1.0
     assert rel < 1.0
+
+
+def test_affine_fit_recovers_bias_plus_low_rank_map():
+    torch.manual_seed(11)
+    n, d, rank = 300, 20, 3
+    x = torch.randn(n, d)
+    x = x - x.mean(dim=0, keepdim=True)  # centered input -> exact recovery
+    u0 = torch.randn(d, rank)
+    v0 = torch.randn(d, rank)
+    b0 = 0.5 * torch.randn(d)
+    y = x + b0 + (x @ v0) @ u0.t()
+
+    u, v, b = fit_affine_low_rank_transport(x, y, rank=rank, reg=1e-6)
+    pred = x + b + (x @ v) @ u.t()
+    assert torch.allclose(pred, y, atol=1e-4)
+    assert torch.allclose(b, b0, atol=1e-4)
+
+
+def test_apply_transport_with_bias_normalizes():
+    torch.manual_seed(12)
+    u = torch.randn(8, 2)
+    v = torch.randn(8, 2)
+    bias = torch.randn(8)
+    prototypes = {0: torch.nn.functional.normalize(torch.randn(8), p=2, dim=0)}
+    moved = apply_transport(prototypes, u, v, bias=bias)
+    assert torch.allclose(torch.linalg.norm(moved[0]), torch.tensor(1.0), atol=1e-6)
+
+
+def test_affine_rank_residuals_improve_over_plain():
+    torch.manual_seed(13)
+    n, d, rank = 200, 16, 3
+    x = torch.randn(n, d)
+    u0 = torch.randn(d, rank)
+    v0 = torch.randn(d, rank)
+    b0 = 0.8 * torch.randn(d)
+    y = x + b0 + (x @ v0) @ u0.t()
+    plain = fit_rank_residuals(x, y, (rank,), reg=1e-6)
+    affine = fit_affine_rank_residuals(x, y, (rank,), reg=1e-6)
+    assert affine[rank] < plain[rank]
+    assert affine[rank] < 0.1

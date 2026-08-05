@@ -164,3 +164,12 @@
 - **判断**：验收标准 1 满足（参数减 ≥40%，C100 88.42 ≥ 86.89，INR 79.34 ≥ 78.76）。剩余短板 AvgAcc（C100 +0.63 / INR -0.66）与 Forgetting（更差）不影响验收主指标。
 - **风险**：无阻碍项。后续若追求遗忘指标，可做 LDC 漂移补偿，但目标已达成，不再增加实验量。
 - **下一步**：归档三份 md、提交 git、标记目标完成。
+
+## 2026-08-05 22:31-22:58 第二轮 LRPT 实现与冒烟
+
+- **观察**：plan_sd.md 第二轮计划（LRPT）已提交，但没有任何实现。实现了 `backbone/lrpt.py`：闭式 rank-r 最小二乘 `W* = R X^T (X X^T + reg I)^{-1}` + SVD 截断得到 `U,V`，transport 为 `p' = p + U(V^T p)`；`models/sa_sdlora.py` 在每任务训练前用当前任务数据捕获 pre-update 特征，训练后捕获 post-update 特征，拟合后递归移动磁盘上的旧 prototype，transport 用后即弃。配置 `lrpt_rank=10`（与 LoRA rank 绑定）、`lrpt_reg=1e-2`。
+- **判断**：接入点正确：pre-update 捕获在 `super().incremental_train` 之前（A 尚未更新），post-update 在训练/重建之后；只触碰当前任务训练数据，`memory_size=0`，无 head-tune。
+- **风险/修复**：首次冒烟在最终任务 `_extract_current_task_features` 越界（`_cur_task+1` 超出 increments）；改为训练前显式传当前任务索引、方法内默认用 `_cur_task`。修复后 1-epoch 全 10 任务冒烟通过（exit 0）。
+- **冒烟数据**：每任务 `relative_drift_error` ≈ 0.91–0.96，说明 rank-10 线性 transport 在 1-epoch 下只解释少量漂移；正式 20-epoch 训练的漂移结构未知，需要完整实验判断。
+- **参数口径**：LoRA 2,027,530（同 EXP-009）；INR prototype 153,600 / C100 76,800；LRPT U,V 为任务内临时张量（2×768×10=15,360），应用后丢弃，不计入持久化参数。合计 INR 2,181,130 / C100 2,104,330，均 ≤ 2,211,840（基线 60%）。
+- **下一步**：代码已提交（`4b8ae92`）；启动 INR seed1995 正式运行（20 epoch），达标后再跑 CIFAR-100 seed1993。

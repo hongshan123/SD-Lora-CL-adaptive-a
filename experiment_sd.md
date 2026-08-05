@@ -167,3 +167,18 @@
 - **验收结论：满足标准 1**——LoRA/总参数量减少 ≥40%，CIFAR-100 final Top1=88.42 ≥86.89，ImageNet-R final Top1=79.34 ≥78.76；全程无回放（memory_size=0、无 head-tune、原型仅训练期用当前任务数据计算）。
 - 实验顺序（用户 2026-08-05 要求）：先在 ImageNet-R 上运行并判定，INR final Top1 ≥ 78.76 后再到 CIFAR-100 上运行确认（减少实验量）。
 - 下一步：无（目标达成）。若后续仍要改善遗忘指标，可尝试 LDC 式漂移补偿或 A 冻结 + 原型。
+
+## EXP-010 LRPT：低秩原型漂移补偿（第二轮）
+
+- 日期：2026-08-05
+- 状态：运行中（ImageNet-R seed1995）
+- 目标/假设：Shared-A 在任务间持续更新使历史 prototype 与当前特征空间失配（EXP-009 Task 6 单次回落 2.66）。用**当前任务**数据在模型更新前/后提取配对特征 (z_old, z_new)，闭式拟合 rank-r 仿射 transport `p' = p + U(V^T p)`（U,V ∈ R^{768×r}，r 与 LoRA rank 绑定），递归更新全部旧 prototype；不读取/保存/回放旧任务样本。
+- 改动：新增 `backbone/lrpt.py`（闭式 rank-r 最小二乘 + 应用/误差函数）、`tests/test_lrpt.py`；`models/sa_sdlora.py` 增加 `lrpt_enabled/lrpt_rank/lrpt_reg` 与训练前后配对特征捕获、transport 拟合、旧原型递归更新；新增 INR/C100 配置与运行脚本。commit `4b8ae92`。
+- 配置与命令：`exps/lrpt_sa_sdlora_inr_seed1995.json`；`bash run_lrpt_sa_sdlora_inr.sh`（INR 先跑，达标后才跑 C100）。
+- 理论依据/文献：LRPT 明确机制见 plan_sd.md 第二轮碰撞审计（相对 SA-LoRA/CL-LoRA/RanPAC/LDC/FM-LoRA/C-LoRA/InfLoRA/EASE 的结构差异）；LDC（ECCV 2024, arXiv:2407.08536）指出原型漂移需要补偿，但 LRPT 以 LoRA ΔA 的秩为先验做闭式低秩 transport，不训练额外网络；CL-LoRA（CVPR 2025）与 RanPAC（NeurIPS 2023）提供训练期原型 + 余弦分类器骨架。
+- 结果：待 INR seed1995 完成。
+- 冒烟验证（1 epoch/task 全 10 任务，INR seed1995）：
+  - LRPT 路径正常：每任务 pre-update 特征捕获 → 训练 → transport 拟合 → 旧原型移动 → 新原型合并；最终任务重建后同样通过。
+  - 每任务 `relative_drift_error` ≈ 0.91–0.96（rank=10，reg=1e-2），即闭式 rank-10 transport 在 1-epoch 训练下只解释约 4–9% 的漂移范数；正式 20-epoch 训练是否改善需看完整实验。
+- 分析：初版实现冒烟中发现末任务 `_extract_current_task_features` 的 task_index 越界（修复为默认当前任务、训练前显式传 `_cur_task+1`）；修复后全流程通过。
+- 下一步：运行 INR seed1995 正式实验；对照门槛 INR Final Top1 ≥ 78.76 且 ≥ 79.14（相对 EXP-009 回退 ≤0.20），Forgetting ≤ 6.26 或 AvgAcc ≥ 82.97。

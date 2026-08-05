@@ -66,6 +66,7 @@ def parse_args():
     parser.add_argument("--tune-epochs", type=int, default=5)
     parser.add_argument("--tune-lr", type=float, default=1e-3)
     parser.add_argument("--align", action="store_true", default=True)
+    parser.add_argument("--cosine", action="store_true", default=False)
     parser.add_argument("--batch-size", type=int, default=16)
     return parser.parse_args()
 
@@ -106,6 +107,23 @@ def evaluate(backbone, weight, bias, loader, device):
             inputs = inputs.to(device, non_blocking=True)
             features = backbone(inputs)
             logits = F.linear(features, weight, bias)
+            _, preds = logits.max(dim=1)
+            correct += (preds.cpu() == targets).sum().item()
+            total += targets.shape[0]
+    return 100.0 * correct / max(total, 1)
+
+
+def evaluate_cosine(backbone, weight, loader, device):
+    """Data-free cosine classifier evaluation (L2-normalized features/weights)."""
+    backbone.eval()
+    weight_norm = F.normalize(weight, p=2, dim=1)
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for _, inputs, targets in loader:
+            inputs = inputs.to(device, non_blocking=True)
+            features = backbone(inputs)
+            logits = F.linear(F.normalize(features, p=2, dim=1), weight_norm)
             _, preds = logits.max(dim=1)
             correct += (preds.cpu() == targets).sum().item()
             total += targets.shape[0]
@@ -186,6 +204,10 @@ def main():
         weight[-increment:] *= gamma
         after_align = evaluate(backbone, weight, bias, test_loader, device)
         print("final top1 after weight align: {:.2f}".format(after_align))
+
+    if cli.cosine:
+        after_cosine = evaluate_cosine(backbone, weight, test_loader, device)
+        print("final top1 with cosine norm: {:.2f}".format(after_cosine))
 
     if cli.tune_epochs > 0:
         feature_matrix, target_vector = extract_features(

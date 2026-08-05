@@ -65,6 +65,7 @@ class Learner(SDLoraLearner):
         self._lrpt_bias = bool(args.get("lrpt_bias", False))
         self._lrpt_diagnostics = bool(args.get("lrpt_diagnostics", True))
         self._lrpt_pre_features = None
+        self._lrpt_pre_targets = None
 
     def update_network(self, index=True, task_index=None):
         model = timm.create_model(
@@ -94,9 +95,12 @@ class Learner(SDLoraLearner):
             and self._is_main_process()
             and self._cur_task >= 0
         ):
-            self._lrpt_pre_features = self._extract_current_task_features(
-                data_manager,
-                task_index=self._cur_task + 1,
+            self._lrpt_pre_features, self._lrpt_pre_targets = (
+                self._extract_current_task_features(
+                    data_manager,
+                    task_index=self._cur_task + 1,
+                    return_targets=True,
+                )
             )
             logging.info(
                 "[SharedA-SDLoRA] LRPT pre-update features captured for task %d (%d samples)",
@@ -137,7 +141,7 @@ class Learner(SDLoraLearner):
                 raw_network.backbone.cleanup_per_task_files(self.args["filepath"])
 
     def _extract_current_task_features(
-        self, data_manager, task_index=None, normalize=False
+        self, data_manager, task_index=None, normalize=False, return_targets=False
     ):
         """Extract features of the current task's training data (test transform,
         no augmentation) with the current model state. By default returns raw
@@ -161,22 +165,31 @@ class Learner(SDLoraLearner):
         raw_network = self._raw_network()
         raw_network.eval()
         features = []
+        targets = []
         with torch.no_grad():
-            for _, inputs, _ in loader:
+            for _, inputs, batch_targets in loader:
                 inputs = inputs.to(self._device, non_blocking=True)
                 feats = raw_network.backbone(inputs)
                 if normalize:
                     feats = F.normalize(feats, p=2, dim=1)
                 features.append(feats.detach().cpu())
-        return torch.cat(features, dim=0)
+                targets.append(batch_targets)
+        features = torch.cat(features, dim=0)
+        if return_targets:
+            return features, torch.cat(targets, dim=0)
+        return features
 
     def _apply_lrpt_to_old_prototypes(self, data_manager):
         """Fit the low-rank transport from the paired current-task features and
         recursively move all previously stored prototypes into the updated
         feature space. The transport itself is discarded after application."""
         z_old_raw = self._lrpt_pre_features
-        z_new_raw = self._extract_current_task_features(data_manager)
+        z_new_raw, z_new_targets = self._extract_current_task_features(
+            data_manager, return_targets=True
+        )
+        z_old_targets = self._lrpt_pre_targets
         self._lrpt_pre_features = None
+        self._lrpt_pre_targets = None
         z_old = F.normalize(z_old_raw, p=2, dim=1)
         z_new = F.normalize(z_new_raw, p=2, dim=1)
 
@@ -220,14 +233,40 @@ class Learner(SDLoraLearner):
                 (10, 16, 32, 768),
                 reg=self._lrpt_reg,
             )
+            classmean_affine = {}
+            if (
+                z_old_targets is not None
+                and z_new_targets is not None
+                and torch.equal(z_old_targets, z_new_targets)
+            ):
+                class_ids = torch.unique(z_old_targets)
+                old_means = torch.stack(
+                    [
+                        z_old_raw[z_old_targets == c].mean(dim=0)
+                        for c in class_ids
+                    ]
+                )
+                new_means = torch.stack(
+                    [
+                        z_new_raw[z_new_targets == c].mean(dim=0)
+                        for c in class_ids
+                    ]
+                )
+                classmean_affine = fit_affine_rank_residuals(
+                    old_means,
+                    new_means,
+                    (10, 16, 32, 768),
+                    reg=self._lrpt_reg,
+                )
             bias_rel = bias_relative_error(z_old, z_new)
             logging.info(
-                "[SharedA-SDLoRA] LRPT-DIAG task %d norm=%s raw=%s affine_norm=%s affine_raw=%s bias_rel=%.4f",
+                "[SharedA-SDLoRA] LRPT-DIAG task %d norm=%s raw=%s affine_norm=%s affine_raw=%s classmean_affine=%s bias_rel=%.4f",
                 self._cur_task,
                 {k: round(v, 4) for k, v in diag_norm.items()},
                 {k: round(v, 4) for k, v in diag_raw.items()},
                 {k: round(v, 4) for k, v in diag_affine_norm.items()},
                 {k: round(v, 4) for k, v in diag_affine_raw.items()},
+                {k: round(v, 4) for k, v in classmean_affine.items()},
                 bias_rel,
             )
         logging.info(

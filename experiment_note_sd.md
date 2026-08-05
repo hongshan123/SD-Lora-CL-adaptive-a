@@ -217,3 +217,9 @@
 - **判断**：偏置提升拟合但不带来明确指标收益；C100 affine 是决定 affine 路线是否继续的关键。
 - **注意**：同 seed 下 task0 Top1 在不同运行间有波动（90.95/91.42/92.04），说明 DDP/DataLoader 存在一定运行间方差；对余量薄的门槛需多 seed 统计判断。
 - **下一步**：等待 C100 affine；同时准备 full-rank 消融。
+
+## 2026-08-06 05:04-05:15 C100 affine 结果与类均值诊断
+
+- **观察**：C100 affine（rank16+bias）final Top1=88.39、AvgAcc=92.45、Forgetting=7.37；仍差门槛（AvgAcc -0.12、Forgetting -0.29），但比 plain rank10/16 均更好。INR affine 已达标（79.38/83.03/6.79）。
+- **判断**：bias 有正向作用但不足。下一步先做类均值空间诊断（当前 transport 拟合在样本空间，而迁移目标是类原型；类中心拟合可能更直接），并测 affine rank10。
+- **下一步**：INR affine rank10（含类均值诊断）→ C100 affine rank10 → full-rank 消融。

@@ -63,6 +63,11 @@ class Learner(SDLoraLearner):
         self._lrpt_rank = int(args.get("lrpt_rank", args.get("lora_rank", 10)))
         self._lrpt_reg = float(args.get("lrpt_reg", 1e-2))
         self._lrpt_bias = bool(args.get("lrpt_bias", False))
+        self._lrpt_fit_target = args.get("lrpt_fit_target", "sample")
+        if self._lrpt_fit_target not in ("sample", "classmean"):
+            raise ValueError(
+                "lrpt_fit_target must be 'sample' or 'classmean'"
+            )
         self._lrpt_diagnostics = bool(args.get("lrpt_diagnostics", True))
         self._lrpt_pre_features = None
         self._lrpt_pre_targets = None
@@ -192,28 +197,37 @@ class Learner(SDLoraLearner):
         self._lrpt_pre_targets = None
         z_old = F.normalize(z_old_raw, p=2, dim=1)
         z_new = F.normalize(z_new_raw, p=2, dim=1)
+        if self._lrpt_fit_target == "classmean":
+            fit_old = self._class_mean_prototypes(z_old, z_old_targets)
+            fit_new = self._class_mean_prototypes(z_new, z_new_targets)
+            logging.info(
+                "[SharedA-SDLoRA] LRPT class-mean fit: %d current classes",
+                fit_old.shape[0],
+            )
+        else:
+            fit_old, fit_new = z_old, z_new
 
         if self._lrpt_bias:
             u, v, bias = fit_affine_low_rank_transport(
-                z_old,
-                z_new,
+                fit_old,
+                fit_new,
                 rank=self._lrpt_rank,
                 reg=self._lrpt_reg,
             )
             rel_err, _ = transport_prediction_error(
-                z_old, z_new, u, v, bias=bias
+                fit_old, fit_new, u, v, bias=bias
             )
         else:
             u, v, bias = (
                 *fit_low_rank_transport(
-                    z_old,
-                    z_new,
+                    fit_old,
+                    fit_new,
                     rank=self._lrpt_rank,
                     reg=self._lrpt_reg,
                 ),
                 None,
             )
-            rel_err, _ = transport_prediction_error(z_old, z_new, u, v)
+            rel_err, _ = transport_prediction_error(fit_old, fit_new, u, v)
         if self._lrpt_diagnostics:
             diag_norm = fit_rank_residuals(
                 z_old, z_new, (10, 16, 32, 768), reg=self._lrpt_reg
@@ -239,18 +253,11 @@ class Learner(SDLoraLearner):
                 and z_new_targets is not None
                 and torch.equal(z_old_targets, z_new_targets)
             ):
-                class_ids = torch.unique(z_old_targets)
-                old_means = torch.stack(
-                    [
-                        z_old_raw[z_old_targets == c].mean(dim=0)
-                        for c in class_ids
-                    ]
+                old_means = self._class_mean_prototypes(
+                    z_old, z_old_targets
                 )
-                new_means = torch.stack(
-                    [
-                        z_new_raw[z_new_targets == c].mean(dim=0)
-                        for c in class_ids
-                    ]
+                new_means = self._class_mean_prototypes(
+                    z_new, z_new_targets
                 )
                 classmean_affine = fit_affine_rank_residuals(
                     old_means,
@@ -296,6 +303,17 @@ class Learner(SDLoraLearner):
             "[SharedA-SDLoRA] LRPT moved %d old prototypes to updated feature space",
             len(updated),
         )
+
+    def _class_mean_prototypes(self, features, targets):
+        """Per-class mean of L2-normalized features, then L2-normalized, which
+        matches the stored prototype representation used by PrototypeCosineHead."""
+        class_ids = torch.unique(targets)
+        means = []
+        for class_id in class_ids:
+            mask = targets == class_id
+            mean = features[mask].mean(dim=0)
+            means.append(F.normalize(mean, p=2, dim=0))
+        return torch.stack(means)
 
     def _compute_prototypes(self, data_manager, raw_network):
         """Compute L2-normalized per-class mean prototypes for the classes of

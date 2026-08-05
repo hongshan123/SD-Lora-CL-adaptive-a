@@ -8,14 +8,33 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 from backbone.sa_lora import SharedALoRA_ViT_timm
+from utils.inc_net import SimpleCosineIncrementalNet
 from models.sdlora import Learner as SDLoraLearner
 
 
 num_workers = 8
 
 
+class SharedACosineNet(SimpleCosineIncrementalNet):
+    """SimpleCosineIncrementalNet with SD-LoRA-style fc artifact saving."""
+
+    def save_fc(self, filename, task_id):
+        torch.save(
+            self.fc.weight.detach(), filename + "CLs_weight" + str(task_id) + ".pt"
+        )
+        torch.save(
+            torch.zeros(self.fc.out_features),
+            filename + "CLs_bias" + str(task_id) + ".pt",
+        )
+
+
 class Learner(SDLoraLearner):
     """Shared-A SD-LoRA: task-invariant A, per-task B, exact final merging."""
+
+    def __init__(self, args):
+        super().__init__(args)
+        if args.get("sa_use_cosine_head", False):
+            self._network = SharedACosineNet(args, True)
 
     def update_network(self, index=True, task_index=None):
         model = timm.create_model(

@@ -8,6 +8,11 @@ from torch import optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
+from backbone.lrpt import (
+    apply_transport,
+    fit_low_rank_transport,
+    transport_prediction_error,
+)
 from backbone.sa_lora import SharedALoRA_ViT_timm
 from utils.inc_net import SimpleCosineIncrementalNet, SharedAPrototypeNet
 from models.sdlora import Learner as SDLoraLearner
@@ -46,6 +51,14 @@ class Learner(SDLoraLearner):
             self._network = SharedACosineNet(args, True)
         elif use_prototypes:
             self._network = SharedAPrototypeNet(args, True)
+        self._lrpt_enabled = bool(args.get("lrpt_enabled", False))
+        if self._lrpt_enabled and not use_prototypes:
+            raise ValueError(
+                "lrpt_enabled requires sa_use_prototype_classifier=True"
+            )
+        self._lrpt_rank = int(args.get("lrpt_rank", args.get("lora_rank", 10)))
+        self._lrpt_reg = float(args.get("lrpt_reg", 1e-2))
+        self._lrpt_pre_features = None
 
     def update_network(self, index=True, task_index=None):
         model = timm.create_model(
@@ -68,6 +81,22 @@ class Learner(SDLoraLearner):
         return model
 
     def incremental_train(self, data_manager):
+        # Capture the current task's features in the *previous* model state
+        # before Shared-A is updated. Only current-task data is touched.
+        if (
+            self._lrpt_enabled
+            and self._is_main_process()
+            and self._cur_task >= 1
+        ):
+            self._lrpt_pre_features = self._extract_current_task_features(
+                data_manager,
+                task_index=self._cur_task + 1,
+            )
+            logging.info(
+                "[SharedA-SDLoRA] LRPT pre-update features captured for task %d (%d samples)",
+                self._cur_task + 1,
+                self._lrpt_pre_features.shape[0],
+            )
         super().incremental_train(data_manager)
         if self._is_main_process():
             if self._cur_task == data_manager.nb_tasks - 1:
@@ -91,6 +120,8 @@ class Learner(SDLoraLearner):
                         lr=float(self.args.get("sa_final_head_lr", 1e-3)),
                     )
             if self.args.get("sa_use_prototype_classifier", False):
+                if self._lrpt_enabled and self._lrpt_pre_features is not None:
+                    self._apply_lrpt_to_old_prototypes(data_manager)
                 prototypes = self._compute_prototypes(data_manager, raw_network)
                 raw_network.set_prototypes(prototypes)
                 logging.info(
@@ -98,6 +129,75 @@ class Learner(SDLoraLearner):
                     len(prototypes),
                 )
                 raw_network.backbone.cleanup_per_task_files(self.args["filepath"])
+
+    def _extract_current_task_features(self, data_manager, task_index=None):
+        """Extract L2-normalized features of the current task's training data
+        (test transform, no augmentation) with the current model state."""
+        if task_index is None:
+            task_index = self._cur_task
+        cur_classes = np.arange(
+            self._known_classes,
+            self._known_classes + data_manager.get_task_size(task_index),
+        )
+        dataset = data_manager.get_dataset(
+            cur_classes, source="train", mode="test"
+        )
+        loader = DataLoader(
+            dataset,
+            batch_size=64,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True,
+        )
+        raw_network = self._raw_network()
+        raw_network.eval()
+        features = []
+        with torch.no_grad():
+            for _, inputs, _ in loader:
+                inputs = inputs.to(self._device, non_blocking=True)
+                feats = raw_network.backbone(inputs)
+                features.append(
+                    F.normalize(feats, p=2, dim=1).detach().cpu()
+                )
+        return torch.cat(features, dim=0)
+
+    def _apply_lrpt_to_old_prototypes(self, data_manager):
+        """Fit the low-rank transport from the paired current-task features and
+        recursively move all previously stored prototypes into the updated
+        feature space. The transport itself is discarded after application."""
+        z_old = self._lrpt_pre_features
+        z_new = self._extract_current_task_features(data_manager)
+        self._lrpt_pre_features = None
+
+        u, v = fit_low_rank_transport(
+            z_old,
+            z_new,
+            rank=self._lrpt_rank,
+            reg=self._lrpt_reg,
+        )
+        rel_err, _ = transport_prediction_error(z_old, z_new, u, v)
+        logging.info(
+            "[SharedA-SDLoRA] LRPT task %d: rank=%d reg=%.2e relative_drift_error=%.4f",
+            self._cur_task,
+            self._lrpt_rank,
+            self._lrpt_reg,
+            rel_err,
+        )
+
+        path = os.path.join(self.args["filepath"], PROTOTYPES_FILENAME)
+        if not os.path.exists(path):
+            logging.warning(
+                "[SharedA-SDLoRA] LRPT skipped: no stored prototypes at %s",
+                path,
+            )
+            return
+        old = torch.load(path, map_location="cpu", weights_only=True)
+        updated = apply_transport(old, u, v)
+        torch.save(updated, path)
+        logging.info(
+            "[SharedA-SDLoRA] LRPT moved %d old prototypes to updated feature space",
+            len(updated),
+        )
 
     def _compute_prototypes(self, data_manager, raw_network):
         """Compute L2-normalized per-class mean prototypes for the classes of

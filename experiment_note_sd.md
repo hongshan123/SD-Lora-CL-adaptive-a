@@ -173,3 +173,11 @@
 - **冒烟数据**：每任务 `relative_drift_error` ≈ 0.91–0.96，说明 rank-10 线性 transport 在 1-epoch 下只解释少量漂移；正式 20-epoch 训练的漂移结构未知，需要完整实验判断。
 - **参数口径**：LoRA 2,027,530（同 EXP-009）；INR prototype 153,600 / C100 76,800；LRPT U,V 为任务内临时张量（2×768×10=15,360），应用后丢弃，不计入持久化参数。合计 INR 2,181,130 / C100 2,104,330，均 ≤ 2,211,840（基线 60%）。
 - **下一步**：代码已提交（`4b8ae92`）；启动 INR seed1995 正式运行（20 epoch），达标后再跑 CIFAR-100 seed1993。
+
+## 2026-08-05 23:00-23:10 审计脚本与 merged 修复
+
+- **观察**：新写的 `scripts/verify_sa_consistency.py` 在 EXP-009 INR 产物上发现 **per-task 银行与 `sa_merged_lora.pt` 特征不一致（max diff 1.31）**；核对公式后确认最终任务重建 `_rebuild_eval_backbone()` 后用重建骨干（当前 B=0、`saved_b_tasks` 已含 0..9）再次 `save_merged_lora`，旧逻辑只循环 `range(current_task)=0..8`，把最后一任务的 B 丢掉。EXP-009 训练期评估走 per-task 路径，所以日志指标不受影响，但磁盘 merged 产物不满足恢复一致性。
+- **修复**：`backbone/sa_lora.py::save_merged_lora` 改为遍历全部 `saved_b_tasks`（重建态已含当前任务），仅当当前 B 非零时追加 `s_cur * B_cur`（训练态语义），同时兼容两种状态。另修复 `scripts/measure_sa_artifact.py` 对 dict 按 key 迭代的计数 bug。
+- **验证**：用修复后代码重建 EXP-009 INR/C100 的 `sa_merged_lora.pt`；`verify_sa_consistency.py` 固定输入下 feature max diff 9.5e-6 / 2.0e-5，prototype logit max diff 2.7e-7 / 3.0e-7，全部 PASS。参数审计：INR LoRA+原型 2,181,130（59.17%）、C100 2,104,330（57.08%），均 ≤ 2,211,840。
+- **注意**：正在运行的 INR LRPT 进程加载的是修复前代码，跑完后需用修复后代码重建 merged 再验证。
+- **下一步**：等待 INR LRPT 完成；解析 final Top1/AvgAcc/Forgetting；若达标启动 C100。

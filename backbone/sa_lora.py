@@ -296,6 +296,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         if not os.path.exists(filename):
             os.makedirs(filename)
         current_task = self.task_id - 1
+        num_saved = len(self.saved_b_tasks)
         merged_b = []
         for idx, w_b in enumerate(self.w_Bs):
             total = torch.zeros(
@@ -303,12 +304,17 @@ class SharedALoRA_ViT_timm(nn.Module):
             )
             a_w = self.w_As[idx].weight.detach().cpu().float()
             norm_a = torch.norm(a_w)
-            for task_id in range(current_task):
+            # All tasks loaded from disk (0..num_saved-1). In the post-training
+            # state the current task is not yet in saved_b_tasks and its B is
+            # non-zero; in a rebuilt eval backbone the current B is zero and the
+            # last task is already in saved_b_tasks, so it must not be skipped.
+            for task_id in range(num_saved):
                 b_i = self.saved_b_tasks[task_id][idx].cpu().float()
                 s_i = self.wrapped_param_prev[task_id].param.detach().cpu().float()
                 total = total + s_i * b_i / (norm_a * torch.norm(b_i) + 1e-8)
-            s_cur = self.wrapped_param[0].param.detach().cpu().float()
-            total = total + s_cur * w_b.weight.detach().cpu().float()
+            if torch.any(w_b.weight != 0):
+                s_cur = self.wrapped_param[0].param.detach().cpu().float()
+                total = total + s_cur * w_b.weight.detach().cpu().float()
             merged_b.append(total.cpu())
         torch.save(
             {

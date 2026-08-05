@@ -110,17 +110,23 @@ def apply_transport(
     u: torch.Tensor,
     v: torch.Tensor,
     bias: torch.Tensor | None = None,
+    damping: float = 1.0,
 ) -> dict[int, torch.Tensor]:
-    """Apply p' = normalize(p + b + U (V^T p)) to every stored prototype."""
+    """Apply p' = normalize(p + λ(b + U (V^T p))) to every stored prototype.
+
+    damping λ ∈ [0,1] scales the drift compensation; λ=1 is the full fit,
+    smaller values reduce over-correction from a noisy transport.
+    """
     u64 = u.to(torch.float64)
     v64 = v.to(torch.float64)
     b64 = bias.to(torch.float64).reshape(-1) if bias is not None else None
+    lam = float(damping)
     moved = {}
     for class_id, proto in prototypes.items():
         p = proto.detach().to(torch.float64).reshape(-1)
-        p_new = p + u64 @ (v64.t() @ p)
+        p_new = p + lam * (u64 @ (v64.t() @ p))
         if b64 is not None:
-            p_new = p_new + b64
+            p_new = p_new + lam * b64
         moved[int(class_id)] = F.normalize(p_new.to(torch.float32), p=2, dim=0)
     return moved
 

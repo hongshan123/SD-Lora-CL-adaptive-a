@@ -63,6 +63,7 @@ class Learner(SDLoraLearner):
         self._lrpt_rank = int(args.get("lrpt_rank", args.get("lora_rank", 10)))
         self._lrpt_reg = float(args.get("lrpt_reg", 1e-2))
         self._lrpt_bias = bool(args.get("lrpt_bias", False))
+        self._lrpt_damping = float(args.get("lrpt_damping", 1.0))
         self._lrpt_fit_target = args.get("lrpt_fit_target", "sample")
         if self._lrpt_fit_target not in ("sample", "classmean"):
             raise ValueError(
@@ -292,7 +293,9 @@ class Learner(SDLoraLearner):
             )
             return
         old = torch.load(path, map_location="cpu", weights_only=True)
-        updated = apply_transport(old, u, v, bias=bias)
+        updated = apply_transport(
+            old, u, v, bias=bias, damping=self._lrpt_damping
+        )
         torch.save(updated, path)
         if bias is not None:
             logging.info(

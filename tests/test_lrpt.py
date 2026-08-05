@@ -130,6 +130,19 @@ def test_apply_transport_with_bias_normalizes():
     assert torch.allclose(torch.linalg.norm(moved[0]), torch.tensor(1.0), atol=1e-6)
 
 
+def test_apply_transport_damping_scales_movement():
+    torch.manual_seed(14)
+    u = torch.randn(8, 2)
+    v = torch.randn(8, 2)
+    bias = torch.randn(8)
+    proto = torch.nn.functional.normalize(torch.randn(8), p=2, dim=0)
+    full = apply_transport({0: proto}, u, v, bias=bias, damping=1.0)[0]
+    half = apply_transport({0: proto}, u, v, bias=bias, damping=0.5)[0]
+    zero = apply_transport({0: proto}, u, v, bias=bias, damping=0.0)[0]
+    assert torch.allclose(zero, proto, atol=1e-6)
+    assert torch.linalg.norm(half - proto) < torch.linalg.norm(full - proto)
+
+
 def test_affine_rank_residuals_improve_over_plain():
     torch.manual_seed(13)
     n, d, rank = 200, 16, 3

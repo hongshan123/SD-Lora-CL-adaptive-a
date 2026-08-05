@@ -1,4 +1,5 @@
 import logging
+import os
 
 import numpy as np
 import timm
@@ -8,11 +9,12 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 from backbone.sa_lora import SharedALoRA_ViT_timm
-from utils.inc_net import SimpleCosineIncrementalNet
+from utils.inc_net import SimpleCosineIncrementalNet, SharedAPrototypeNet
 from models.sdlora import Learner as SDLoraLearner
 
 
 num_workers = 8
+PROTOTYPES_FILENAME = "sa_prototypes.pt"
 
 
 class SharedACosineNet(SimpleCosineIncrementalNet):
@@ -33,8 +35,17 @@ class Learner(SDLoraLearner):
 
     def __init__(self, args):
         super().__init__(args)
-        if args.get("sa_use_cosine_head", False):
+        use_cosine = args.get("sa_use_cosine_head", False)
+        use_prototypes = args.get("sa_use_prototype_classifier", False)
+        if use_cosine and use_prototypes:
+            raise ValueError(
+                "sa_use_cosine_head and sa_use_prototype_classifier "
+                "are mutually exclusive"
+            )
+        if use_cosine:
             self._network = SharedACosineNet(args, True)
+        elif use_prototypes:
+            self._network = SharedAPrototypeNet(args, True)
 
     def update_network(self, index=True, task_index=None):
         model = timm.create_model(
@@ -79,7 +90,53 @@ class Learner(SDLoraLearner):
                         epochs=tune_epochs,
                         lr=float(self.args.get("sa_final_head_lr", 1e-3)),
                     )
+            if self.args.get("sa_use_prototype_classifier", False):
+                prototypes = self._compute_prototypes(data_manager, raw_network)
+                raw_network.set_prototypes(prototypes)
+                logging.info(
+                    "[SharedA-SDLoRA] prototype classifier active for %d classes",
+                    len(prototypes),
+                )
                 raw_network.backbone.cleanup_per_task_files(self.args["filepath"])
+
+    def _compute_prototypes(self, data_manager, raw_network):
+        """Compute L2-normalized per-class mean prototypes for the classes of
+        the current task, using only that task's training data at training time.
+        Old prototypes are loaded from disk and merged (no old data re-use)."""
+        cur_classes = np.arange(self._known_classes, self._total_classes)
+        dataset = data_manager.get_dataset(
+            cur_classes, source="train", mode="test"
+        )
+        loader = DataLoader(
+            dataset,
+            batch_size=64,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True,
+        )
+        raw_network.eval()
+        sums = {c: None for c in cur_classes.tolist()}
+        counts = {c: 0 for c in cur_classes.tolist()}
+        with torch.no_grad():
+            for _, inputs, targets in loader:
+                inputs = inputs.to(self._device, non_blocking=True)
+                feats = raw_network.backbone(inputs)
+                feats = F.normalize(feats, p=2, dim=1)
+                for f, target in zip(feats.cpu(), targets):
+                    c = int(target.item())
+                    if sums[c] is None:
+                        sums[c] = f.clone()
+                    else:
+                        sums[c] = sums[c] + f
+                    counts[c] += 1
+        prototypes = {c: F.normalize(sums[c], p=2, dim=0) for c in cur_classes.tolist()}
+        path = os.path.join(self.args["filepath"], PROTOTYPES_FILENAME)
+        if os.path.exists(path):
+            old = torch.load(path, map_location="cpu", weights_only=True)
+            for class_id, vector in old.items():
+                prototypes.setdefault(int(class_id), vector)
+        torch.save(prototypes, path)
+        return prototypes
 
     def _rebuild_eval_backbone(self):
         """Rebuild the backbone from saved artifacts so each task counts once."""

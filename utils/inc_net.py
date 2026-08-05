@@ -2,7 +2,12 @@ import copy
 import logging
 import torch
 from torch import nn
-from backbone.linears import SimpleLinear, SplitCosineLinear, CosineLinear
+from backbone.linears import (
+    SimpleLinear,
+    SplitCosineLinear,
+    CosineLinear,
+    PrototypeCosineHead,
+)
 from backbone.prompt import CodaPrompt
 import timm
 from backbone.lora import LoRA_ViT_timm
@@ -394,6 +399,42 @@ class IncrementalNet(BaseNet):
         self._gradcam_hooks[1] = self.backbone.last_conv.register_forward_hook(
             forward_hook
         )
+
+
+class SharedAPrototypeNet(IncrementalNet):
+    """IncrementalNet that can switch evaluation to a stored-prototype
+    cosine classifier (rehearsal-free: prototypes computed only from the
+    task's own data while that task is being trained)."""
+
+    def __init__(self, args, pretrained):
+        super(SharedAPrototypeNet, self).__init__(args, pretrained)
+        self.prototype_head = None
+
+    def set_prototypes(self, prototypes):
+        self.prototype_head = PrototypeCosineHead(prototypes).to(self._device)
+
+    def forward(self, x, ortho_loss=False, eval=False):
+        if eval:
+            out = self.backbone(x, eval=True)
+            out.update({"features": x})
+            return out
+        if self.model_type == "cnn":
+            x = self.backbone(x)
+            out = self.fc(x["features"])
+            out.update(x)
+            return out
+        if ortho_loss:
+            x, ortho_loss = self.backbone(x, loss=True)
+            out = self.fc(x)
+            out.update({"features": x})
+            return out, ortho_loss
+        x = self.backbone(x)
+        if self.training or self.prototype_head is None:
+            out = self.fc(x)
+        else:
+            out = self.prototype_head(x)
+        out.update({"features": x})
+        return out
 
 
 class CosineIncrementalNet(BaseNet):

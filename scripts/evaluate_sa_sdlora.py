@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backbone.sa_lora import SharedALoRA_ViT_timm
+from backbone.linears import PrototypeCosineHead
 from utils.data_manager import DataManager
 
 
@@ -67,6 +68,7 @@ def parse_args():
     parser.add_argument("--tune-lr", type=float, default=1e-3)
     parser.add_argument("--align", action="store_true", default=True)
     parser.add_argument("--cosine", action="store_true", default=False)
+    parser.add_argument("--prototype", action="store_true", default=False)
     parser.add_argument("--batch-size", type=int, default=16)
     return parser.parse_args()
 
@@ -208,6 +210,25 @@ def main():
     if cli.cosine:
         after_cosine = evaluate_cosine(backbone, weight, test_loader, device)
         print("final top1 with cosine norm: {:.2f}".format(after_cosine))
+
+    if cli.prototype:
+        proto_path = "{}/sa_prototypes.pt".format(cli.artifact)
+        if not Path(proto_path).exists():
+            raise FileNotFoundError("no stored prototypes at {}".format(proto_path))
+        prototypes = torch.load(proto_path, map_location=device, weights_only=True)
+        head = PrototypeCosineHead(prototypes).to(device)
+        correct = 0
+        total = 0
+        backbone.eval()
+        with torch.no_grad():
+            for _, inputs, targets in test_loader:
+                inputs = inputs.to(device, non_blocking=True)
+                features = backbone(inputs)
+                logits = head(features)["logits"]
+                _, preds = logits.max(dim=1)
+                correct += (preds.cpu() == targets).sum().item()
+                total += targets.shape[0]
+        print("final top1 with prototypes: {:.2f}".format(100.0 * correct / total))
 
     if cli.tune_epochs > 0:
         feature_matrix, target_vector = extract_features(

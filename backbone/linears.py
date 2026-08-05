@@ -33,6 +33,25 @@ class SimpleLinear(nn.Module):
         # return F.linear(input, self.weight, self.bias)
 
 
+class PrototypeCosineHead(nn.Module):
+    """Rehearsal-free cosine classifier over stored per-class prototypes."""
+
+    def __init__(self, prototypes):
+        super(PrototypeCosineHead, self).__init__()
+        class_ids = sorted(prototypes.keys())
+        self.class_ids = class_ids
+        self.out_features = len(class_ids)
+        weight = torch.stack([prototypes[c].detach().float() for c in class_ids])
+        self.register_buffer("weight", weight)
+
+    def forward(self, x):
+        logits = F.linear(
+            F.normalize(x, p=2, dim=1),
+            F.normalize(self.weight, p=2, dim=1),
+        )
+        return {"logits": logits}
+
+
 class CosineLinear(nn.Module):
     def __init__(self, in_features, out_features, nb_proxy=1, to_reduce=False, sigma=True):
         super(CosineLinear, self).__init__()

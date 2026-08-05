@@ -210,3 +210,10 @@
 - **容量诊断**：C100 每任务 norm rank10≈0.87–0.91、rank16≈0.85–0.89、rank32≈0.82–0.86、full≈0.57–0.62；raw full≈0.53–0.63；bias_rel≈0.89。说明提高秩收益递减，普通线性 transport 的容量远大于低秩假设，但低秩+偏置可能补上 C100 的小缺口。
 - **判断**：继续 rank 提升无意义；实现 affine LRPT（闭式全局漂移偏置 b + rank-r transport，仍无训练网络、无回放、U/V/b 用后即弃）作为下一候选。
 - **下一步**：INR affine（rank16+bias）先跑；达标后 C100 affine；无论结果如何，再补 full-rank 消融以量化“普通 transport 上限”。
+
+## 2026-08-06 03:54-04:10 INR affine 结果
+
+- **观察**：INR affine（rank16+bias）final Top1=79.38、AvgAcc=83.03、Forgetting=6.79；单数据集门槛通过（Final ≥79.14 ✓、AvgAcc ≥82.97 ✓）。affine 拟合 residual 从 plain rank16 的 ~0.89 降到 ~0.85，但 AvgAcc 与 rank10 v2 相同、Forgetting 更差。
+- **判断**：偏置提升拟合但不带来明确指标收益；C100 affine 是决定 affine 路线是否继续的关键。
+- **注意**：同 seed 下 task0 Top1 在不同运行间有波动（90.95/91.42/92.04），说明 DDP/DataLoader 存在一定运行间方差；对余量薄的门槛需多 seed 统计判断。
+- **下一步**：等待 C100 affine；同时准备 full-rank 消融。

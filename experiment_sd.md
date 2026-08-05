@@ -198,4 +198,10 @@
   - INR seed1995：final Top1=79.28、AvgAcc=83.12、Forgetting=6.48（单数据集门槛仍过：Final ≥79.14 ✓，AvgAcc ≥82.97 ✓）。
   - C100 seed1993：final Top1=88.26、AvgAcc=92.37、Forgetting=7.80（门槛未过：AvgAcc 差 0.20、Forgetting 差 0.72；且比 rank10 的 92.42/7.63 略差）。
 - 容量诊断（C100 rank16 每任务）：norm 空间 rank10≈0.87–0.91、rank16≈0.85–0.89、rank32≈0.82–0.86、full≈0.57–0.62；raw 空间 full≈0.53–0.63；bias 单独解释 ≈0.89–0.91。结论：rank 提升收益有限，full-rank 可解释约 40–47% 漂移，但低秩（10/16）只解释约 10–15%。
-- 下一步：测试 affine LRPT（rank16 + 全局漂移偏置 b，闭式、无额外网络；b 与 U,V 均任务内驻留、用后即弃）。先跑 INR affine，达标后再跑 C100 affine；同时把 full-rank 普通 transport 作为上限消融。
+- 结果（affine LRPT：rank16 + 全局漂移偏置，INR seed1995 已达标）：
+  - final Top1=**79.38**（基线 78.76 ✓；EXP-009 79.34，+0.04，回退 ≤0.20 ✓）
+  - AvgAcc=**83.03**（EXP-009 82.47，+0.56；门槛 82.97 ✓）
+  - Forgetting=**6.79**（EXP-009 7.26，改善 0.47；门槛 6.26 ✗，但 AvgAcc 门槛通过 ✓）
+  - 曲线 [92.04, 86.99, 85.55, 83.48, 81.73, 82.59, 80.19, 79.77, 78.56, 79.38]
+  - affine rank16 每任务 residual ≈ 0.83–0.86（plain rank16 0.88–0.90），bias 提升拟合但不明显改善指标。
+- 下一步：C100 affine（运行中）；若 C100 仍不过，补充 full-rank 消融并转向其他机制（如 LoRA 结构驱动的漂移基）。

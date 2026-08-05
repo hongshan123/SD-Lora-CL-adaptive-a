@@ -17,10 +17,11 @@ num_workers = 8
 class Learner(SDLoraLearner):
     """Shared-A SD-LoRA: task-invariant A, per-task B, exact final merging."""
 
-    def update_network(self, index=True):
+    def update_network(self, index=True, task_index=None):
         model = timm.create_model(
             "vit_base_patch16_224", pretrained=True, num_classes=0
         )
+        cur_task_index = self._cur_task if task_index is None else task_index
         model = SharedALoRA_ViT_timm(
             vit_model=model.eval(),
             r=self.args.get("lora_rank", 10),
@@ -28,7 +29,7 @@ class Learner(SDLoraLearner):
             index=index,
             increment=self.args["increment"],
             filepath=self.args["filepath"],
-            cur_task_index=self._cur_task,
+            cur_task_index=cur_task_index,
             shared_a_orthogonal=self.args.get("sa_shared_a_orthogonal", True),
             train_a_all_tasks=self.args.get("sa_train_a_all_tasks", False),
             delete_per_task_files=self.args.get("sa_delete_per_task_files", False),
@@ -39,6 +40,8 @@ class Learner(SDLoraLearner):
     def incremental_train(self, data_manager):
         super().incremental_train(data_manager)
         if self._is_main_process():
+            if self._cur_task == data_manager.nb_tasks - 1:
+                self._rebuild_eval_backbone()
             raw_network = self._raw_network()
             raw_network.backbone.save_merged_lora(self.args["filepath"])
             logging.info(
@@ -59,6 +62,14 @@ class Learner(SDLoraLearner):
                     )
                 raw_network.backbone.cleanup_per_task_files(self.args["filepath"])
 
+    def _rebuild_eval_backbone(self):
+        """Rebuild the backbone from saved artifacts so each task counts once."""
+        self._unwrap_network()
+        self._network.backbone = self.update_network(
+            index=False, task_index=self._cur_task + 1
+        )
+        self._network.to(self._device)
+
     def _final_head_tune(self, data_manager, raw_network, epochs, lr):
         """Freeze the backbone and fine-tune only the global classifier."""
         raw_network.eval()
@@ -72,33 +83,36 @@ class Learner(SDLoraLearner):
         )
         loader = DataLoader(
             dataset,
-            batch_size=self.args["batch_size"],
+            batch_size=min(int(self.args["batch_size"]), 16),
             shuffle=True,
             num_workers=num_workers,
             pin_memory=True,
         )
 
         features, targets = [], []
+        torch.cuda.empty_cache()
         with torch.no_grad():
             for _, inputs, batch_targets in loader:
                 inputs = inputs.to(self._device, non_blocking=True)
-                features.append(raw_network.backbone(inputs).detach())
+                features.append(raw_network.backbone(inputs).detach().cpu())
                 targets.append(batch_targets)
         feature_matrix = torch.cat(features)
-        target_vector = torch.cat(targets).to(self._device)
+        target_vector = torch.cat(targets)
+        del features, targets
+        torch.cuda.empty_cache()
 
         raw_network.fc.train()
         optimizer = optim.SGD(
             raw_network.fc.parameters(), lr=lr, momentum=0.9
         )
         for epoch in range(epochs):
-            permutation = torch.randperm(feature_matrix.shape[0], device=self._device)
+            permutation = torch.randperm(feature_matrix.shape[0])
             epoch_loss = 0.0
             steps = 0
             for start in range(0, feature_matrix.shape[0], self.args["batch_size"]):
                 indices = permutation[start : start + self.args["batch_size"]]
-                batch_x = feature_matrix[indices]
-                batch_y = target_vector[indices]
+                batch_x = feature_matrix[indices].to(self._device)
+                batch_y = target_vector[indices].to(self._device)
                 logits = raw_network.fc(batch_x)["logits"]
                 loss = F.cross_entropy(logits, batch_y)
                 optimizer.zero_grad()

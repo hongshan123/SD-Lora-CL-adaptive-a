@@ -293,6 +293,7 @@
 - **冒烟结果**：1-epoch INR 灾难性——task0 评估异常（83.8 vs 常规 88+），task1 后旧类精度 50% 并恶化到最终 0%。JVP 验证余弦 0.97–0.99，但 classwise 更新公式（S_c × R_l 系数内积）导致原型被破坏；即便修复基底坐标变换与参数 clone，仍不收敛。
 - **决策**：按用户“无法达到目标则 git 回退到当前仓库继续实验”的指示，`git restore` 丢弃未提交 classwise/JVP 改动并删除相关配置，回到 d835567。
 - **下一步**：继续原方案 affine rank12（INR 先跑）。
+- **补充**：15:36 的 INR affine rank12 日志在 Task 4（60-80）训练期间被 SIGTERM 中断（用户反馈打断），未产生有效结果；后续转入 operator-stability 路线，rank12 未再重跑，该配置保留在仓库中。
 
 ## 2026-08-06 15:52 有效算子稳定化取代 class-wise 外推
 
@@ -368,3 +369,10 @@
 - **提交**：commit `c666ac0`（代码+测试）；工作树仅剩文档改动。
 - **判断**：Phase A 证明固定 A 下累计 B 是精确代数等价，不是近似；Phase B 可以放心把 artifact 从 O(T) 个 B 文件改为单累计 B。
 - **下一步**：Phase B——`SA_STATE_VERSION` 升级、在线累计保存/加载、Task 0 后即合并、显式迁移脚本、DDP 无重复累计验证。
+
+## 2026-08-06 20:50 Phase C 代数纯函数完成（gauge alignment）
+
+- **实现**：`canonical_down_projection`（QR 薄分解）、`canonicalize_effective_up_projection`（吸收 R^T）、`gauge_align_up_projection`（H_old Q_old^T Q_new 闭式解）、`gauge_projection_residual`；全部为纯函数，无训练路径改动。
+- **验证**：同 span 精确保持、一般情形等于正交投影、残差公式一致；全量 36 passed；commit `02459fc`。
+- **判断**：Phase B 状态集成所需的两块代数（累计折叠、canonical 化 + gauge）都已锁定；下一步把 v2 artifact 格式与在线累计训练路径接起来，并在接入前先写 v1→v2 迁移脚本。
+- **下一步**：Phase B——`SA_STATE_VERSION=2`（canonical_down + cumulative_up + R + task_id）、`_CumulativeSharedAQKV` 前向、Task 结束后在线累计、旧产物显式迁移、DDP 无重复累计 smoke。

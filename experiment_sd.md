@@ -318,3 +318,10 @@
   - 与 `save_merged_lora` 产物逐分支 `allclose(atol=1e-6)`；
   - 输入校验（空 bank、数量不匹配、非标量 scale、缺任务 scale）均抛 ValueError；全量测试 32 passed。
 - 下一步：Phase B 在线累计状态（SA_STATE_VERSION 升级 + 迁移脚本 + 单 artifact 全流程）。
+
+### EXP-014 补充：canonical QR 与 gauge alignment 纯函数（Phase C 代数）
+
+- 状态：完成（commit `02459fc`）
+- 改动：`backbone/sa_lora.py` 新增 `canonical_down_projection`（A^T=QR 薄分解，返回 Q^T、R）、`canonicalize_effective_up_projection`（H_raw R^T）、`gauge_align_up_projection`（H_old Q_old^T Q_new 闭式最小二乘）、`gauge_projection_residual`（Q_new 补空间投影误差）；`tests/test_sa_cumulative.py` 新增 4 个用例。
+- 验证：A=R^T Q^T 重构误差 <1e-6；canonical 算子与 raw bank 算子一致；同 span 时 gauge 误差零；一般情形 `H_aligned Q_new^T` 等于旧算子在 Q_new 张成空间上的投影，残差与理论一致。全量 36 passed。
+- 下一步：Phase B 状态集成（v2 artifact、在线累计保存/加载、迁移脚本、DDP 验证）。

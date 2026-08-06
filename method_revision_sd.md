@@ -210,6 +210,8 @@ LoRA total:                            368,640
 4. 记录 principal angles、relative projection residual 和算子保持误差。
 5. 不先加入 principal-angle regularizer；只有当投影残差与遗忘显著相关时才考虑。
 
+代数部分完成（commit `02459fc`）：`canonical_down_projection` / `canonicalize_effective_up_projection` / `gauge_align_up_projection` / `gauge_projection_residual` 已有单测；待 Phase B 状态集成后接入训练路径。
+
 ### Phase D：Residual LRPT
 
 1. prototype pre/post 特征必须来自真正部署的累计模型状态。

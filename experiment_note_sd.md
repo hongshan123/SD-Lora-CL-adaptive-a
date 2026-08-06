@@ -420,6 +420,13 @@
 - **预测量**：CPU 上 C100 主方法产物 FLOPs=2.707e11/forward(batch8)、吞吐 29.4 img/s（CPU，仅参考）；正式 GPU 测量待队列结束后跑。
 - **风险**：多 seed 队列约 3.5h，若中途 OOM/网络下载失败需按日志重跑对应 seed；强基线（InfLoRA/CL-LoRA/LoRA-DRS/DGS）尚未实现，论文阶段需评估可复现范围。
 
+## 2026-08-06 23:05-23:52 CUB-200 数据准备
+
+- **下载**：Caltech 原链接需登录；改用 `data.caltech.edu/records/65de6-vp158/files/CUB_200_2011.tgz?download=1` 镜像下载成功（1.15GB）。
+- **转换**：`scripts/prepare_cub.py` 按官方 train_test_split 构建 `data/cub/train|test`（5994/5794 张、200 类；symlink 指向 `_downloads/cub_extract`）；`DataManager("cub")` 验证 10 任务/200 类通过。
+- **配置**：`exps/sa_cumulative_cub_seed1_gauge.json`（与 INR 同超参，cumulative+gauge，无 LRPT）+ 运行脚本，commit `9c2ca2f`；待多 seed 队列结束后运行。
+- **多 seed 部分结果**：seed1 INR gauge Final 77.99 / AvgAcc 82.54 / Forgetting 6.77（与 seed1995 的 79.06 不同属正常——seed 决定类序；同 seed 基线 EXP-009 待跑）。
+
 ## 2026-08-06 23:00 诊断-遗忘相关性初算与诊断精度修正
 
 - **工具**：新增 `scripts/drift_forgetting_correlation.py`（最终精度矩阵 → 每任务遗忘；日志诊断 → Pearson/Spearman）。

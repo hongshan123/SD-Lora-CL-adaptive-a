@@ -258,12 +258,14 @@
 ## EXP-012 Shared-A 有效 LoRA 算子稳定化
 
 - 日期：2026-08-06
-- 状态：DDP 冒烟待运行
+- 状态：INR seed1995 完整训练运行中
 - 目标/假设：上轮灾难性遗忘来自不完整的 class-wise JVP 外推，而 Shared-A 的真实历史分支可直接写作 `M_old @ normalize(A)`。训练新任务时约束该有效算子相对漂移，能在不访问旧样本的条件下从根源限制共享 A 和历史 scale 对旧类别表示的扰动。
 - 改动：新增 `backbone/sa_operator_stability.py`；`SharedALoRA_ViT_timm` 在 Task>0 的训练构造期保存非持久的旧 A / 旧有效 B 快照，并提供 `old_operator_stability_loss()`；`models/sdlora.py` 增加可扩展额外训练损失钩子；`models/sa_sdlora.py` 增加 `sa_operator_stability_lambda`。新增 Task 0/Task 1 零漂移、梯度、state-dict 非持久化测试。
-- 配置与命令：`exps/sa_sdlora_operator_stability_smoke_inr_seed1995.json`；`GPU_IDS=0,1,2,3 bash run_sa_operator_stability_smoke_inr.sh`。
+- 配置与命令：smoke 为 `exps/sa_sdlora_operator_stability_smoke_inr_seed1995.json`；完整 INR 为 `exps/sa_sdlora_operator_stability_inr_seed1995.json`，命令 `GPU_IDS=0,1,2,3 bash run_sa_operator_stability_inr.sh`。
 - 理论依据/文献：InfLoRA（CVPR 2024）和 LoRA-DRS（CVPR 2025）均从 LoRA 参数/子空间限制任务干扰；本实验不同于冻结子空间或梯度投影，直接约束当前网络前向中全部历史 B bank 与共享 A 构成的精确有效线性算子。它也不同于 LDC 的特征空间漂移回归，不学习或应用 prototype transport。
 - 参数与合规：快照只在当前任务训练内存中存在，未注册为 module buffer，`state_dict` 与 artifact 不含它；最终持久参数仍为 EXP-009 的 LoRA+prototype 口径（INR 2,181,130），满足预算。Task 0 返回严格零损失。
-- 结果（首次 DDP smoke，已定位工程 bug）：Task 0 训练/评估正常（79.56），且无 `operator_stability`；Task 1 训练期出现有限稳定项 0.0008。训练结束保存后诊断调用报 `KeyError: 1`，原因是 `save_lora_parameters()` 令 `task_id` 自增，而当前对象尚未加载该任务的 B 文件，诊断错误地以可变 `task_id` 遍历历史 B。不是遗忘或梯度异常。
-- 修复：稳定项改用构造时冻结的 `_operator_reference_task_count`，并增加“保存后仍能计算稳定项”的回归测试。修复后从全新 smoke 输出目录重跑。
-- 下一步：若 smoke 通过，运行 `exps/sa_sdlora_operator_stability_inr_seed1995.json` 的 20 epoch 完整 INR；若出现 Task 0 异常或非有限 loss，立即停止并回退本 commit。
+- 结果（首次 DDP smoke，工程 bug）：Task 0 训练/评估正常（79.56），且无 `operator_stability`；Task 1 训练期出现有限稳定项 0.0008。训练结束保存后诊断调用报 `KeyError: 1`，原因是 `save_lora_parameters()` 令 `task_id` 自增，而当前对象尚未加载该任务的 B 文件，诊断错误地以可变 `task_id` 遍历历史 B。不是遗忘或梯度异常。
+- 修复后 DDP smoke（1 epoch x 10 tasks，4 x RTX 3090）：exit=0；Task 0=79.56，Task 1 至 Task 9 的稳定项均有限（0.0008 到 0.0000），末任务 Top1=69.31、AvgAcc=73.08、Forgetting=9.42。1-epoch 数值不参与性能对比，验收的是训练路径；未出现 NaN、崩溃、Task 0 污染或旧类归零。保存后的每任务相对有效算子漂移范围 0.000201--0.021862。
+- 产物审计：`verify_sa_consistency.py` PASS（feature max diff=4.053e-06，prototype logit diff=2.384e-07）；总持久参数=2,181,130（59.17% 基线，预算内）。
+- 完整运行选择：smoke lambda=0.1 的稳定项仅 0.0008，而 CE=1.976，约低三个数量级；完整 INR 仅把 lambda 提升到 1.0，其余 EXP-009 配置不变，以确保该单变量确实得到有效检验。
+- 下一步：分析完整 INR 的 Final/AvgAcc/Forgetting 与 EXP-009；只有 INR 达标才创建 C100 同协议配置。

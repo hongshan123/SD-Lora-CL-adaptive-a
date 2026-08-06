@@ -122,4 +122,4 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 
 - class-wise JVP sensitivity 已在 1-epoch 冒烟中触发灾难性遗忘：其 class response 系数没有参数侧的完整映射，不能用来外推任意未来 `Delta A` 的原型位移。
 - 新候选不再预测 prototype 漂移，而是在每个 Task t 开始时快照历史分支的精确有效算子：`M_old @ normalize(A_old)`，其中 `M_old=sum_i s_i normalize(B_i)`。训练期间最小化当前历史算子相对漂移 `||M_live normalize(A)-M_old normalize(A_old)||_F^2 / ||M_old normalize(A_old)||_F^2`。
-- 该项只使用已保存的旧 B、历史 scale 和当前共享 A；不读取旧图像、不新增持久状态、不改变 Task 0，也不移动 prototype。先在 INR seed1995 做 1-epoch x 10-task 四卡 smoke，日志必须满足 Task 0 无 `operator_stability`、Task 1 起有有限非负该项且全过程无异常；随后再运行完整 INR。
+- 该项只使用已保存的旧 B、历史 scale 和当前共享 A；不读取旧图像、不新增持久状态、不改变 Task 0，也不移动 prototype。1-epoch x 10-task 四卡 smoke 已通过：Task 0 无稳定项、Task 1 起各项有限、保存/重建/一致性审计均通过。由于 smoke 中 lambda=0.1 仅贡献约 0.0008（相对 CE=1.976 过弱），完整 INR 使用 lambda=1.0；若仍无指标增益，再以日志中的 raw drift 决定是否提高或放弃该正则。

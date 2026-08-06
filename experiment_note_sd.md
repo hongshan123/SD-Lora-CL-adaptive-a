@@ -434,6 +434,13 @@
 - **判断**：seed1995 单点过最低线（79.06），但 4-seed 均值 78.46 略低于 SD-LoRA 基线单点 78.76；需要 EXP-009 同 seed 对照后才能判断相对旧方法的统计关系。Forgetting 方差大（类序敏感）。
 - **下一步**：C100 seed1/2/3 运行中；随后 EXP-009 同 seed 队列（`run_sa_baseline_multiseed_queue.sh`）→ 配对 t 检验 → 任务长度/CUB/测量。
 
+## 2026-08-07 02:23 主方法多 seed 全部完成，EXP-009 对照队列启动
+
+- **C100 多 seed**（cumulative+gauge）：1993=87.70/91.83/8.53、1=87.82/91.72/8.93、2=87.80/91.23/8.74、3=88.01/91.28/8.51；mean±std 87.83±0.13 / 91.52±0.28 / 8.68±0.19。全部高于 SD-LoRA 基线单点 86.89，跨 seed 稳定。
+- **INR 多 seed**：78.46±0.48 / 82.28±0.37 / 7.86±1.31；seed1995=79.06 达标，其余 seed 略低。gauge 诊断 ~1e-8~3e-8。
+- **动作**：启动 `run_sa_baseline_multiseed_queue.sh`（EXP-009 seed1/2/3，INR+C100 共 6 个运行），用于同 seed 配对比较；预计约 2 小时。
+- **下一步**：基线完成后算 paired t-test（final/avg/forgetting）→ 更新验收结论 → 任务长度/CUB/GPU 测量 → 论文回填。
+
 ## 2026-08-06 23:00 诊断-遗忘相关性初算与诊断精度修正
 
 - **工具**：新增 `scripts/drift_forgetting_correlation.py`（最终精度矩阵 → 每任务遗忘；日志诊断 → Pearson/Spearman）。

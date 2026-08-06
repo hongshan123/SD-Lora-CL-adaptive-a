@@ -325,3 +325,24 @@
 - 改动：`backbone/sa_lora.py` 新增 `canonical_down_projection`（A^T=QR 薄分解，返回 Q^T、R）、`canonicalize_effective_up_projection`（H_raw R^T）、`gauge_align_up_projection`（H_old Q_old^T Q_new 闭式最小二乘）、`gauge_projection_residual`（Q_new 补空间投影误差）；`tests/test_sa_cumulative.py` 新增 4 个用例。
 - 验证：A=R^T Q^T 重构误差 <1e-6；canonical 算子与 raw bank 算子一致；同 span 时 gauge 误差零；一般情形 `H_aligned Q_new^T` 等于旧算子在 Q_new 张成空间上的投影，残差与理论一致。全量 36 passed。
 - 下一步：Phase B 状态集成（v2 artifact、在线累计保存/加载、迁移脚本、DDP 验证）。
+
+## EXP-015 Cumulative Shared-A v2（Phase B：在线累计状态 + 保存时 gauge alignment）
+
+- 日期：2026-08-06
+- 状态：工程完成；1-epoch DDP smoke 通过；完整 INR 筛选待跑
+- 目标/假设：历史 B bank 在线折叠为单套 canonical 状态（Q^T + H + R），持久 LoRA 状态与任务数无关；任务结束后把当前 B 折叠进 H，并用闭式 gauge alignment 把历史算子投影到新 Q 基底，保留其行空间内部分；每任务日志记录相对投影残差。
+- 改动：
+  - `backbone/sa_lora.py`：`SA_STATE_VERSION=2`；`_CumulativeSharedAQKV`（历史 = H@Q^T 固定，当前 = scale*B(Ax)/(||A||||B||)）；`_save_cumulative_state`（QR canonicalization → gauge align → 折叠当前任务 → 写单文件）；`migrate_sa_state_v1_to_v2`；`cumulative_gauge` 消融开关（commit `27a6574`、`63b267e`）。
+  - `utils/inc_net.py`、`models/sa_sdlora.py`：任务 0 构造与逐任务 update 透传 `sa_cumulative_state` / `sa_cumulative_gauge`（commit `d7ec60a`、`63b267e`）。
+  - `scripts/migrate_sa_state_v1_to_v2.py`（显式迁移，v1 state 备份为 `sa_state.pt.v1`）；`scripts/measure_sa_artifact.py` 支持 v2 计数。
+  - `tests/test_sa_cumulative.py` 新增 9 个 Phase B 用例（roundtrip、v1/v2 前向等价、gauge 累积公式、no-gauge 消融、迁移等价、flag 冲突、残差诊断）。
+- 配置与命令：`exps/sa_cumulative_smoke_inr_seed1995.json`；`GPU_IDS=0,1,2,3 bash run_sa_cumulative_smoke_inr.sh`。
+- 结果（smoke：1 epoch × 10 tasks，4×RTX 3090，exit=0）：
+  - 10 个任务全部完成，无 NaN/崩溃；每任务 `cumulative gauge task N: relative_projection_residual=0.000000`（6 位小数下为 0）。
+  - 产物仅 `sa_state.pt` + `sa_merged_lora.pt` + `CLs_*`；**无任何逐任务 B 文件**。
+  - 参数实测：canonical_down 184,320 + cumulative_up 184,320 + triangular_r 2,400 = LoRA 371,040 = 基线 3,686,400 的 **10.07%**（减少 89.93%）；INR 含原型 153,600 后 524,640 = 14.23%（减少 85.77%）。
+  - `verify_sa_consistency.py` PASS：v2 状态骨干与 merged canonical 骨干 feature max abs diff = 0.000e+00。
+  - 1-epoch 指标（Final 48.32 / AvgAcc 57.83 / Forgetting 12.13）仅用于管线验证，不参与性能对比。
+- 工程过程：首次 smoke 失败——任务 0 由 `utils/inc_net.get_backbone` 构造时未透传 `cumulative_state`，task0 写成 v1 产物，task1 报 legacy mismatch；修复透传后通过（commit `d7ec60a`）。
+- 分析：gauge residual 在 6 位小数下为 0，说明 1-epoch 训练下共享 A 的更新基本保持在旧行空间内（QR 后 Q 未变），gauge alignment 因此精确保持历史算子；完整训练下 A 是否跨出原 span 需看完整 INR 的残差序列。
+- 下一步：按 method_revision_sd.md 顺序跑完整 INR：cumulative-only（`sa_cumulative_gauge=false`）→ cumulative+gauge（默认 true）→ 通过后 C100 → gauge+residual LRPT。

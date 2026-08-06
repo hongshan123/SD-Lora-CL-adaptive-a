@@ -376,3 +376,11 @@
 - **验证**：同 span 精确保持、一般情形等于正交投影、残差公式一致；全量 36 passed；commit `02459fc`。
 - **判断**：Phase B 状态集成所需的两块代数（累计折叠、canonical 化 + gauge）都已锁定；下一步把 v2 artifact 格式与在线累计训练路径接起来，并在接入前先写 v1→v2 迁移脚本。
 - **下一步**：Phase B——`SA_STATE_VERSION=2`（canonical_down + cumulative_up + R + task_id）、`_CumulativeSharedAQKV` 前向、Task 结束后在线累计、旧产物显式迁移、DDP 无重复累计 smoke。
+
+## 2026-08-06 20:15-20:41 Phase B v2 累计状态实现 + DDP smoke
+
+- **实现**：`SA_STATE_VERSION=2` 单文件状态（canonical_down Q^T / cumulative_up H / triangular_r R / task_id）；`_CumulativeSharedAQKV` 前向（历史 H@Q^T 固定 + 当前归一化 LoRA 支路）；保存时 QR canonicalization → `H_old_aligned = H_old Q_old^T Q_new` → 折叠当前任务；v1→v2 显式迁移脚本（备份 `sa_state.pt.v1`，保留 B 文件）；`measure_sa_artifact.py` 支持 v2；`cumulative_gauge` 消融开关。commits `27a6574`/`d7ec60a`/`63b267e`；全量 43 tests passed。
+- **失败→修复**：首次 4 卡 smoke 在 task1 报 "artifact is legacy v1"——任务 0 由 `utils/inc_net.get_backbone` 构造时未透传 `cumulative_state`，task0 实际写成 v1 产物；修复 `get_backbone`/`update_network` 透传后重跑。
+- **smoke 结果**（1 epoch × 10 tasks，exit=0）：10 任务无 NaN/崩溃；产物无逐任务 B 文件；LoRA 371,040 = 基线 10.07%（减少 89.93%），含 INR 原型 524,640 = 14.23%（减少 85.77%）；`verify_sa_consistency` feature diff = 0.000e+00 PASS；每任务 gauge residual 6 位小数下为 0。
+- **判断**：v2 管线的构造/保存/恢复/重建路径可信。gauge residual≈0 提示 1-epoch 下 A 基本不跨行空间；完整训练是否跨出原 span 待观察。1-epoch 指标仅验证管线，不作为性能依据。
+- **下一步**：完整 INR cumulative-only（gauge=false）→ INR cumulative+gauge → C100 → residual LRPT 组合；每任务记录 gauge residual 与旧类遗忘的相关性。

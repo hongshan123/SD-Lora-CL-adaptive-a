@@ -192,7 +192,7 @@ LoRA total:                            368,640
 3. 固定 A 时验证 bank forward 与 cumulative forward 一致。
 4. 要求每层有效算子误差、feature 误差和 logits 误差均小于 `1e-5` 量级。
 
-状态：完成（commit `c666ac0`，2026-08-06）。`tests/test_sa_cumulative.py` 验证固定 A 下算子/feature/logits 等价误差 < 1e-5，且累计 B 与 `save_merged_lora` 产物一致；全量 32 tests passed。
+状态：完成（commit `c666ac0`，2026-08-06）。`tests/test_sa_cumulative.py` 验证固定 A 下算子/feature/logits 等价误差 < 1e-5，且累计 B 与 `save_merged_lora` 产物一致；全量 43 tests passed。
 
 ### Phase B：在线累计状态
 
@@ -210,7 +210,9 @@ LoRA total:                            368,640
 4. 记录 principal angles、relative projection residual 和算子保持误差。
 5. 不先加入 principal-angle regularizer；只有当投影残差与遗忘显著相关时才考虑。
 
-代数部分完成（commit `02459fc`）：`canonical_down_projection` / `canonicalize_effective_up_projection` / `gauge_align_up_projection` / `gauge_projection_residual` 已有单测；待 Phase B 状态集成后接入训练路径。
+代数部分完成（commit `02459fc`）：`canonical_down_projection` / `canonicalize_effective_up_projection` / `gauge_align_up_projection` / `gauge_projection_residual` 已有单测。
+
+Phase B（v2 在线累计状态，commits `27a6574`/`d7ec60a`/`63b267e`）已落地并完成 4 卡 1-epoch DDP smoke：10 任务 exit=0、无逐任务 B 文件、`verify_sa_consistency` feature diff=0.000e+00 PASS。实测 LoRA 状态 371,040（canonical_down 184,320 + cumulative_up 184,320 + triangular_r 2,400）= 基线 10.07%；含 INR 原型 524,640 = 14.23%（减少 85.77%，相对第 7 节表格多出 R 2,400）。保存时执行 QR canonicalization + `H_old_aligned = H_old Q_old^T Q_new` 并逐任务记录相对投影残差；`cumulative_gauge=false` 为 cumulative-only 消融。下一步按第 10 节顺序跑完整 INR。
 
 ### Phase D：Residual LRPT
 

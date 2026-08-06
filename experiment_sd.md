@@ -258,7 +258,7 @@
 ## EXP-012 Shared-A 有效 LoRA 算子稳定化
 
 - 日期：2026-08-06
-- 状态：INR seed1995 完整训练运行中
+- 状态：完成；INR seed1995 工程验证通过，但未通过第二轮性能验收，不启动 C100。
 - 目标/假设：上轮灾难性遗忘来自不完整的 class-wise JVP 外推，而 Shared-A 的真实历史分支可直接写作 `M_old @ normalize(A)`。训练新任务时约束该有效算子相对漂移，能在不访问旧样本的条件下从根源限制共享 A 和历史 scale 对旧类别表示的扰动。
 - 改动：新增 `backbone/sa_operator_stability.py`；`SharedALoRA_ViT_timm` 在 Task>0 的训练构造期保存非持久的旧 A / 旧有效 B 快照，并提供 `old_operator_stability_loss()`；`models/sdlora.py` 增加可扩展额外训练损失钩子；`models/sa_sdlora.py` 增加 `sa_operator_stability_lambda`。新增 Task 0/Task 1 零漂移、梯度、state-dict 非持久化测试。
 - 配置与命令：smoke 为 `exps/sa_sdlora_operator_stability_smoke_inr_seed1995.json`；完整 INR 为 `exps/sa_sdlora_operator_stability_inr_seed1995.json`，命令 `GPU_IDS=0,1,2,3 bash run_sa_operator_stability_inr.sh`。
@@ -268,4 +268,8 @@
 - 修复后 DDP smoke（1 epoch x 10 tasks，4 x RTX 3090）：exit=0；Task 0=79.56，Task 1 至 Task 9 的稳定项均有限（0.0008 到 0.0000），末任务 Top1=69.31、AvgAcc=73.08、Forgetting=9.42。1-epoch 数值不参与性能对比，验收的是训练路径；未出现 NaN、崩溃、Task 0 污染或旧类归零。保存后的每任务相对有效算子漂移范围 0.000201--0.021862。
 - 产物审计：`verify_sa_consistency.py` PASS（feature max diff=4.053e-06，prototype logit diff=2.384e-07）；总持久参数=2,181,130（59.17% 基线，预算内）。
 - 完整运行选择：smoke lambda=0.1 的稳定项仅 0.0008，而 CE=1.976，约低三个数量级；完整 INR 仅把 lambda 提升到 1.0，其余 EXP-009 配置不变，以确保该单变量确实得到有效检验。
-- 下一步：分析完整 INR 的 Final/AvgAcc/Forgetting 与 EXP-009；只有 INR 达标才创建 C100 同协议配置。
+- 完整 INR 结果（seed1995，4 x RTX 3090，exit=0）：Final Top1=79.39，AvgAcc=82.20，Forgetting=6.98；曲线 `[91.26, 85.16, 83.88, 82.49, 81.70, 81.66, 78.59, 79.37, 78.51, 79.39]`。Task 1--9 保存后的 raw effective-operator drift 为 0.002878/0.002560/0.002794/0.001957/0.002917/0.003128/0.002229/0.003862/0.002568。
+- 对比：相对原始 SD-LoRA（78.76/83.13/5.61）Final +0.63、AvgAcc -0.93、Forgetting +1.37；相对 EXP-009（79.34/82.47/7.26）Final +0.05、AvgAcc -0.27、Forgetting -0.28。INR 验收的 Final 下限 79.14 已通过，但 Forgetting 仍高于 6.26 且 AvgAcc 低于 82.97，故未通过。
+- 最终产物审计：持久参数 2,181,130（基线 59.17%，预算内）；per-task bank 与 merged backbone feature 最大差 1.001e-05，prototype logits 最大差 2.384e-07，均 PASS。
+- 分析：该项确实降低了 EXP-009 的 Forgetting，但收益不足且损失了 AvgAcc。它严格控制的是历史 LoRA 线性支路的聚合算子，而不是共享 A、新 B 与后续 ViT 非线性共同诱发的最终特征漂移；小算子漂移不等价于旧类原型和分类边界稳定。继续盲扫 lambda 预期主要牺牲新任务塑性，故将此方法记录为干净的负结果。
+- 下一步：按 INR-first 规则不跑 C100。若继续本研究方向，应先用无正则的受控日志测量同一 raw operator drift 与指标的相关性；若相关性弱，则不再以该算子作为主约束目标，回到已有的 affine LRPT/其他直接面向原型或分类边界的机制。

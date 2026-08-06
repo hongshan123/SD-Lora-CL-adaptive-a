@@ -312,3 +312,10 @@
 - **观察**：R2 smoke 覆盖 Task 0--9 并以 exit=0 结束。稳定项只从 Task 1 开始，训练项为 0.0008/0.0003/0.0001/0.0000...；保存后 raw relative drift 分别为 0.021862、0.007290、0.001274、0.000201、0.001541、0.000761、0.001501、0.001647、0.000942。merged/per-task 特征和 prototype logits 一致性均 PASS，参数预算不变。
 - **判断**：没有重现灾难性遗忘的工程前兆，机制的隔离、DDP、artifact 与恢复路径可信。lambda=0.1 对 CE 的贡献过低，完整训练若沿用它大概率退化为 EXP-009；选择 lambda=1.0 作为最小有效放大，而非直接跳到高强度正则。
 - **下一步**：完整 INR 运行中，重点记录每任务 raw drift、当前任务训练精度、最终 Top1/AvgAcc/Forgetting；若出现当前任务塑性明显受损或指标不如 EXP-009，则不再盲目扫 lambda，先比较无正则的旧算子漂移再决定。
+
+## 2026-08-06 16:43-16:45 EXP-012 完整 INR 结果
+
+- **观察**：4 卡完整 INR 正常 exit=0。Final Top1=79.39，AvgAcc=82.20，Forgetting=6.98；相对 EXP-009 的 79.34/82.47/7.26，final 近乎持平（+0.05）、遗忘下降 0.28，但平均准确率下降 0.27。对 SD-LoRA 的最终 Top1 有 +0.63，但 AvgAcc -0.93、Forgetting +1.37。
+- **工程审计**：artifact 参数为 2,181,130（SD-LoRA 的 59.17%，预算内）；bank/merged feature 最大差 1.001e-05、prototype logits 差 2.384e-07，均 PASS。Task 1--9 raw operator drift 为约 0.002--0.004，约束没有失效；训练中无 NaN、DDP/保存错误或 Task 0 污染。
+- **判断**：有效算子稳定性是一个可实现且安全的约束，但不是充分的遗忘代理。它只保持历史 `sum_i s_i B_i @ A` 的局部线性支路；新任务 B、注意力/MLP 的非线性与深层累积仍可使最终旧类特征和原型决策边界变化。把 lambda 再增大更可能削弱当前任务可塑性，不能据此期待跨过 0.72 的 Forgetting 缺口。
+- **决策**：EXP-012 在 INR 未达到 `Final>=79.14` 且 `F<=6.26 或 AvgAcc>=82.97` 的联合门槛，不按 INR-first 规则运行 C100。先补一个不带正则但记录同一 raw drift 的受控诊断，确认 drift 与 Forgetting 的相关性；若弱，停止 operator-level 路线，避免重复 lambda/rank 扫描。

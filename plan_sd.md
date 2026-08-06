@@ -66,6 +66,7 @@
 - EXP-007 已完成：C100 final Top1=86.90（达标），INR=78.34（差 0.42，未达标）；参数减 45%（达标）。A 持续训练优于 A 冻结，但分类头偏置仍是瓶颈。
 - **EXP-009 已完成并通过验收标准 1**：C100 final Top1=88.42（基线 86.89）、INR final Top1=79.34（基线 78.76）；LoRA 参数 2,027,530 = 基线 55%（减少 45%），含原型仍减少 40.8%。全程无回放。
 - 若后续需要改善遗忘/平均精度，备选：LDC（ECCV 2024）式原型漂移补偿；A 冻结 + 原型；EXP-008 训练期余弦 fc 头。
+- EXP-012（有效 LoRA 算子稳定化）已完成 INR：Final=79.39（较 SD-LoRA +0.63）、AvgAcc=82.20、Forgetting=6.98；工程与恢复审计均通过、参数不变，但未满足第二轮的 AvgAcc/Forgetting 门槛，因此不启动 C100，也不把它作为主方法。
 
 ---
 
@@ -123,3 +124,5 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - class-wise JVP sensitivity 已在 1-epoch 冒烟中触发灾难性遗忘：其 class response 系数没有参数侧的完整映射，不能用来外推任意未来 `Delta A` 的原型位移。
 - 新候选不再预测 prototype 漂移，而是在每个 Task t 开始时快照历史分支的精确有效算子：`M_old @ normalize(A_old)`，其中 `M_old=sum_i s_i normalize(B_i)`。训练期间最小化当前历史算子相对漂移 `||M_live normalize(A)-M_old normalize(A_old)||_F^2 / ||M_old normalize(A_old)||_F^2`。
 - 该项只使用已保存的旧 B、历史 scale 和当前共享 A；不读取旧图像、不新增持久状态、不改变 Task 0，也不移动 prototype。1-epoch x 10-task 四卡 smoke 已通过：Task 0 无稳定项、Task 1 起各项有限、保存/重建/一致性审计均通过。由于 smoke 中 lambda=0.1 仅贡献约 0.0008（相对 CE=1.976 过弱），完整 INR 使用 lambda=1.0；若仍无指标增益，再以日志中的 raw drift 决定是否提高或放弃该正则。
+- 完整 INR（lambda=1.0）已经完成：Final=79.39，AvgAcc=82.20，Forgetting=6.98。相对 EXP-009 只减少 Forgetting 0.28，却使 AvgAcc 降低 0.27，未满足 `F<=6.26` 或 `AvgAcc>=82.97`；此分支停止在 INR，不创建 C100 配置。
+- 后续原则：先验证被约束的 raw operator drift 是否与最终旧类精度相关，再决定是否保留任何 operator-level 正则；禁止没有此诊断的 lambda 扫描。

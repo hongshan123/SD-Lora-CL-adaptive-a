@@ -250,3 +250,7 @@
 - 结论（按用户反馈）：LoRA-aware JVP 方案单 seed 未达标（INR 过、C100 不过），**切换回原本设计**（generic 样本空间 affine LRPT rank10）。该方案 INR 已过（79.29/83.00/6.61），C100 最佳 88.58/92.46/7.12（差 0.11/0.04）。复跑 C100 affine r10 做方差检查；若过则进入多 seed。
 - 结果（C100 affine r10 复跑 RERUN2，仍未过）：final Top1=88.46（✓）、AvgAcc=92.48（门槛 92.57 ✗）、Forgetting=7.21（门槛 7.08 ✗）。两次运行 AvgAcc 92.46/92.48、Forgetting 7.12/7.21，均差一点。
 - 下一步：affine rank12 微调（rank10 最优、rank16 变差，rank12 可能更好）。INR rank12 先跑，达标后 C100 rank12。
+- classwise layerwise sensitivity 实验（用户最新反馈，已按指示回退）：
+  - 实现了 JVP requires_grad 保存/恢复与一致性断言、中点 JVP 与有限差分验证（ΔA/ΔB/ΔA+B/交互项余弦/相对误差）、class-wise 12×8 sensitivity + 共享 768×8 基底、基底更新坐标变换、sensitivity-based 强度。
+  - 冒烟（1-epoch INR）结果灾难性：task0 评估异常偏低（≈83.8 vs 常规 88+），task1 后旧类精度跌至 50% 并持续恶化（最终 task0 类 0%）。JVP 本身验证良好（ΔA+B 余弦 0.97–0.99），但 classwise 更新公式/基底一致性仍无法收敛。
+  - 按用户指示 `git restore` 回退未提交改动，回到 d835567 仓库状态，继续原方案。

@@ -286,3 +286,10 @@
 - **观察**：C100 affine r10 RERUN2 final=88.46、AvgAcc=92.48、Forgetting=7.21；两次运行都差门槛 0.09–0.13（AvgAcc）/0.04–0.13（Forgetting）。INR affine r10 已过。
 - **判断**：λ/复跑无解；试 rank12（介于最优 rank10 与变差的 rank16 之间）。
 - **下一步**：INR affine rank12 → C100 affine rank12。
+
+## 2026-08-06 15:00-15:40 classwise 实验失败与回退
+
+- **实现**：按用户反馈完成 JVP 卫生（保存/恢复 requires_grad + 断言）、中点 JVP、有限差分验证日志、class-wise layerwise sensitivity（12×8/类 + 768×8 基底）、基底更新时旧 S_c 坐标变换、sensitivity-based 强度、bias 投影到基底。
+- **冒烟结果**：1-epoch INR 灾难性——task0 评估异常（83.8 vs 常规 88+），task1 后旧类精度 50% 并恶化到最终 0%。JVP 验证余弦 0.97–0.99，但 classwise 更新公式（S_c × R_l 系数内积）导致原型被破坏；即便修复基底坐标变换与参数 clone，仍不收敛。
+- **决策**：按用户“无法达到目标则 git 回退到当前仓库继续实验”的指示，`git restore` 丢弃未提交 classwise/JVP 改动并删除相关配置，回到 d835567。
+- **下一步**：继续原方案 affine rank12（INR 先跑）。

@@ -8,11 +8,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backbone.lrpt import (
     apply_transport,
+    apply_transport_adaptive,
     bias_relative_error,
     fit_affine_low_rank_transport,
+    fit_affine_map,
     fit_affine_rank_residuals,
+    fit_layerwise_weights,
     fit_low_rank_transport,
     fit_rank_residuals,
+    low_rank_factors,
+    project_map_to_basis,
     transport_prediction_error,
 )
 
@@ -141,6 +146,55 @@ def test_apply_transport_damping_scales_movement():
     zero = apply_transport({0: proto}, u, v, bias=bias, damping=0.0)[0]
     assert torch.allclose(zero, proto, atol=1e-6)
     assert torch.linalg.norm(half - proto) < torch.linalg.norm(full - proto)
+
+
+def test_fit_affine_map_and_low_rank_factors_recover():
+    torch.manual_seed(15)
+    n, d, rank = 300, 16, 3
+    x = torch.randn(n, d) - 0.3
+    x = x - x.mean(dim=0, keepdim=True)
+    u0 = torch.randn(d, rank)
+    v0 = torch.randn(d, rank)
+    b0 = 0.4 * torch.randn(d)
+    y = x + b0 + (x @ v0) @ u0.t()
+    w, bias = fit_affine_map(x, y, reg=1e-6)
+    u, v = low_rank_factors(w, rank=rank)
+    pred = x + bias + (x @ v) @ u.t()
+    assert torch.allclose(pred, y, atol=1e-4)
+
+
+def test_project_map_to_basis_constrains_columns():
+    torch.manual_seed(16)
+    w = torch.randn(12, 12)
+    basis = torch.randn(12, 4)
+    basis, _ = torch.linalg.qr(basis)
+    proj = project_map_to_basis(w, basis)
+    residual = w - proj
+    assert torch.allclose(basis.t() @ residual, torch.zeros(4, 12), atol=1e-5)
+
+
+def test_layerwise_weights_recover_dominant_layer():
+    torch.manual_seed(17)
+    n, d = 200, 10
+    x = torch.randn(n, d)
+    w0 = 0.05 * torch.randn(d, d)
+    y = x + x @ w0.t()
+    maps = [w0, torch.zeros_like(w0)]
+    alpha = fit_layerwise_weights(x, y, maps, fit_rows=100)
+    assert alpha[0] > 0
+    assert alpha[1] < 1e-3
+
+
+def test_apply_transport_adaptive_normalizes_and_scales():
+    torch.manual_seed(18)
+    u = torch.randn(8, 2)
+    v = torch.randn(8, 2)
+    bias = torch.randn(8)
+    p1 = torch.nn.functional.normalize(torch.randn(8), p=2, dim=0)
+    p2 = torch.nn.functional.normalize(torch.randn(8), p=2, dim=0)
+    moved = apply_transport_adaptive({0: p1, 1: p2}, u, v, bias=bias)
+    assert torch.allclose(torch.linalg.norm(moved[0]), torch.tensor(1.0), atol=1e-6)
+    assert torch.allclose(torch.linalg.norm(moved[1]), torch.tensor(1.0), atol=1e-6)
 
 
 def test_affine_rank_residuals_improve_over_plain():

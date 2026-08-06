@@ -11,11 +11,16 @@ from torch.utils.data import DataLoader
 
 from backbone.lrpt import (
     apply_transport,
+    apply_transport_adaptive,
     bias_relative_error,
     fit_affine_low_rank_transport,
+    fit_affine_map,
     fit_affine_rank_residuals,
+    fit_layerwise_weights,
     fit_low_rank_transport,
     fit_rank_residuals,
+    low_rank_factors,
+    project_map_to_basis,
     transport_prediction_error,
 )
 from backbone.sa_lora import SharedALoRA_ViT_timm
@@ -67,6 +72,19 @@ class Learner(SDLoraLearner):
         self._lrpt_damping = float(args.get("lrpt_damping", 1.0))
         self._lrpt_dual = bool(args.get("lrpt_dual", False))
         self._lrpt_class_weight = float(args.get("lrpt_class_weight", 0.3))
+        self._lrpt_basis = args.get("lrpt_basis", "generic")
+        if self._lrpt_basis not in ("generic", "delta_a", "delta_a_b", "layerwise"):
+            raise ValueError(
+                "lrpt_basis must be generic/delta_a/delta_a_b/layerwise"
+            )
+        self._lrpt_basis_rank = int(
+            args.get("lrpt_basis_rank", self._lrpt_rank)
+        )
+        self._lrpt_basis_max_samples = int(
+            args.get("lrpt_basis_max_samples", 4096)
+        )
+        self._lrpt_basis_cap = int(args.get("lrpt_basis_cap", 128))
+        self._lrpt_adaptive = bool(args.get("lrpt_adaptive", False))
         self._lrpt_fit_target = args.get("lrpt_fit_target", "sample")
         if self._lrpt_fit_target not in ("sample", "classmean"):
             raise ValueError(
@@ -75,6 +93,8 @@ class Learner(SDLoraLearner):
         self._lrpt_diagnostics = bool(args.get("lrpt_diagnostics", True))
         self._lrpt_pre_features = None
         self._lrpt_pre_targets = None
+        self._lrpt_a_old = None
+        self._lrpt_res_pre = None
 
     def update_network(self, index=True, task_index=None):
         model = timm.create_model(
@@ -111,6 +131,11 @@ class Learner(SDLoraLearner):
                     return_targets=True,
                 )
             )
+            raw_network = self._raw_network()
+            self._lrpt_a_old = [
+                w.weight.detach().cpu().clone()
+                for w in raw_network.backbone.w_As
+            ]
             logging.info(
                 "[SharedA-SDLoRA] LRPT pre-update features captured for task %d (%d samples)",
                 self._cur_task + 1,
@@ -188,6 +213,179 @@ class Learner(SDLoraLearner):
             return features, torch.cat(targets, dim=0)
         return features
 
+    def _collect_anchor_images(self, data_manager, task_index=None, per_class=2):
+        """Collect a few real current-task images per class as anchors for the
+        LoRA parameter JVP (J_A(x) ΔA + J_B(x) ΔB)."""
+        if task_index is None:
+            task_index = self._cur_task
+        cur_classes = np.arange(
+            self._known_classes,
+            self._known_classes + data_manager.get_task_size(task_index),
+        )
+        dataset = data_manager.get_dataset(
+            cur_classes, source="train", mode="test"
+        )
+        loader = DataLoader(
+            dataset,
+            batch_size=64,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=True,
+        )
+        selected = {int(c): [] for c in cur_classes.tolist()}
+        with torch.no_grad():
+            for _, inputs, targets in loader:
+                inputs = inputs.to(self._device, non_blocking=True)
+                for img, target in zip(inputs, targets):
+                    c = int(target.item())
+                    if len(selected[c]) < per_class:
+                        selected[c].append(img)
+                if all(len(v) >= per_class for v in selected.values()):
+                    break
+        anchors = torch.stack(
+            [img for values in selected.values() for img in values]
+        )
+        return anchors
+
+    def _lora_jvp_basis(self, data_manager, mode="delta_a_b"):
+        """Compute the final-feature drift responses induced by the actual LoRA
+        parameter changes (ΔA and/or new B_t) via JVP on current-task anchors,
+        then take the top-r right singular vectors as the transport basis."""
+        from torch.func import functional_call
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+        from torch.autograd.forward_ad import dual_level, make_dual, unpack_dual
+
+        anchors = self._collect_anchor_images(data_manager, per_class=2)
+        module = self._raw_network().backbone
+        module.eval()
+        a_weights = [w.weight for w in module.w_As]
+        b_weights = [w.weight for w in module.w_Bs]
+
+        # Match LoRA parameter names by object identity.
+        name_to_weight = {}
+        for name, param in module.named_parameters():
+            for weight in a_weights + b_weights:
+                if param is weight and name not in name_to_weight:
+                    name_to_weight[name] = weight
+                    break
+        order = []
+        for weight in a_weights + b_weights:
+            for name, mapped in name_to_weight.items():
+                if mapped is weight and name not in order:
+                    order.append(name)
+                    break
+        lora_names = set(order)
+        base_params = {
+            name: param.detach()
+            for name, param in module.named_parameters()
+            if name not in lora_names
+        }
+
+        a_new = [w.detach().clone().to(self._device) for w in a_weights]
+        b_cur = [w.detach().clone().to(self._device) for w in b_weights]
+        a_old = [t.to(self._device) for t in self._lrpt_a_old]
+        delta_a = [a_new[i] - a_old[i] for i in range(len(a_new))]
+        lora_cur = [t.clone() for t in a_new + b_cur]
+
+        def compute_jvp(v_vec, anchor_batch):
+            with sdpa_kernel(SDPBackend.MATH):
+                with dual_level():
+                    dual_params = dict(base_params)
+                    for name, primal, tangent in zip(
+                        order, lora_cur, v_vec
+                    ):
+                        dual_params[name] = make_dual(primal, tangent)
+                    out = functional_call(
+                        module, dual_params, anchor_batch
+                    )
+                    return unpack_dual(out).tangent.detach()
+
+        if mode == "layerwise":
+            layer_bases = []
+            num_a = len(a_new)
+            for layer_id in range(12):
+                v = [torch.zeros_like(t) for t in lora_cur]
+                for offset in (2 * layer_id, 2 * layer_id + 1):
+                    v[offset] = delta_a[offset]
+                    v[num_a + offset] = b_cur[offset]
+                jvp_out = torch.cat(
+                    [compute_jvp(v, chunk) for chunk in anchors.split(8)],
+                    dim=0,
+                )
+                _, _, vh = torch.linalg.svd(
+                    jvp_out.float(), full_matrices=False
+                )
+                layer_basis = (
+                    vh[: self._lrpt_basis_rank].t().contiguous().cpu()
+                )
+                layer_bases.append(layer_basis)
+            return layer_bases
+
+        if mode == "delta_a":
+            v = delta_a + [torch.zeros_like(t) for t in b_cur]
+        elif mode == "delta_a_b":
+            v = delta_a + b_cur
+        else:
+            raise ValueError("unknown LoRA basis mode {}".format(mode))
+        jvp_out = torch.cat(
+            [compute_jvp(v, chunk) for chunk in anchors.split(8)],
+            dim=0,
+        )
+        _, _, vh = torch.linalg.svd(jvp_out.float(), full_matrices=False)
+        basis = vh[: self._lrpt_basis_rank].t().contiguous().cpu()
+        return basis
+
+    def _fit_lora_aware_transport(self, data_manager, fit_old, fit_new):
+        """Fit a transport constrained to the final-feature drift subspace
+        induced by the real LoRA parameter changes (JVP-based)."""
+        try:
+            if self._lrpt_a_old is None:
+                raise RuntimeError("missing pre-update shared-A capture")
+            w_emp, bias = fit_affine_map(
+                fit_old,
+                fit_new,
+                reg=self._lrpt_reg,
+            )
+
+            if self._lrpt_basis == "layerwise":
+                layer_bases = self._lora_jvp_basis(
+                    data_manager, mode="layerwise"
+                )
+                layer_maps = [
+                    project_map_to_basis(w_emp, layer_basis)
+                    for layer_basis in layer_bases
+                ]
+                alpha = fit_layerwise_weights(
+                    fit_old,
+                    fit_new,
+                    layer_maps,
+                    reg=self._lrpt_reg,
+                )
+                w = torch.zeros_like(w_emp)
+                for a_l, w_l in zip(alpha.tolist(), layer_maps):
+                    w = w + a_l * w_l
+                logging.info(
+                    "[SharedA-SDLoRA] LRPT layerwise alpha=%s",
+                    [round(float(a), 4) for a in alpha.tolist()],
+                )
+            else:
+                basis = self._lora_jvp_basis(
+                    data_manager, mode=self._lrpt_basis
+                )
+                w = project_map_to_basis(w_emp, basis)
+                logging.info(
+                    "[SharedA-SDLoRA] LRPT basis=%s dims=%d",
+                    self._lrpt_basis,
+                    basis.shape[1],
+                )
+
+            u, v = low_rank_factors(w, rank=self._lrpt_rank)
+            self._lrpt_a_old = None
+            return u, v, bias
+        except Exception:
+            logging.exception("[SharedA-SDLoRA] LRPT LoRA-aware transport failed")
+            raise
+
     def _apply_lrpt_to_old_prototypes(self, data_manager):
         """Fit the low-rank transport from the paired current-task features and
         recursively move all previously stored prototypes into the updated
@@ -211,7 +409,14 @@ class Learner(SDLoraLearner):
         else:
             fit_old, fit_new = z_old, z_new
 
-        if self._lrpt_bias:
+        if self._lrpt_basis != "generic":
+            u, v, bias = self._fit_lora_aware_transport(
+                data_manager, fit_old, fit_new
+            )
+            rel_err, _ = transport_prediction_error(
+                fit_old, fit_new, u, v, bias=bias
+            )
+        elif self._lrpt_bias:
             if self._lrpt_dual:
                 u_s, v_s, b_s = fit_affine_low_rank_transport(
                     z_old,
@@ -325,9 +530,12 @@ class Learner(SDLoraLearner):
             )
             return
         old = torch.load(path, map_location="cpu", weights_only=True)
-        updated = apply_transport(
-            old, u, v, bias=bias, damping=self._lrpt_damping
-        )
+        if self._lrpt_adaptive and bias is not None:
+            updated = apply_transport_adaptive(old, u, v, bias=bias)
+        else:
+            updated = apply_transport(
+                old, u, v, bias=bias, damping=self._lrpt_damping
+            )
         torch.save(updated, path)
         if bias is not None:
             logging.info(

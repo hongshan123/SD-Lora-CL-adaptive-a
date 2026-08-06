@@ -67,9 +67,10 @@ We propose an online gauge-aligned cumulative LoRA framework for rehearsal-free 
 
 ### 4.2 多 seed（待回填）
 
-- INR seeds 1995/1/2/3：78.46±0.48 / 82.28±0.37 / 7.86±1.31（已回填）。
-- C100 seeds 1993/1/2/3：87.83±0.13 / 91.52±0.28 / 8.68±0.19（已回填）。
-- paired t-test vs EXP-009 同 seed：待基线队列完成后回填。
+- INR seeds 1995/1/2/3：78.46±0.51 / 82.28±0.47 / 7.86±1.35（已回填）。
+- C100 seeds 1993/1/2/3：87.83±0.13 / 91.52±0.30 / 8.68±0.20（已回填）。
+- paired t-test vs EXP-009 同 seed（n=4）：INR Final -0.65（p=0.117）、AvgAcc -0.52（p=0.158）、F -0.04（p=0.862）；C100 Final -0.22（p=0.182）、AvgAcc -0.12（p=0.296）、F +0.01（p=0.968）。**无显著差异**。
+- 主张定位：O(1) 持久状态 + ~82% LoRA 压缩，精度/遗忘与 EXP-009 统计等价；相对 SD-LoRA 单点 Final 更高（INR +0.30、C100 +0.81）。
 
 ### 4.3 任务长度（待回填）
 

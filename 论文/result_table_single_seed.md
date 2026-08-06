@@ -38,7 +38,18 @@
 
 ## 待补
 
-- 多 seed mean±std 与显著性（运行中）。
+- 多 seed mean±std 与显著性（已完成，见下）。
 - 任务长度 T=5/20/40。
 - FLOPs/吞吐/峰值显存。
 - 强基线（InfLoRA/CL-LoRA/LoRA-DRS/DGS 可复现实现，待评估）。
+
+## 多 seed（2026-08-07 补）
+
+| 方法 | 数据集 | Final mean±std | AvgAcc mean±std | Forgetting mean±std |
+| --- | --- | ---: | ---: | ---: |
+| cumulative+gauge（4 seeds） | ImageNet-R | 78.46±0.51 | 82.28±0.47 | 7.86±1.35 |
+| EXP-009（4 seeds） | ImageNet-R | 79.11±0.40 | 82.80±0.49 | 7.90±1.16 |
+| cumulative+gauge（4 seeds） | CIFAR-100 | 87.83±0.13 | 91.52±0.30 | 8.68±0.20 |
+| EXP-009（4 seeds） | CIFAR-100 | 88.05±0.27 | 91.63±0.36 | 8.67±0.47 |
+
+配对 t 检验（main − EXP-009，n=4）：INR Final -0.65（p=0.117）、AvgAcc -0.52（p=0.158）、Forgetting -0.04（p=0.862）；C100 Final -0.22（p=0.182）、AvgAcc -0.12（p=0.296）、Forgetting +0.01（p=0.968）。无显著差异；LoRA 371,040 vs 2,027,530（-81.7%）。

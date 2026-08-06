@@ -669,7 +669,9 @@ def test_v2_gauge_diagnostics_report_rotation_and_preservation(tmp_path):
         for w in model0.w_Bs:
             w.weight.copy_(torch.randn_like(w.weight))
     model0.save_lora_parameters(str(run), task_id=0)
-    assert model0.cumulative_gauge_diagnostics()["branches"] == 0
+    diag0 = model0.cumulative_gauge_diagnostics()
+    assert diag0["branches"] == 2
+    assert diag0["residual"] < 1e-4
 
     model1 = SharedALoRA_ViT_timm(
         _TinyViT(dim),

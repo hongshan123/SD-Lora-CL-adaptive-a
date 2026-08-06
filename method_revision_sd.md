@@ -217,7 +217,8 @@ Phase B（v2 在线累计状态，commits `27a6574`/`d7ec60a`/`63b267e`）已落
 完整 INR 单 seed 结果（seed1995，20 epoch × 10 tasks）：
 - cumulative-only：Final 78.78 / AvgAcc 81.69 / Forgetting 7.28。相对 EXP-009 下降 0.56，触发 §10 停止线；检查确认无 gauge 时旧 H 被直接放入新 Q 坐标，A 的 span 内旋转也会破坏历史算子，属于表示口径问题而非 scale/normalization 错误。
 - cumulative+gauge：Final 79.06 / AvgAcc 81.77 / Forgetting 6.82。Final ≥78.76 最低线且较 SD-LoRA +0.30，Forgetting 较 EXP-009 -0.44；AvgAcc 仍低 0.70，归因于去掉 v1 隐含重归一化后的残余原型漂移（residual LRPT 对象）。每任务 projection residual≈0，A 基本不跨出旧 span。
-- 进行中：gauge + residual LRPT（`exps/sa_cumulative_inr_seed1995_gauge_lrpt.json`）。
+- gauge + residual LRPT：Final 78.49 / AvgAcc 82.19 / Forgetting 6.38。LRPT 改善 AvgAcc/Forgetting（相对 gauge-only +0.42/-0.44）但 Final 回退 0.57 且低于原始基线，单 seed 增益方向不一致；按 Phase D 规则暂不保留为主方法组件（保留为消融）。
+- 主方法决定：**cumulative + gauge（无 LRPT）**。下一步 C100 验证；若 C100 Final ≥86.89，按 §14 优先进入多 seed 与论文阶段。
 
 ### Phase D：Residual LRPT
 

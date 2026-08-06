@@ -367,3 +367,12 @@
   - 每任务 projection residual≈0 说明 A 的行空间几乎不跨出旧 span；gauge 在此情形可精确保持历史算子。AvgAcc 缺口主要来自：v1 隐含的"历史 B 用当前 A 重新归一化"被去掉后新任务干扰更直接地作用于旧原型，以及深层非线性残余漂移——这正是 residual LRPT（Phase D）要补偿的对象。
   - gauge INR Final=79.06 ≥ 最低验收线 78.76（✓），且强目标 79.29 仅差 0.23；AvgAcc 未达强目标 83.00。
 - 下一步：等待 gauge+residual LRPT INR（`exps/sa_cumulative_inr_seed1995_gauge_lrpt.json`，运行中）；若 Final/AvgAcc 回升到 EXP-009 水平则跑 C100。
+
+### EXP-016 补充：gauge + residual LRPT INR（Phase D 组合）
+
+- 状态：完成（exit=0）
+- 配置：`exps/sa_cumulative_inr_seed1995_gauge_lrpt.json`（cumulative+gauge + `lrpt_enabled=true`，rank10/bias/λ=1，与 Phase D 默认一致）。
+- 结果（ImageNet-R seed1995）：Final Top1=**78.49**（基线 78.76 ✗、EXP-009 79.34 -0.85、gauge-only 79.06 -0.57）、AvgAcc=**82.19**（EXP-009 -0.28、gauge-only +0.42）、Forgetting=**6.38**（EXP-009 -0.88、gauge-only -0.44）；曲线 `[91.42, 86.15, 84.38, 82.87, 80.74, 81.96, 79.28, 79.06, 77.59, 78.49]`。LRPT drift_error ≈ 0.86–0.88；每任务 gauge residual/rotation/preservation 均为 0.000000。
+- 分析：residual LRPT 在累计状态上确实改善 AvgAcc（+0.42）与 Forgetting（-0.44），但 Final 比 gauge-only 低 0.57 且低于原始基线；与 v1 上的 generic affine LRPT（79.29/83.00/6.61）相比 Final/AvgAcc 都更低。单 seed 增益方向不一致（AvgAcc/F 改善、Final 回退），按 method_revision_sd.md Phase D 规则不把 LRPT 保留为主方法组件，只作为消融。
+- 决策：主方法先用 **cumulative+gauge（无 LRPT）** 跑 C100；INR 侧最低验收 Final ≥78.76 已满足（79.06）。LRPT 是否保留待多 seed 稳定性证据。
+- 下一步：C100 cumulative+gauge（`sa_cumulative_c100_seed1993_gauge`）。

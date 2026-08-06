@@ -399,3 +399,9 @@
 - **cumulative+gauge**（20 epoch × 10 tasks，exit=0）：Final 79.06（≥基线 78.76 ✓、强目标 79.29 差 0.23）、AvgAcc 81.77（EXP-009 差 0.70）、Forgetting 6.82（EXP-009 -0.44、SD-LoRA +1.21）。相对 cumulative-only：Final +0.28、AvgAcc +0.08、Forgetting -0.46。
 - **判断**：gauge 修正有效且必要；A 行空间几乎不跨 span，历史算子被精确保持。AvgAcc 缺口来源被定位为新任务支路/深层非线性对旧原型的残余漂移——residual LRPT 正对该对象。gauge 首次运行 Forgetting 改善显著，§10 的"连续两次无改善"停止条件未触发。
 - **下一步**：gauge+residual LRPT INR 运行中；预期 Final/AvgAcc 回升到 EXP-009 水平后跑 C100。
+
+## 2026-08-06 22:08 gauge+residual LRPT INR：AvgAcc/F 改善但 Final 回退
+
+- **观察**：Final 78.49（低于基线 78.76 和 gauge-only 79.06）、AvgAcc 82.19（gauge-only +0.42）、Forgetting 6.38（gauge-only -0.44）。LRPT drift_error 0.86–0.88，每任务 gauge 三项诊断均为 0。
+- **判断**：LRPT 在累计状态下改善早期任务与遗忘，但最终任务被拉低；单 seed 增益不一致，按 Phase D 规则不保留为主方法组件，保留为消融。主方法取 cumulative+gauge。
+- **决策**：INR 最低线（Final ≥78.76）已由 gauge-only 79.06 满足；按 method_revision_sd.md §14，跑 C100 cumulative+gauge 检查第二个数据集；若 C100 Final ≥86.89 则进入多 seed/论文阶段，不再做单 seed 微调。

@@ -278,3 +278,5 @@
 - 结论：raw operator drift 与遗忘相关性弱；operator-level 正则路线正式关闭。回到 generic affine LRPT（INR 已达标、C100 最佳 92.46/7.12），第三次复跑 C100 affine r10 验证是否能过门槛。
 - 结果（C100 affine r10 第三次复跑 RERUN3，仍未过）：final Top1=88.58（✓）、AvgAcc=92.50（门槛 92.57 ✗，差 0.07）、Forgetting=7.17（门槛 7.08 ✗，差 0.09）。三次结果 92.46/7.12、92.48/7.21、92.50/7.17，说明该配置系统性差 0.05–0.13，非方差。
 - 下一步：同一框架内的结构性变体 **raw-space 原型**——原型改为“未归一化特征的类均值再归一化”，LRPT 也在 raw 空间拟合与应用。先跑 INR rawproto r10 验证，达标后跑 C100。
+- 结果（raw-space 原型，INR 失败）：task0 Top1=91.11 正常，但 task1 骤降至 52.74，明显灾难性；按 INR-first 规则终止，不跑 C100。raw 空间低秩 transport 不适配原型归一化后的分类空间。
+- 下一步：generic affine r10 + `lrpt_adaptive`（按 prototype 在 transport 输入方向上的投影自适应补偿强度，之前只在 LoRA-aware 上测过；直接针对 C100 中 T5/T7 被过度校正的问题）。INR 先跑。

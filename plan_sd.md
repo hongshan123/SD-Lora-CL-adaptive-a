@@ -129,3 +129,4 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 控制组：lambda=0 只记录 raw drift（INR seed1995）已配置，运行中；据结果决定是否彻底关闭 operator-level 路线。
 - 控制组完成：drift 相关性弱，operator-level 路线关闭；回到 affine LRPT 主线，C100 affine r10 第三次复跑。
 - C100 affine r10 三次均差 0.05–0.13，排除方差；迭代中：raw-space 原型变体（INR 先跑）。
+- raw-space 原型 INR 失败（task1 52.74），已终止；迭代中：generic affine r10 + adaptive。

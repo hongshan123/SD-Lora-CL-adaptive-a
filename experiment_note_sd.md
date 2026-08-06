@@ -337,3 +337,9 @@
 - **观察**：RERUN3 final=88.58、AvgAcc=92.50、Forgetting=7.17。三次 C100 结果稳定差 0.05–0.13，排除方差解释。
 - **判断**：继续调 λ/rank 无意义；改试 raw-space 原型（raw 特征均值再归一化，LRPT 在 raw 空间拟合），可能改变漂移补偿的有效空间。
 - **下一步**：INR rawproto r10 先跑；达标后 C100。
+
+## 2026-08-06 18:46 raw-space 原型失败；转 generic adaptive
+
+- **观察**：INR rawproto r10 task0=91.11，task1=52.74，灾难性；终止。离线双头融合评估因缺少每任务原型快照而口径无效，已放弃。
+- **判断**：raw 空间低秩 transport 与原型归一化分类空间不匹配；回到 normalized 空间，试 generic affine r10 + adaptive（V 投影强度）。
+- **下一步**：INR adaptive 先跑；达标后 C100 adaptive。

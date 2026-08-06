@@ -177,9 +177,9 @@ class Learner(SDLoraLearner):
                         gauge_diag = backbone.cumulative_gauge_diagnostics()
                         logging.info(
                             "[SharedA-SDLoRA] cumulative gauge task %d: "
-                            "relative_projection_residual=%.6f "
-                            "basis_rotation_fro=%.6f "
-                            "operator_preservation=%.6f",
+                            "relative_projection_residual=%.6e "
+                            "basis_rotation_fro=%.6e "
+                            "operator_preservation=%.6e",
                             self._cur_task,
                             gauge_diag["residual"],
                             gauge_diag["rotation_fro"],

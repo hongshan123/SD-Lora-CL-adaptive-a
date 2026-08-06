@@ -419,3 +419,15 @@
 - **工具**：新增 `scripts/collect_sa_cumulative_summary.py`，可从日志+产物一键输出 final/avgacc/forgetting/tasks/gauge 诊断/LoRA 参数（commit `65d911e`）；`论文/result_table_single_seed.md` 汇总当前单 seed 结果（commit `d075e56`）。
 - **预测量**：CPU 上 C100 主方法产物 FLOPs=2.707e11/forward(batch8)、吞吐 29.4 img/s（CPU，仅参考）；正式 GPU 测量待队列结束后跑。
 - **风险**：多 seed 队列约 3.5h，若中途 OOM/网络下载失败需按日志重跑对应 seed；强基线（InfLoRA/CL-LoRA/LoRA-DRS/DGS）尚未实现，论文阶段需评估可复现范围。
+
+## 2026-08-06 23:00 诊断-遗忘相关性初算与诊断精度修正
+
+- **工具**：新增 `scripts/drift_forgetting_correlation.py`（最终精度矩阵 → 每任务遗忘；日志诊断 → Pearson/Spearman）。
+- **初算结果**（任务 1-9）：
+  - EXP-012 operator drift vs 每任务遗忘：Pearson r=+0.26（p=0.50，弱/不显著）；
+  - EXP-012 log-only 控制组 raw drift vs 遗忘：r=-0.73（p=0.025）——漂移大反而遗忘小，说明 drift 不是遗忘主因，可能与新任务塑性共变；
+  - gauge+LRPT：residual/rotation/preservation 全部为常量 0（零方差，无法相关），LRPT drift_error r=+0.18（p=0.65，弱）；
+  - gauge-only/cumulative-only 运行早于诊断功能上线，无 rotation/preservation 日志。
+- **产物核对**：cumulative-only 与 gauge 两档最终状态 Q/H/R 明显不同（operator 相对差 0.95），确认无 gauge 的 H 失真导致参数轨迹分叉，gauge 的改善是真实机制而非日志口径差异。
+- **修正**：gauge 诊断日志从 `%.6f` 改为 `%.6e`（避免 0.000000 掩盖小值），后续运行生效（commit 后）；汇总/相关脚本的数值正则兼容科学计数法。
+- **判断**：operator/gauge 类诊断与每任务遗忘的相关性弱或零方差；论文相关分析章节应如实报告，并保留"历史算子保持"作为机制证据而非遗忘预测器。

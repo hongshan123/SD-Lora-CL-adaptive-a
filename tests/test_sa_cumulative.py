@@ -1,4 +1,6 @@
 import sys
+import shutil
+import copy
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,7 @@ from backbone.sa_lora import (
     fold_cumulative_up_projection,
     gauge_align_up_projection,
     gauge_projection_residual,
+    migrate_sa_state_v1_to_v2,
 )
 
 
@@ -302,3 +305,265 @@ def test_gauge_alignment_projects_old_operator():
     residual = gauge_projection_residual(h, q_old, q_new)
     expected = (old_operator - projected).norm()
     assert residual.item() == pytest.approx(expected.item(), abs=1e-5)
+
+
+def test_v2_fresh_run_roundtrip_without_per_task_files(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(47)
+    run = tmp_path / "run"
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    with torch.no_grad():
+        for w in model.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    model.save_lora_parameters(str(run), task_id=0)
+
+    assert not (run / "sa_lora_w_b_0.pt").exists()
+    state = torch.load(
+        run / "sa_state.pt", map_location="cpu", weights_only=True
+    )
+    assert state["version"] == 2
+    assert state["task_id"] == 1
+    assert len(state["canonical_down"]) == 2
+    assert len(state["cumulative_up"]) == 2
+    assert len(state["triangular_r"]) == 2
+
+    reloaded = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=1,
+        train_a_all_tasks=True,
+    )
+    assert reloaded.cumulative_state
+    x = torch.randn(4, 6, dim)
+    out = reloaded(x)
+    assert out.shape == (4, 6, dim * 3)
+    assert torch.isfinite(out).all()
+
+
+def test_v2_canonical_forward_matches_v1_bank(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(53)
+    v1_dir = tmp_path / "v1"
+    v2_dir = tmp_path / "v2"
+    tiny = _TinyViT(dim)
+    v1 = SharedALoRA_ViT_timm(
+        copy.deepcopy(tiny),
+        r=rank,
+        filepath=str(v1_dir),
+        cur_task_index=0,
+        train_a_all_tasks=False,
+    )
+    v2 = SharedALoRA_ViT_timm(
+        copy.deepcopy(tiny),
+        r=rank,
+        filepath=str(v2_dir),
+        cur_task_index=0,
+        train_a_all_tasks=False,
+        cumulative_state=True,
+    )
+    with torch.no_grad():
+        for a1, a2 in zip(v1.w_As, v2.w_As):
+            a2.weight.copy_(a1.weight)
+        for b1, b2 in zip(v1.w_Bs, v2.w_Bs):
+            b1.weight.copy_(torch.randn_like(b1.weight))
+            b2.weight.copy_(b1.weight)
+        v2.wrapped_param[0].param.copy_(v1.wrapped_param[0].param)
+    v1.save_lora_parameters(str(v1_dir), task_id=0)
+    v2.save_lora_parameters(str(v2_dir), task_id=0)
+
+    m1 = SharedALoRA_ViT_timm(
+        copy.deepcopy(tiny),
+        r=rank,
+        filepath=str(v1_dir),
+        cur_task_index=1,
+        train_a_all_tasks=False,
+    )
+    m2 = SharedALoRA_ViT_timm(
+        copy.deepcopy(tiny),
+        r=rank,
+        filepath=str(v2_dir),
+        cur_task_index=1,
+        train_a_all_tasks=False,
+    )
+    x = torch.randn(4, 6, dim)
+    assert torch.allclose(m1(x), m2(x), atol=1e-5)
+
+
+def test_v2_save_accumulates_gauge_aligned_operator(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(59)
+    run = tmp_path / "run"
+    model0 = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    with torch.no_grad():
+        for w in model0.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    model0.save_lora_parameters(str(run), task_id=0)
+
+    model1 = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=1,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    with torch.no_grad():
+        for w_a in model1.w_As:
+            w_a.weight.add_(0.2 * torch.randn_like(w_a.weight))
+        for w_b in model1.w_Bs:
+            w_b.weight.copy_(torch.randn_like(w_b.weight))
+    model1.save_lora_parameters(str(run), task_id=1)
+
+    state = torch.load(
+        run / "sa_state.pt", map_location="cpu", weights_only=True
+    )
+    assert state["task_id"] == 2
+    for idx, (w_a, w_b) in enumerate(zip(model1.w_As, model1.w_Bs)):
+        a1 = w_a.weight.detach().cpu().float()
+        b1 = w_b.weight.detach().cpu().float()
+        s1 = model1.wrapped_param[0].param.detach().cpu().float().reshape(())
+        q_new, r_new = canonical_down_projection(a1)
+
+        h_hist = gauge_align_up_projection(
+            model0.cumulative_up[idx],
+            model0.canonical_down[idx],
+            q_new,
+        )
+        norm_a = torch.linalg.vector_norm(a1)
+        norm_b = torch.linalg.vector_norm(b1) + 1e-8
+        h_cur = canonicalize_effective_up_projection(
+            s1 * b1 / (norm_a * norm_b), r_new
+        )
+        assert torch.allclose(
+            state["cumulative_up"][idx], h_hist + h_cur, atol=1e-5
+        )
+        # The historical part is the projection of the old operator.
+        projector = q_new.t() @ q_new
+        old_operator = model0.cumulative_up[idx] @ model0.canonical_down[idx]
+        assert torch.allclose(
+            h_hist @ q_new, old_operator @ projector, atol=1e-5
+        )
+
+
+def test_migrate_v1_to_v2_is_forward_equivalent(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(61)
+    run = tmp_path / "run"
+    tiny = _TinyViT(dim)
+    for task in range(2):
+        model = SharedALoRA_ViT_timm(
+            copy.deepcopy(tiny),
+            r=rank,
+            filepath=str(run),
+            cur_task_index=task,
+            train_a_all_tasks=False,
+        )
+        with torch.no_grad():
+            for w in model.w_Bs:
+                w.weight.copy_(torch.randn_like(w.weight))
+        model.save_lora_parameters(str(run), task_id=task)
+
+    legacy_dir = tmp_path / "legacy"
+    shutil.copytree(run, legacy_dir)
+    state = torch.load(
+        legacy_dir / "sa_state.pt", map_location="cpu", weights_only=True
+    )
+    assert state["version"] == 1
+
+    new_state = migrate_sa_state_v1_to_v2(str(run))
+    assert new_state["version"] == 2
+    assert (run / "sa_state.pt.v1").exists()
+    assert (run / "sa_lora_w_b_0.pt").exists()
+    assert (run / "sa_lora_w_b_1.pt").exists()
+
+    legacy = SharedALoRA_ViT_timm(
+        copy.deepcopy(tiny),
+        r=rank,
+        filepath=str(legacy_dir),
+        cur_task_index=2,
+        train_a_all_tasks=False,
+    )
+    migrated = SharedALoRA_ViT_timm(
+        copy.deepcopy(tiny),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=2,
+        train_a_all_tasks=False,
+    )
+    assert migrated.cumulative_state
+    x = torch.randn(4, 6, dim)
+    assert torch.allclose(legacy(x), migrated(x), atol=1e-5)
+
+
+def test_v2_rejects_legacy_flag_mismatch(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(67)
+    run = tmp_path / "run"
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=False,
+    )
+    with torch.no_grad():
+        for w in model.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    model.save_lora_parameters(str(run), task_id=0)
+
+    with pytest.raises(ValueError, match="migrate"):
+        SharedALoRA_ViT_timm(
+            _TinyViT(dim),
+            r=rank,
+            filepath=str(run),
+            cur_task_index=1,
+            train_a_all_tasks=False,
+            cumulative_state=True,
+        )
+
+
+def test_v2_gauge_residual_tracks_projection_error(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(71)
+    run = tmp_path / "run"
+    model0 = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    with torch.no_grad():
+        for w in model0.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    model0.save_lora_parameters(str(run), task_id=0)
+    assert model0.cumulative_gauge_residual() < 1e-6
+
+    model1 = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=1,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    assert model1.cumulative_gauge_residual() < 1e-4
+    with torch.no_grad():
+        model1.w_As[0].weight.add_(0.3 * torch.randn_like(model1.w_As[0].weight))
+    assert model1.cumulative_gauge_residual() > 1e-4

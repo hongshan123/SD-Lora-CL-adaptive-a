@@ -112,6 +112,14 @@ class Learner(SDLoraLearner):
             raise ValueError(
                 "sa_operator_stability_lambda requires sa_train_a_all_tasks=True"
             )
+        if (
+            self._sa_operator_stability_lambda > 0
+            and args.get("sa_cumulative_state", False)
+        ):
+            raise ValueError(
+                "operator-stability loss is incompatible with cumulative "
+                "Shared-A state (route closed; use gauge residual diagnostics)"
+            )
 
     def update_network(self, index=True, task_index=None):
         model = timm.create_model(
@@ -129,6 +137,7 @@ class Learner(SDLoraLearner):
             shared_a_orthogonal=self.args.get("sa_shared_a_orthogonal", True),
             train_a_all_tasks=self.args.get("sa_train_a_all_tasks", False),
             delete_per_task_files=self.args.get("sa_delete_per_task_files", False),
+            cumulative_state=self.args.get("sa_cumulative_state", False),
         )
         model.out_dim = 768
         return model
@@ -162,18 +171,26 @@ class Learner(SDLoraLearner):
         if self._is_main_process():
             if self._cur_task > 0:
                 with torch.no_grad():
-                    operator_drift = float(
-                        self._raw_network()
-                        .backbone.old_operator_stability_loss()
-                        .item()
-                    )
-                logging.info(
-                    "[SharedA-SDLoRA] operator-stability task %d: "
-                    "relative_effective_drift=%.6f lambda=%.4g",
-                    self._cur_task,
-                    operator_drift,
-                    self._sa_operator_stability_lambda,
-                )
+                    backbone = self._raw_network().backbone
+                    if backbone.cumulative_state:
+                        gauge_residual = backbone.cumulative_gauge_residual()
+                        logging.info(
+                            "[SharedA-SDLoRA] cumulative gauge task %d: "
+                            "relative_projection_residual=%.6f",
+                            self._cur_task,
+                            gauge_residual,
+                        )
+                    else:
+                        operator_drift = float(
+                            backbone.old_operator_stability_loss().item()
+                        )
+                        logging.info(
+                            "[SharedA-SDLoRA] operator-stability task %d: "
+                            "relative_effective_drift=%.6f lambda=%.4g",
+                            self._cur_task,
+                            operator_drift,
+                            self._sa_operator_stability_lambda,
+                        )
             if self._cur_task == data_manager.nb_tasks - 1:
                 self._rebuild_eval_backbone()
             raw_network = self._raw_network()

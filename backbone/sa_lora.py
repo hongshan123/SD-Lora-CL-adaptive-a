@@ -28,7 +28,8 @@ from backbone.sa_operator_stability import (
 )
 
 
-SA_STATE_VERSION = 1
+SA_STATE_VERSION = 2
+SA_STATE_VERSION_LEGACY = 1
 SA_STATE_FILENAME = "sa_state.pt"
 SA_MERGED_FILENAME = "sa_merged_lora.pt"
 
@@ -179,6 +180,75 @@ def gauge_projection_residual(
     return residual.norm().to(cumulative_up.dtype)
 
 
+def migrate_sa_state_v1_to_v2(filepath: str, force: bool = False) -> dict:
+    """Explicitly migrate a legacy v1 artifact to the v2 cumulative state.
+
+    The original ``sa_state.pt`` is moved to ``sa_state.pt.v1`` and the
+    per-task B files are left untouched as a backup.  The new state contains
+    ``canonical_down`` / ``cumulative_up`` / ``triangular_r`` and is the exact
+    canonicalization of the v1 bank at its final shared A.
+    """
+    state_path = _join_path(filepath, SA_STATE_FILENAME)
+    state = torch.load(state_path, map_location="cpu", weights_only=True)
+    if int(state.get("version", -1)) != SA_STATE_VERSION_LEGACY:
+        raise ValueError(
+            "artifact is not legacy v1 (version={}); nothing to migrate".format(
+                state.get("version", -1)
+            )
+        )
+    task_ids = sorted(int(task_id) for task_id in state.get("scales", {}))
+    if not task_ids:
+        raise ValueError("legacy artifact has no saved tasks")
+    shared_a = state["shared_a"]
+    b_lists = []
+    for task_id in task_ids:
+        path = _join_path(filepath, "sa_lora_w_b_{}.pt".format(task_id))
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                "missing B file for task {}".format(task_id)
+            )
+        b_lists.append(
+            torch.load(path, map_location="cpu", weights_only=True)
+        )
+    canonical_down = []
+    cumulative_up = []
+    triangular_r = []
+    for branch in range(len(shared_a)):
+        h_raw = fold_cumulative_up_projection(
+            shared_a[branch],
+            [b_list[branch] for b_list in b_lists],
+            [state["scales"][task_id] for task_id in task_ids],
+        )
+        q_t, r = canonical_down_projection(shared_a[branch])
+        canonical_down.append(q_t)
+        cumulative_up.append(canonicalize_effective_up_projection(h_raw, r))
+        triangular_r.append(r)
+    new_state = {
+        "version": SA_STATE_VERSION,
+        "task_id": len(task_ids),
+        "rank": int(shared_a[0].shape[0]),
+        "canonical_down": canonical_down,
+        "cumulative_up": cumulative_up,
+        "triangular_r": triangular_r,
+        "migrated_from": {
+            "version": SA_STATE_VERSION_LEGACY,
+            "task_ids": task_ids,
+        },
+    }
+    backup_path = state_path + ".v1"
+    if os.path.exists(backup_path):
+        if not force:
+            raise FileExistsError(
+                "backup already exists: {}; pass --force to overwrite".format(
+                    backup_path
+                )
+            )
+        os.remove(backup_path)
+    os.replace(state_path, backup_path)
+    torch.save(new_state, state_path)
+    return new_state
+
+
 class _SharedAQKV(nn.Module):
     """QKV wrapper: base qkv + shared-A LoRA bank with per-task B matrices."""
 
@@ -240,6 +310,61 @@ class _SharedAQKV(nn.Module):
         return qkv
 
 
+class _CumulativeSharedAQKV(nn.Module):
+    """QKV wrapper for the canonical cumulative Shared-A state.
+
+    Historical tasks are represented by the exact effective operator
+    ``H @ Q^T`` (fixed while the current task trains).  The current task adds
+    its own normalized LoRA branch ``scale * B(A x) / (||A|| ||B||)``.
+    """
+
+    def __init__(
+        self,
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        h_q,
+        q_q_t,
+        h_v,
+        q_v_t,
+        scaling_cur,
+        layer_index,
+    ):
+        super().__init__()
+        self.qkv = qkv
+        self.a_q = a_q
+        self.a_v = a_v
+        self.b_q = b_q
+        self.b_v = b_v
+        self.scaling_cur = scaling_cur
+        self.layer_index = layer_index
+        self.dim = qkv.in_features
+        self.register_buffer("h_q", h_q.clone(), persistent=False)
+        self.register_buffer("q_q_t", q_q_t.clone(), persistent=False)
+        self.register_buffer("h_v", h_v.clone(), persistent=False)
+        self.register_buffer("q_v_t", q_v_t.clone(), persistent=False)
+
+    def _norm_cur(self, x, a_weight, b_weight):
+        denom = torch.norm(a_weight) * torch.norm(b_weight) + 1e-8
+        return F.linear(F.linear(x, a_weight), b_weight) / denom
+
+    def forward(self, x):
+        new_q = F.linear(F.linear(x, self.q_q_t), self.h_q)
+        new_v = F.linear(F.linear(x, self.q_v_t), self.h_v)
+        new_q = new_q + self.scaling_cur[0](
+            self._norm_cur(x, self.a_q.weight, self.b_q.weight)
+        )
+        new_v = new_v + self.scaling_cur[0](
+            self._norm_cur(x, self.a_v.weight, self.b_v.weight)
+        )
+        qkv = self.qkv(x)
+        qkv[:, :, : self.dim] += new_q
+        qkv[:, :, -self.dim :] += new_v
+        return qkv
+
+
 class SharedALoRA_ViT_timm(nn.Module):
     def __init__(
         self,
@@ -255,6 +380,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         shared_a_orthogonal=True,
         train_a_all_tasks=False,
         delete_per_task_files=False,
+        cumulative_state=False,
     ):
         super().__init__()
         assert r > 0
@@ -264,6 +390,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.shared_a_orthogonal = bool(shared_a_orthogonal)
         self.train_a_all_tasks = bool(train_a_all_tasks)
         self.delete_per_task_files = bool(delete_per_task_files)
+        self.cumulative_state = bool(cumulative_state)
         self.base_vit = vit_model
 
         if lora_layer:
@@ -281,24 +408,86 @@ class SharedALoRA_ViT_timm(nn.Module):
             param.requires_grad = False
 
         state = self._load_state()
+        state_version = int(state.get("version", -1))
+        if state_version == SA_STATE_VERSION_LEGACY:
+            if self.cumulative_state:
+                raise ValueError(
+                    "sa_cumulative_state=True but artifact is legacy v1; "
+                    "run scripts/migrate_sa_state_v1_to_v2.py first"
+                )
+            self.cumulative_state = False
+        elif state_version == SA_STATE_VERSION:
+            self.cumulative_state = True
+        elif state_version == -1:
+            # Fresh run: the flag decides which version new artifacts use.
+            pass
+        else:
+            raise ValueError(
+                "unsupported shared-A state version {}".format(state_version)
+            )
+
         shared_a = state.get("shared_a", [])
-        if self.task_id > 0 and len(shared_a) == 0:
+        if self.cumulative_state:
+            self.cumulative_up = [
+                t.detach().cpu().float()
+                for t in state.get("cumulative_up", [])
+            ]
+            self.canonical_down = [
+                t.detach().cpu().float()
+                for t in state.get("canonical_down", [])
+            ]
+            self.triangular_r = [
+                t.detach().cpu().float()
+                for t in state.get("triangular_r", [])
+            ]
+            expected_branches = 2 * len(self.lora_layer)
+            if self.task_id > 0 and not (
+                len(self.cumulative_up)
+                == len(self.canonical_down)
+                == len(self.triangular_r)
+                == expected_branches
+            ):
+                raise ValueError(
+                    "cumulative Shared-A state must contain {} branches; "
+                    "got cumulative_up={} canonical_down={} triangular_r={}".format(
+                        expected_branches,
+                        len(self.cumulative_up),
+                        len(self.canonical_down),
+                        len(self.triangular_r),
+                    )
+                )
+            if self.task_id > 0 and len(self.cumulative_up) == 0:
+                raise FileNotFoundError(
+                    "{} is required before training task {}".format(
+                        _join_path(self.save_file, SA_STATE_FILENAME),
+                        self.task_id,
+                    )
+                )
+            shared_a = [
+                (r.t() @ q).float()
+                for q, r in zip(self.canonical_down, self.triangular_r)
+            ]
+            self.saved_b_tasks = {}
+        elif self.task_id > 0 and len(shared_a) == 0:
             raise FileNotFoundError(
                 "{} is required before training task {}".format(
                     _join_path(self.save_file, SA_STATE_FILENAME), self.task_id
                 )
             )
 
-        self.saved_b_tasks = {}
-        for task_id in range(self.task_id):
-            path = _join_path(
-                self.save_file, "sa_lora_w_b_{}.pt".format(task_id)
-            )
-            if not os.path.exists(path):
-                raise FileNotFoundError("missing saved shared-A B for task {}".format(task_id))
-            self.saved_b_tasks[task_id] = torch.load(
-                path, map_location="cpu", weights_only=True
-            )
+        if not self.cumulative_state:
+            self.saved_b_tasks = {}
+            for task_id in range(self.task_id):
+                path = _join_path(
+                    self.save_file, "sa_lora_w_b_{}.pt".format(task_id)
+                )
+                if not os.path.exists(path):
+                    raise FileNotFoundError(
+                        "missing saved shared-A B for task {}".format(task_id)
+                    )
+                self.saved_b_tasks[task_id] = torch.load(
+                    path, map_location="cpu", weights_only=True
+                )
 
         # These are task-local, non-persistent snapshots used only while the
         # next task is trained. They never enter the saved Shared-A artifact.
@@ -308,20 +497,30 @@ class SharedALoRA_ViT_timm(nn.Module):
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
-        saved_scales = state.get("scales", {})
-        residual_scale_values = [
-            saved_scales.get(task_id, torch.Tensor([0.8]))
-            for task_id in range(self.task_id)
-        ]
-        residual_scale_values.extend(
-            [torch.Tensor([0.8]) for _ in range(max(0, 20 - len(residual_scale_values)))]
-        )
-        self.wrapped_param_prev = nn.ModuleList(
-            [
-                ParameterWrapper(nn.Parameter(value.detach().clone().float()))
-                for value in residual_scale_values
+        if self.cumulative_state:
+            self.wrapped_param_prev = nn.ModuleList()
+        else:
+            saved_scales = state.get("scales", {})
+            residual_scale_values = [
+                saved_scales.get(task_id, torch.Tensor([0.8]))
+                for task_id in range(self.task_id)
             ]
-        )
+            residual_scale_values.extend(
+                [
+                    torch.Tensor([0.8])
+                    for _ in range(
+                        max(0, 20 - len(residual_scale_values))
+                    )
+                ]
+            )
+            self.wrapped_param_prev = nn.ModuleList(
+                [
+                    ParameterWrapper(
+                        nn.Parameter(value.detach().clone().float())
+                    )
+                    for value in residual_scale_values
+                ]
+            )
 
         for layer_index, blk in enumerate(vit_model.blocks):
             if layer_index not in self.lora_layer:
@@ -357,29 +556,62 @@ class SharedALoRA_ViT_timm(nn.Module):
                     )
                 )
 
-            saved_b_q = [
-                self.saved_b_tasks[task_id][offset]
-                for task_id in range(self.task_id)
-            ]
-            saved_b_v = [
-                self.saved_b_tasks[task_id][offset + 1]
-                for task_id in range(self.task_id)
-            ]
-            blk.attn.qkv = _SharedAQKV(
-                qkv,
-                a_q,
-                a_v,
-                b_q,
-                b_v,
-                saved_b_q,
-                saved_b_v,
-                self.wrapped_param,
-                self.wrapped_param_prev,
-                layer_index,
-            )
+            if self.cumulative_state:
+                if offset < len(self.cumulative_up):
+                    h_q = self.cumulative_up[offset]
+                    q_q_t = self.canonical_down[offset]
+                    h_v = self.cumulative_up[offset + 1]
+                    q_v_t = self.canonical_down[offset + 1]
+                else:
+                    h_q = torch.zeros(dim, r)
+                    h_v = torch.zeros(dim, r)
+                    q_q_t, _ = canonical_down_projection(
+                        a_q.weight.detach().cpu()
+                    )
+                    q_v_t, _ = canonical_down_projection(
+                        a_v.weight.detach().cpu()
+                    )
+                blk.attn.qkv = _CumulativeSharedAQKV(
+                    qkv,
+                    a_q,
+                    a_v,
+                    b_q,
+                    b_v,
+                    h_q,
+                    q_q_t,
+                    h_v,
+                    q_v_t,
+                    self.wrapped_param,
+                    layer_index,
+                )
+            else:
+                saved_b_q = [
+                    self.saved_b_tasks[task_id][offset]
+                    for task_id in range(self.task_id)
+                ]
+                saved_b_v = [
+                    self.saved_b_tasks[task_id][offset + 1]
+                    for task_id in range(self.task_id)
+                ]
+                blk.attn.qkv = _SharedAQKV(
+                    qkv,
+                    a_q,
+                    a_v,
+                    b_q,
+                    b_v,
+                    saved_b_q,
+                    saved_b_v,
+                    self.wrapped_param,
+                    self.wrapped_param_prev,
+                    layer_index,
+                )
 
         self.reset_parameters()
-        if self.task_id > 0 and self.train_a_all_tasks:
+        if (
+            not self.cumulative_state
+            and self.task_id > 0
+            and self.train_a_all_tasks
+        ):
             self._capture_old_operator_reference()
         self.lora_vit = vit_model
         self.lora_vit.head = nn.Identity()
@@ -414,6 +646,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         therefore it protects the exact old LoRA bank used in the forward pass,
         not just the shared down projection in isolation.
         """
+        if self.cumulative_state:
+            # The historical operator is fixed in canonical coordinates while
+            # the current task trains; the gauge residual is logged separately.
+            return self.w_As[0].weight.new_zeros(())
         if self._operator_reference_task_count == 0:
             return self.w_As[0].weight.new_zeros(())
         if not self._operator_reference_down or not self._operator_reference_up:
@@ -445,14 +681,36 @@ class SharedALoRA_ViT_timm(nn.Module):
             )
         return torch.stack(losses).mean()
 
+    def cumulative_gauge_residual(self) -> float:
+        """Mean relative projection residual of the historical operator.
+
+        Computes ``||H_old Q_old^T (I - Q_new Q_new^T)||_F /
+        ||H_old Q_old^T||_F`` per branch with ``Q_new`` derived from the
+        current (trained) shared A.  Zero when no historical operator exists.
+        """
+        if not self.cumulative_state or not self.cumulative_up:
+            return 0.0
+        residuals = []
+        for idx, w_a in enumerate(self.w_As):
+            q_t, _ = canonical_down_projection(w_a.weight.detach().cpu())
+            h = self.cumulative_up[idx]
+            q_old_t = self.canonical_down[idx]
+            old_norm = (h.double() @ q_old_t.double()).norm()
+            rel = gauge_projection_residual(h, q_old_t, q_t) / (
+                old_norm + 1e-8
+            )
+            residuals.append(float(rel))
+        return float(torch.tensor(residuals).mean())
+
     def _load_state(self):
         path = _join_path(self.save_file, SA_STATE_FILENAME)
         if os.path.exists(path):
             state = torch.load(path, map_location="cpu", weights_only=True)
-            if int(state.get("version", -1)) != SA_STATE_VERSION:
+            version = int(state.get("version", -1))
+            if version not in (SA_STATE_VERSION_LEGACY, SA_STATE_VERSION):
                 raise ValueError("unsupported shared-A state version")
             return state
-        return {"version": SA_STATE_VERSION, "shared_a": [], "scales": {}}
+        return {"version": -1, "shared_a": [], "scales": {}}
 
     def reset_parameters(self):
         if self.task_id == 0:
@@ -466,6 +724,9 @@ class SharedALoRA_ViT_timm(nn.Module):
         return SimpleLinear(in_dim, out_dim)
 
     def save_lora_parameters(self, filename: str, task_id) -> None:
+        if self.cumulative_state:
+            self._save_cumulative_state(filename, task_id)
+            return
         self.task_id += 1
         if not os.path.exists(filename):
             os.makedirs(filename)
@@ -481,9 +742,65 @@ class SharedALoRA_ViT_timm(nn.Module):
         scales[task_id] = self.wrapped_param[0].param.detach().cpu()
         torch.save(
             {
-                "version": SA_STATE_VERSION,
+                "version": SA_STATE_VERSION_LEGACY,
                 "shared_a": [w.weight.detach().cpu() for w in self.w_As],
                 "scales": scales,
+            },
+            _join_path(filename, SA_STATE_FILENAME),
+        )
+        self.save_merged_lora(filename)
+
+    def _save_cumulative_state(self, filename: str, task_id) -> None:
+        """Fold the current task into the canonical cumulative state.
+
+        The historical operator ``H_old Q_old^T`` is aligned to the new
+        canonical basis with the closed-form gauge solution, then the current
+        task's normalized LoRA contribution is added.  Per-task B files are
+        never written; the only artifact is the v2 state file.
+        """
+        if task_id != self.task_id:
+            raise ValueError(
+                "cumulative state save called with task_id={} but "
+                "task_id is {}".format(task_id, self.task_id)
+            )
+        self.task_id += 1
+        if not os.path.exists(filename):
+            os.makedirs(filename)
+        canonical_down = []
+        cumulative_up = []
+        triangular_r = []
+        for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
+            a = w_a.weight.detach().cpu().float()
+            b = w_b.weight.detach().cpu().float()
+            s = self.wrapped_param[0].param.detach().cpu().float().reshape(())
+            q_t, r = canonical_down_projection(a)
+            if idx < len(self.cumulative_up) and self.task_id > 1:
+                h_hist = gauge_align_up_projection(
+                    self.cumulative_up[idx],
+                    self.canonical_down[idx],
+                    q_t,
+                )
+            else:
+                h_hist = torch.zeros_like(b)
+            norm_a = torch.linalg.vector_norm(a)
+            norm_b = torch.linalg.vector_norm(b) + 1e-8
+            h_cur_raw = s * b / (norm_a * norm_b)
+            h_cur = canonicalize_effective_up_projection(h_cur_raw, r)
+            cumulative_up.append(h_hist + h_cur)
+            canonical_down.append(q_t)
+            triangular_r.append(r)
+
+        self.cumulative_up = cumulative_up
+        self.canonical_down = canonical_down
+        self.triangular_r = triangular_r
+        torch.save(
+            {
+                "version": SA_STATE_VERSION,
+                "task_id": self.task_id,
+                "rank": self.rank,
+                "canonical_down": canonical_down,
+                "cumulative_up": cumulative_up,
+                "triangular_r": triangular_r,
             },
             _join_path(filename, SA_STATE_FILENAME),
         )
@@ -503,6 +820,19 @@ class SharedALoRA_ViT_timm(nn.Module):
         if not os.path.exists(filename):
             os.makedirs(filename)
         current_task = self.task_id - 1
+        if self.cumulative_state:
+            torch.save(
+                {
+                    "version": SA_STATE_VERSION,
+                    "shared_a": [q.clone() for q in self.canonical_down],
+                    "merged_b": [h.clone() for h in self.cumulative_up],
+                    "canonical_down": [q.clone() for q in self.canonical_down],
+                    "cumulative_up": [h.clone() for h in self.cumulative_up],
+                    "task_id": current_task,
+                },
+                _join_path(filename, SA_MERGED_FILENAME),
+            )
+            return
         num_saved = len(self.saved_b_tasks)
         merged_b = []
         for idx, w_b in enumerate(self.w_Bs):
@@ -525,7 +855,7 @@ class SharedALoRA_ViT_timm(nn.Module):
             merged_b.append(total.cpu())
         torch.save(
             {
-                "version": SA_STATE_VERSION,
+                "version": SA_STATE_VERSION_LEGACY,
                 "shared_a": [w.weight.detach().cpu() for w in self.w_As],
                 "merged_b": merged_b,
                 "task_id": current_task,

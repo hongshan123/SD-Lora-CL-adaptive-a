@@ -127,6 +127,58 @@ def fold_all_cumulative_up_projections(
     return cumulative
 
 
+def canonical_down_projection(shared_a: Tensor) -> tuple[Tensor, Tensor]:
+    """Return the canonical down projection and the triangular factor of ``A``.
+
+    With the thin QR decomposition ``A^T = Q R`` we have
+    ``A = R^T Q^T`` and ``B A = (B R^T) Q^T``.  ``Q^T`` is the canonical
+    down projection (``rank x dim``) and ``R`` is the ``rank x rank``
+    triangular factor that is absorbed into the up projection.
+    """
+    a_t = shared_a.to(dtype=torch.float64).t().contiguous()
+    q, r = torch.linalg.qr(a_t, mode="reduced")
+    return q.t().to(shared_a.dtype), r.to(shared_a.dtype)
+
+
+def canonicalize_effective_up_projection(
+    up_raw: Tensor, triangular_r: Tensor
+) -> Tensor:
+    """Convert a raw cumulative up projection into canonical coordinates.
+
+    If ``A = R^T Q^T``, the effective operator ``H_raw @ A`` equals
+    ``(H_raw @ R^T) Q^T``; the canonical up projection is ``H_raw @ R^T``.
+    """
+    return up_raw @ triangular_r.t()
+
+
+def gauge_align_up_projection(
+    cumulative_up: Tensor, q_old_t: Tensor, q_new_t: Tensor
+) -> Tensor:
+    """Closed-form best approximation of the old operator in the new basis.
+
+    ``H_old Q_old^T`` is approximated by ``H_aligned Q_new^T`` with
+    ``H_aligned = H_old (Q_old^T Q_new)``, the least-squares solution of
+    ``min_H ||H_old Q_old^T - H Q_new^T||_F^2``.
+    """
+    return cumulative_up @ (q_old_t @ q_new_t.t())
+
+
+def gauge_projection_residual(
+    cumulative_up: Tensor, q_old_t: Tensor, q_new_t: Tensor
+) -> Tensor:
+    """Frobenius norm of the part of the old operator outside ``span(Q_new)``.
+
+    This equals ``||H_old Q_old^T (I - Q_new Q_new^T)||_F``.
+    """
+    identity = torch.eye(
+        q_new_t.shape[1], device=q_new_t.device, dtype=torch.float64
+    )
+    projector = q_new_t.double().t() @ q_new_t.double()
+    old_operator = cumulative_up.double() @ q_old_t.double()
+    residual = old_operator @ (identity - projector)
+    return residual.norm().to(cumulative_up.dtype)
+
+
 class _SharedAQKV(nn.Module):
     """QKV wrapper: base qkv + shared-A LoRA bank with per-task B matrices."""
 

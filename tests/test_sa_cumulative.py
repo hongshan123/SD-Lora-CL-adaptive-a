@@ -12,8 +12,12 @@ from backbone.sa_lora import (
     SA_MERGED_FILENAME,
     SharedALoRA_ViT_timm,
     _SharedAQKV,
+    canonical_down_projection,
+    canonicalize_effective_up_projection,
     fold_all_cumulative_up_projections,
     fold_cumulative_up_projection,
+    gauge_align_up_projection,
+    gauge_projection_residual,
 )
 
 
@@ -245,3 +249,56 @@ def test_direct_qkv_wrapper_bank_matches_cumulative_math():
     out_cum[:, :, -dim:] += zv @ h_v.t()
 
     assert torch.allclose(out_bank, out_cum, atol=1e-5)
+
+
+def test_canonical_decomposition_preserves_operator():
+    torch.manual_seed(31)
+    a = torch.randn(3, 8)
+    h = torch.randn(8, 3)
+    q, r = canonical_down_projection(a)
+    assert q.shape == (3, 8)
+    assert r.shape == (3, 3)
+    assert torch.allclose(r.t() @ q, a, atol=1e-6)
+
+    h_can = canonicalize_effective_up_projection(h, r)
+    assert torch.allclose(h_can @ q, h @ a, atol=1e-6)
+
+
+def test_canonical_cumulative_matches_bank_operator():
+    a, b, scales = _make_bank_state(seed=37)
+    h_raw = fold_cumulative_up_projection(a, b, scales)
+    bank = _bank_operator(a, b, scales)
+    q, r = canonical_down_projection(a)
+    h_can = canonicalize_effective_up_projection(h_raw, r)
+    assert torch.allclose(h_can @ q, bank, atol=1e-6)
+
+
+def test_gauge_alignment_exact_when_spans_equal():
+    torch.manual_seed(41)
+    a_old = torch.randn(3, 8)
+    h = torch.randn(8, 3)
+    q_old, _ = canonical_down_projection(a_old)
+    o = torch.linalg.qr(torch.randn(3, 3), mode="reduced")[0]
+    q_new = o.t() @ q_old
+
+    h_aligned = gauge_align_up_projection(h, q_old, q_new)
+    assert h_aligned.shape == h.shape
+    assert torch.allclose(
+        h_aligned @ q_new, h @ q_old, atol=1e-5
+    )
+
+
+def test_gauge_alignment_projects_old_operator():
+    torch.manual_seed(43)
+    q_old = torch.linalg.qr(torch.randn(8, 3), mode="reduced")[0].t()
+    q_new = torch.linalg.qr(torch.randn(8, 3), mode="reduced")[0].t()
+    h = torch.randn(8, 3)
+
+    h_aligned = gauge_align_up_projection(h, q_old, q_new)
+    old_operator = h @ q_old
+    projected = old_operator @ (q_new.t() @ q_new)
+    assert torch.allclose(h_aligned @ q_new, projected, atol=1e-5)
+
+    residual = gauge_projection_residual(h, q_old, q_new)
+    expected = (old_operator - projected).norm()
+    assert residual.item() == pytest.approx(expected.item(), abs=1e-5)

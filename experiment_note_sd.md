@@ -262,3 +262,9 @@
 - **冒烟**：1-epoch 全 10 任务通过；task1-9 每任务都应用 JVP 基底 transport；final 重建路径正常。
 - **参数口径**：JVP 基底 U,V（768×10）与 bias 均任务内驻留、用后即弃；持久化仍只有 LoRA 2,027,530 + prototype（INR 153,600 / C100 76,800）。临时锚点/JVP 中间量单独计入峰值显存与训练开销。
 - **下一步**：INR seed1995 正式运行（ΔA+B_t + adaptive）；达标后 C100；随后 delta_a/layerwise 消融与多 seed。
+
+## 2026-08-06 11:43-11:55 INR LoRA-aware 未过，adaptive 受控试验
+
+- **观察**：INR LoRA-aware（ΔA+B_t + adaptive）final=79.49、AvgAcc=82.64、Forgetting=6.36，**未过 INR 门槛**（AvgAcc 差 0.33）。final Top1 是各变体最高，但 task2–7 普遍低于 generic affine。
+- **判断**：adaptive 的 0.5 下限可能过度削弱补偿；先跑 adaptive=False（全强度）的 LoRA-aware INR。若仍不过，按用户反馈切回原方案（generic affine LRPT）。
+- **下一步**：INR NA 运行中。

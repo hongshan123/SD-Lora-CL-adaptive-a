@@ -241,3 +241,6 @@
 - 冒烟验证（1-epoch 全 10 任务 INR seed1995）：每任务 JVP 基底应用成功，final 任务重建路径通过；LRPT 每任务 relative_drift_error ≈ 0.85–0.90（基底约束下略高于自由拟合，但目标是泛化到旧类）。
 - 配置：`exps/lrpt_lora_inr_seed1995.json`（ΔA+B_t + adaptive）、`exps/lrpt_lora_da_inr_seed1995.json`（仅 ΔA）、`exps/lrpt_lora_lw_inr_seed1995.json`（逐层）、`exps/lrpt_lora_c100_seed1993.json`。
 - 下一步：INR seed1995 正式运行；达标后跑 C100；随后补 C100 的 delta_a/layerwise 消融与多 seed。
+- 结果（INR LoRA-aware ΔA+B_t + adaptive，未过）：final Top1=79.49（✓）、AvgAcc=82.64（门槛 82.97 ✗，差 0.33）、Forgetting=6.36（门槛 6.26 ✗，差 0.10）。Final 高但中早期任务低于 generic affine，AvgAcc 被拉低。
+- 分析：adaptive 强度（0.5–1.0）可能是 AvgAcc 下降主因（泛化路径补偿不足）；先做受控变量：关闭 adaptive（λ=1）再跑 INR。
+- 若仍不过：按用户反馈切回原本设计（generic affine LRPT，此前 INR 全过、C100 最优 92.46/7.12）。

@@ -698,6 +698,55 @@ class SharedALoRA_ViT_timm(nn.Module):
             residuals.append(float(rel))
         return float(torch.tensor(residuals).mean())
 
+    def cumulative_gauge_diagnostics(self) -> dict:
+        """Per-branch gauge diagnostics against the current trained A.
+
+        Returns the mean relative projection residual (out-of-span part),
+        the RMS basis rotation ``||Q_old^T Q_new - I||_F / sqrt(r)`` (in-span
+        orientation change), and the relative operator preservation error
+        after alignment ``||H_old Q_old^T - H_aligned Q_new^T||_F /
+        ||H_old Q_old^T||_F``.
+        """
+        if not self.cumulative_state or not self.cumulative_up:
+            return {
+                "residual": 0.0,
+                "rotation_fro": 0.0,
+                "preservation": 0.0,
+                "branches": 0,
+            }
+        residuals = []
+        rotations = []
+        preservations = []
+        for idx, w_a in enumerate(self.w_As):
+            q_t, _ = canonical_down_projection(w_a.weight.detach().cpu())
+            h = self.cumulative_up[idx]
+            q_old_t = self.canonical_down[idx]
+            old_operator = h.double() @ q_old_t.double()
+            old_norm = old_operator.norm()
+            rel_residual = gauge_projection_residual(h, q_old_t, q_t) / (
+                old_norm + 1e-8
+            )
+            identity = torch.eye(
+                q_old_t.shape[0], dtype=torch.float64
+            )
+            overlap = q_old_t.double() @ q_t.double().t()
+            rotation = (
+                overlap - identity
+            ).norm() / (q_old_t.shape[0] ** 0.5)
+            h_aligned = gauge_align_up_projection(h, q_old_t, q_t)
+            preservation = (
+                h_aligned.double() @ q_t.double() - old_operator
+            ).norm() / (old_norm + 1e-8)
+            residuals.append(float(rel_residual))
+            rotations.append(float(rotation))
+            preservations.append(float(preservation))
+        return {
+            "residual": float(torch.tensor(residuals).mean()),
+            "rotation_fro": float(torch.tensor(rotations).mean()),
+            "preservation": float(torch.tensor(preservations).mean()),
+            "branches": len(residuals),
+        }
+
     def _load_state(self):
         path = _join_path(self.save_file, SA_STATE_FILENAME)
         if os.path.exists(path):

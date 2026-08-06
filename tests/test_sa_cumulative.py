@@ -651,3 +651,46 @@ def test_v2_gauge_residual_tracks_projection_error(tmp_path):
     with torch.no_grad():
         model1.w_As[0].weight.add_(0.3 * torch.randn_like(model1.w_As[0].weight))
     assert model1.cumulative_gauge_residual() > 1e-4
+
+
+def test_v2_gauge_diagnostics_report_rotation_and_preservation(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(83)
+    run = tmp_path / "run"
+    model0 = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    with torch.no_grad():
+        for w in model0.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    model0.save_lora_parameters(str(run), task_id=0)
+    assert model0.cumulative_gauge_diagnostics()["branches"] == 0
+
+    model1 = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=1,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    diag = model1.cumulative_gauge_diagnostics()
+    assert set(diag) == {
+        "residual",
+        "rotation_fro",
+        "preservation",
+        "branches",
+    }
+    assert diag["branches"] == 2
+    assert diag["residual"] < 1e-4
+    assert diag["preservation"] < 1e-4
+    with torch.no_grad():
+        model1.w_As[0].weight.add_(0.3 * torch.randn_like(model1.w_As[0].weight))
+    diag2 = model1.cumulative_gauge_diagnostics()
+    assert diag2["residual"] > 1e-4
+    assert diag2["preservation"] > 1e-4

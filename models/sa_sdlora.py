@@ -174,12 +174,16 @@ class Learner(SDLoraLearner):
                 with torch.no_grad():
                     backbone = self._raw_network().backbone
                     if backbone.cumulative_state:
-                        gauge_residual = backbone.cumulative_gauge_residual()
+                        gauge_diag = backbone.cumulative_gauge_diagnostics()
                         logging.info(
                             "[SharedA-SDLoRA] cumulative gauge task %d: "
-                            "relative_projection_residual=%.6f",
+                            "relative_projection_residual=%.6f "
+                            "basis_rotation_fro=%.6f "
+                            "operator_preservation=%.6f",
                             self._cur_task,
-                            gauge_residual,
+                            gauge_diag["residual"],
+                            gauge_diag["rotation_fro"],
+                            gauge_diag["preservation"],
                         )
                     else:
                         operator_drift = float(

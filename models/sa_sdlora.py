@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 
 import numpy as np
@@ -64,6 +65,8 @@ class Learner(SDLoraLearner):
         self._lrpt_reg = float(args.get("lrpt_reg", 1e-2))
         self._lrpt_bias = bool(args.get("lrpt_bias", False))
         self._lrpt_damping = float(args.get("lrpt_damping", 1.0))
+        self._lrpt_dual = bool(args.get("lrpt_dual", False))
+        self._lrpt_class_weight = float(args.get("lrpt_class_weight", 0.3))
         self._lrpt_fit_target = args.get("lrpt_fit_target", "sample")
         if self._lrpt_fit_target not in ("sample", "classmean"):
             raise ValueError(
@@ -209,16 +212,45 @@ class Learner(SDLoraLearner):
             fit_old, fit_new = z_old, z_new
 
         if self._lrpt_bias:
-            u, v, bias = fit_affine_low_rank_transport(
-                fit_old,
-                fit_new,
-                rank=self._lrpt_rank,
-                reg=self._lrpt_reg,
-            )
-            rel_err, _ = transport_prediction_error(
-                fit_old, fit_new, u, v, bias=bias
-            )
+            if self._lrpt_dual:
+                u_s, v_s, b_s = fit_affine_low_rank_transport(
+                    z_old,
+                    z_new,
+                    rank=self._lrpt_rank,
+                    reg=self._lrpt_reg,
+                )
+                u_c, v_c, b_c = fit_affine_low_rank_transport(
+                    fit_old,
+                    fit_new,
+                    rank=self._lrpt_rank,
+                    reg=self._lrpt_reg,
+                )
+                w = max(self._lrpt_class_weight, 0.0)
+                u = torch.cat([u_s, math.sqrt(w) * u_c], dim=1)
+                v = torch.cat([v_s, math.sqrt(w) * v_c], dim=1)
+                bias = b_s + w * b_c
+                rel_err, _ = transport_prediction_error(
+                    fit_old, fit_new, u, v, bias=bias
+                )
+                logging.info(
+                    "[SharedA-SDLoRA] LRPT dual-space: sample_rank=%d class_rank=%d class_weight=%.2f",
+                    u_s.shape[1],
+                    u_c.shape[1],
+                    w,
+                )
+            else:
+                u, v, bias = fit_affine_low_rank_transport(
+                    fit_old,
+                    fit_new,
+                    rank=self._lrpt_rank,
+                    reg=self._lrpt_reg,
+                )
+                rel_err, _ = transport_prediction_error(
+                    fit_old, fit_new, u, v, bias=bias
+                )
         else:
+            if self._lrpt_dual:
+                raise ValueError("lrpt_dual requires lrpt_bias=True")
             u, v, bias = (
                 *fit_low_rank_transport(
                     fit_old,

@@ -411,3 +411,11 @@
 - **观察**：C100 Final 87.70（基线 86.89 +0.81、EXP-009 88.42 -0.72）、AvgAcc 91.83、Forgetting 8.53；曲线前半段持续高于 EXP-009（T1-T5 高 1-3 分），后半段 T7/T8 略低。gauge 三项诊断均为 0；产物无逐任务 B 文件。
 - **判断**：cumulative+gauge 在两个数据集都过最低验收线（INR 79.06 / C100 87.70），状态减 85.77%/87.85%；符合 §14"即使 Top1 不再额外提高也优先进入多 seed 和论文阶段"的条件。
 - **下一步**：启动多 seed 队列（INR/C100 × seeds 1/2/3，6 个完整运行，约 3-4 小时）；之后补强基线（SA-LoRA/CL-LoRA 可比划分）、消融（cumulative-only、无 prototype、LRPT 有无）与 FLOPs/吞吐/显存测量，最后进入论文整理。
+
+## 2026-08-06 22:54-23:10 多 seed 队列启动与论文准备
+
+- **运行**：`run_sa_cumulative_multiseed_queue.sh`（INR/C100 × seeds 1/2/3）启动，预计约 3.5-4 小时；运行时每任务记录 gauge 三项诊断（residual/rotation/preservation）。
+- **配置**：新增任务长度配置 INR T5/T20/T40（init 40/10/5）与 C100 T5/T20（init 20/5），DataManager 验证任务数正确（commit `c91b32a`）。
+- **工具**：新增 `scripts/collect_sa_cumulative_summary.py`，可从日志+产物一键输出 final/avgacc/forgetting/tasks/gauge 诊断/LoRA 参数（commit `65d911e`）；`论文/result_table_single_seed.md` 汇总当前单 seed 结果（commit `d075e56`）。
+- **预测量**：CPU 上 C100 主方法产物 FLOPs=2.707e11/forward(batch8)、吞吐 29.4 img/s（CPU，仅参考）；正式 GPU 测量待队列结束后跑。
+- **风险**：多 seed 队列约 3.5h，若中途 OOM/网络下载失败需按日志重跑对应 seed；强基线（InfLoRA/CL-LoRA/LoRA-DRS/DGS）尚未实现，论文阶段需评估可复现范围。

@@ -228,6 +228,12 @@ Phase B（v2 在线累计状态，commits `27a6574`/`d7ec60a`/`63b267e`）已落
 - 每任务 gauge projection residual / basis rotation / operator preservation 在 6 位小数下均为 0：A 基本不跨出旧行空间，历史有效算子被精确保持。
 - 结论：按 §14，优先进入多 seed（INR/C100 × seeds 1/2/3）与论文阶段。
 
+### 论文准备状态（2026-08-06）
+
+- 多 seed：运行中（INR/C100 × seeds 1/2/3）。
+- 任务长度：INR T5/T20/T40、C100 T5/T20 配置已就绪待跑。
+- 测量脚本与一致性审计脚本已具备；强基线/额外数据集/相关分析见 plan_sd.md §8 清单。
+
 ### Phase D：Residual LRPT
 
 1. prototype pre/post 特征必须来自真正部署的累计模型状态。

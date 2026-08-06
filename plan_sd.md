@@ -142,3 +142,18 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - **Phase D（residual LRPT）**：rank-10/bias/λ=1 默认值，不继续扫 rank/damping。
 - **单 seed 筛选**：已完成——INR cumulative-only（78.78，停止线已查）、INR cumulative+gauge（79.06）、gauge+LRPT INR（78.49，LRPT 降为消融）、C100 cumulative+gauge（87.70）。**双数据集最低验收线达成**（INR 79.06 ≥78.76、C100 87.70 ≥86.89、状态减 ≥85%、单模型推理）。
 - **多 seed（进行中）**：INR/C100 × seeds 1/2/3（`run_sa_cumulative_multiseed_queue.sh`，6 个完整运行）；随后补强基线、消融与 FLOPs/吞吐/显存测量，再进入论文整理。
+
+## 8. 论文准备清单（对应 method_revision_sd.md §11）
+
+| 项目 | 状态 |
+| --- | --- |
+| 多 seed（≥3，mean±std + 显著性） | 运行中（INR/C100 × seeds 1/2/3，6 个完整运行） |
+| 任务长度 T=5/10/20/40 | 配置已就绪（INR T5/T20/T40、C100 T5/T20，commit 后待跑）；INR T10/C100 T10 已有单 seed 数据 |
+| 额外数据集（ImageNet-A/CUB/DomainNet） | DataManager 支持 `imageneta`/`cub`/`objectnet`，数据未下载；下载与运行待评估 |
+| 强基线 | SD-LoRA（有）、EXP-009 Shared-A+prototype（有）、SA-LoRA r10/r20（有）、generic affine LRPT（有）；InfLoRA/CL-LoRA/LoRA-DRS/DGS 未实现，待评估可复现性 |
+| 消融 | cumulative-only（有单 seed）、gauge+LRPT（有单 seed）、无 prototype（待定）、EXP-009（有） |
+| 测量（FLOPs/吞吐/峰值显存） | `scripts/measure_sa_flops.py` 就绪，GPU 空闲后对主方法产物跑 |
+| 恢复/merged 一致性 | `verify_sa_consistency.py` 已在多个产物 PASS；主方法多 seed 产物逐一复验 |
+| 相关性分析 | EXP-012 operator drift 数据已有；gauge 三项诊断（residual/rotation/preservation）待与每任务遗忘做相关表 |
+| 参数量随 T 曲线 | v2 恒定 371,040（LoRA）；v1 线性增长可解析计算，论文阶段制图 |
+| 论文初稿 | 待多 seed 与测量完成后起草（`论文/` 目前只有 CL-LoRA/k-merge 参考 PDF） |

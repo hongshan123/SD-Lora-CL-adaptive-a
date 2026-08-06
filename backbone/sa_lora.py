@@ -21,6 +21,10 @@ from torch import Tensor
 
 from backbone.linears import SimpleLinear
 from backbone.lora import ParameterWrapper
+from backbone.sa_operator_stability import (
+    aggregate_normalized_up_projections,
+    relative_effective_operator_drift,
+)
 
 
 SA_STATE_VERSION = 1
@@ -161,6 +165,11 @@ class SharedALoRA_ViT_timm(nn.Module):
                 path, map_location="cpu", weights_only=True
             )
 
+        # These are task-local, non-persistent snapshots used only while the
+        # next task is trained. They never enter the saved Shared-A artifact.
+        self._operator_reference_down = []
+        self._operator_reference_up = []
+
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
         saved_scales = state.get("scales", {})
@@ -234,9 +243,70 @@ class SharedALoRA_ViT_timm(nn.Module):
             )
 
         self.reset_parameters()
+        if self.task_id > 0 and self.train_a_all_tasks:
+            self._capture_old_operator_reference()
         self.lora_vit = vit_model
         self.lora_vit.head = nn.Identity()
         self.out_dim = 768
+
+    def _capture_old_operator_reference(self):
+        """Snapshot the historical LoRA operator before shared A is updated."""
+        reference_scales = [
+            self.wrapped_param_prev[task_id].param.detach().cpu().clone()
+            for task_id in range(self.task_id)
+        ]
+        self._operator_reference_down = [
+            w_a.weight.detach().cpu().clone() for w_a in self.w_As
+        ]
+        self._operator_reference_up = []
+        for index in range(len(self.w_As)):
+            historical_up = [
+                self.saved_b_tasks[task_id][index]
+                for task_id in range(self.task_id)
+            ]
+            self._operator_reference_up.append(
+                aggregate_normalized_up_projections(
+                    historical_up, reference_scales
+                ).detach().cpu()
+            )
+
+    def old_operator_stability_loss(self):
+        """Relative drift of all historical Shared-A LoRA Q/V operators.
+
+        The live term includes the current values of historical task scales;
+        therefore it protects the exact old LoRA bank used in the forward pass,
+        not just the shared down projection in isolation.
+        """
+        if self.task_id == 0:
+            return self.w_As[0].weight.new_zeros(())
+        if not self._operator_reference_down or not self._operator_reference_up:
+            raise RuntimeError("missing Shared-A historical operator reference")
+
+        current_scales = [
+            self.wrapped_param_prev[task_id].param
+            for task_id in range(self.task_id)
+        ]
+        losses = []
+        for index, w_a in enumerate(self.w_As):
+            historical_up = [
+                self.saved_b_tasks[task_id][index]
+                for task_id in range(self.task_id)
+            ]
+            current_up = aggregate_normalized_up_projections(
+                historical_up,
+                current_scales,
+                device=w_a.weight.device,
+                dtype=w_a.weight.dtype,
+            )
+            losses.append(
+                relative_effective_operator_drift(
+                    current_down=w_a.weight,
+                    reference_down=self._operator_reference_down[index],
+                    current_up=current_up,
+                    reference_up=self._operator_reference_up[index],
+                )
+            )
+        return torch.stack(losses).mean()
 
     def _load_state(self):
         path = _join_path(self.save_file, SA_STATE_FILENAME)

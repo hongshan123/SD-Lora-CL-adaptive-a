@@ -293,3 +293,10 @@
 - **冒烟结果**：1-epoch INR 灾难性——task0 评估异常（83.8 vs 常规 88+），task1 后旧类精度 50% 并恶化到最终 0%。JVP 验证余弦 0.97–0.99，但 classwise 更新公式（S_c × R_l 系数内积）导致原型被破坏；即便修复基底坐标变换与参数 clone，仍不收敛。
 - **决策**：按用户“无法达到目标则 git 回退到当前仓库继续实验”的指示，`git restore` 丢弃未提交 classwise/JVP 改动并删除相关配置，回到 d835567。
 - **下一步**：继续原方案 affine rank12（INR 先跑）。
+
+## 2026-08-06 15:52 有效算子稳定化取代 class-wise 外推
+
+- **观察**：class-wise sensitivity 的 JVP/有限差分一致性高，并不代表 `S_class` 可以把未知未来 `Delta A` 映射到正确的类原型位移；参数侧映射缺失时，基底坐标变换会把很小误差放大为递归 prototype 破坏。Task 0 也异常说明该路径的隔离性不足。
+- **判断**：不再恢复该 prototype transport。Shared-A 的旧分支有可精确计算的线性形式：`sum_i scale_i normalize(B_i) @ normalize(A)`。应保护这个真实历史算子，而非拟合一个不受约束的特征/类别漂移映射。
+- **实现/测试**：在 cuda6 的 sdlora 环境，纯函数与极小 Shared-A 骨干测试通过：Task 0 loss=0、Task 1 初始 loss=0、扰动 A 后 loss>0、A 与历史 scale 均有有限梯度、快照不进入 state dict。GPU 0-3 空闲，准备运行 1-epoch x 10-task DDP smoke。
+- **风险**：过大的 lambda 会限制 A 的塑性，导致当前任务学习不足；初始 lambda=0.1 只作为安全验证，需从日志中的 raw relative drift 与分类损失比例判断是否做完整训练或调整。

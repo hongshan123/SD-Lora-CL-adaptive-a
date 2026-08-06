@@ -95,6 +95,18 @@ class Learner(SDLoraLearner):
         self._lrpt_pre_targets = None
         self._lrpt_a_old = None
         self._lrpt_res_pre = None
+        self._sa_operator_stability_lambda = float(
+            args.get("sa_operator_stability_lambda", 0.0)
+        )
+        if self._sa_operator_stability_lambda < 0:
+            raise ValueError("sa_operator_stability_lambda must be non-negative")
+        if (
+            self._sa_operator_stability_lambda > 0
+            and not args.get("sa_train_a_all_tasks", False)
+        ):
+            raise ValueError(
+                "sa_operator_stability_lambda requires sa_train_a_all_tasks=True"
+            )
 
     def update_network(self, index=True, task_index=None):
         model = timm.create_model(
@@ -143,6 +155,23 @@ class Learner(SDLoraLearner):
             )
         super().incremental_train(data_manager)
         if self._is_main_process():
+            if (
+                self._sa_operator_stability_lambda > 0
+                and self._cur_task > 0
+            ):
+                with torch.no_grad():
+                    operator_drift = float(
+                        self._raw_network()
+                        .backbone.old_operator_stability_loss()
+                        .item()
+                    )
+                logging.info(
+                    "[SharedA-SDLoRA] operator-stability task %d: "
+                    "relative_effective_drift=%.6f lambda=%.4g",
+                    self._cur_task,
+                    operator_drift,
+                    self._sa_operator_stability_lambda,
+                )
             if self._cur_task == data_manager.nb_tasks - 1:
                 self._rebuild_eval_backbone()
             raw_network = self._raw_network()
@@ -173,6 +202,14 @@ class Learner(SDLoraLearner):
                     len(prototypes),
                 )
                 raw_network.backbone.cleanup_per_task_files(self.args["filepath"])
+
+    def _additional_training_losses(self):
+        if self._sa_operator_stability_lambda <= 0 or self._cur_task <= 0:
+            return {}
+        operator_loss = self._raw_network().backbone.old_operator_stability_loss()
+        return {
+            "operator_stability": self._sa_operator_stability_lambda * operator_loss
+        }
 
     def _extract_current_task_features(
         self, data_manager, task_index=None, normalize=False, return_targets=False

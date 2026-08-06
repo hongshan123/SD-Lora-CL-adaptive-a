@@ -117,3 +117,9 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 
 - EXP-009：LoRA 2,027,530 + INR 原型 153,600 = 2,181,130（C100 原型 76,800 = 2,104,330）。剩余预算（按 INR）：30,710。
 - 持久 transport 若存 U,V ∈ R^{768×r_T}：r_T=16 时 24,576 ≤ 30,710；r_T=20 时 30,720 超预算。首选 r_T ≤ 16，且 transport 仅在任务内驻留、应用后即丢弃（持久化状态仅原型），训练参数与峰值显存单独报告。
+
+## 6. 有效 LoRA 算子稳定化（EXP-012）
+
+- class-wise JVP sensitivity 已在 1-epoch 冒烟中触发灾难性遗忘：其 class response 系数没有参数侧的完整映射，不能用来外推任意未来 `Delta A` 的原型位移。
+- 新候选不再预测 prototype 漂移，而是在每个 Task t 开始时快照历史分支的精确有效算子：`M_old @ normalize(A_old)`，其中 `M_old=sum_i s_i normalize(B_i)`。训练期间最小化当前历史算子相对漂移 `||M_live normalize(A)-M_old normalize(A_old)||_F^2 / ||M_old normalize(A_old)||_F^2`。
+- 该项只使用已保存的旧 B、历史 scale 和当前共享 A；不读取旧图像、不新增持久状态、不改变 Task 0，也不移动 prototype。先在 INR seed1995 做 1-epoch x 10-task 四卡 smoke，日志必须满足 Task 0 无 `operator_stability`、Task 1 起有有限非负该项且全过程无异常；随后再运行完整 INR。

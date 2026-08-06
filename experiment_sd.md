@@ -254,3 +254,15 @@
   - 实现了 JVP requires_grad 保存/恢复与一致性断言、中点 JVP 与有限差分验证（ΔA/ΔB/ΔA+B/交互项余弦/相对误差）、class-wise 12×8 sensitivity + 共享 768×8 基底、基底更新坐标变换、sensitivity-based 强度。
   - 冒烟（1-epoch INR）结果灾难性：task0 评估异常偏低（≈83.8 vs 常规 88+），task1 后旧类精度跌至 50% 并持续恶化（最终 task0 类 0%）。JVP 本身验证良好（ΔA+B 余弦 0.97–0.99），但 classwise 更新公式/基底一致性仍无法收敛。
   - 按用户指示 `git restore` 回退未提交改动，回到 d835567 仓库状态，继续原方案。
+
+## EXP-012 Shared-A 有效 LoRA 算子稳定化
+
+- 日期：2026-08-06
+- 状态：DDP 冒烟待运行
+- 目标/假设：上轮灾难性遗忘来自不完整的 class-wise JVP 外推，而 Shared-A 的真实历史分支可直接写作 `M_old @ normalize(A)`。训练新任务时约束该有效算子相对漂移，能在不访问旧样本的条件下从根源限制共享 A 和历史 scale 对旧类别表示的扰动。
+- 改动：新增 `backbone/sa_operator_stability.py`；`SharedALoRA_ViT_timm` 在 Task>0 的训练构造期保存非持久的旧 A / 旧有效 B 快照，并提供 `old_operator_stability_loss()`；`models/sdlora.py` 增加可扩展额外训练损失钩子；`models/sa_sdlora.py` 增加 `sa_operator_stability_lambda`。新增 Task 0/Task 1 零漂移、梯度、state-dict 非持久化测试。
+- 配置与命令：`exps/sa_sdlora_operator_stability_smoke_inr_seed1995.json`；`GPU_IDS=0,1,2,3 bash run_sa_operator_stability_smoke_inr.sh`。
+- 理论依据/文献：InfLoRA（CVPR 2024）和 LoRA-DRS（CVPR 2025）均从 LoRA 参数/子空间限制任务干扰；本实验不同于冻结子空间或梯度投影，直接约束当前网络前向中全部历史 B bank 与共享 A 构成的精确有效线性算子。它也不同于 LDC 的特征空间漂移回归，不学习或应用 prototype transport。
+- 参数与合规：快照只在当前任务训练内存中存在，未注册为 module buffer，`state_dict` 与 artifact 不含它；最终持久参数仍为 EXP-009 的 LoRA+prototype 口径（INR 2,181,130），满足预算。Task 0 返回严格零损失。
+- 结果：待 DDP 冒烟。
+- 下一步：若 smoke 通过，运行 `exps/sa_sdlora_operator_stability_inr_seed1995.json` 的 20 epoch 完整 INR；若出现 Task 0 异常或非有限 loss，立即停止并回退本 commit。

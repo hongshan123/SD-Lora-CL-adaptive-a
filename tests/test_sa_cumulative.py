@@ -397,6 +397,36 @@ def test_v2_canonical_forward_matches_v1_bank(tmp_path):
     assert torch.allclose(m1(x), m2(x), atol=1e-5)
 
 
+def test_v2_current_branch_matches_v1_unscaled(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(79)
+    tiny = _TinyViT(dim)
+    v1 = SharedALoRA_ViT_timm(
+        copy.deepcopy(tiny),
+        r=rank,
+        filepath=str(tmp_path / "v1"),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+    )
+    v2 = SharedALoRA_ViT_timm(
+        copy.deepcopy(tiny),
+        r=rank,
+        filepath=str(tmp_path / "v2"),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    with torch.no_grad():
+        for a1, a2 in zip(v1.w_As, v2.w_As):
+            a2.weight.copy_(a1.weight)
+        for b1, b2 in zip(v1.w_Bs, v2.w_Bs):
+            b1.weight.copy_(torch.randn_like(b1.weight))
+            b2.weight.copy_(b1.weight)
+        v2.wrapped_param[0].param.copy_(v1.wrapped_param[0].param)
+    x = torch.randn(4, 6, dim)
+    assert torch.allclose(v1(x), v2(x), atol=1e-6)
+
+
 def test_v2_save_accumulates_gauge_aligned_operator(tmp_path):
     dim, rank = 6, 2
     torch.manual_seed(59)

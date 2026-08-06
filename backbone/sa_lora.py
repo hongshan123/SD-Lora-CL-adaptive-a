@@ -315,7 +315,9 @@ class _CumulativeSharedAQKV(nn.Module):
 
     Historical tasks are represented by the exact effective operator
     ``H @ Q^T`` (fixed while the current task trains).  The current task adds
-    its own normalized LoRA branch ``scale * B(A x) / (||A|| ||B||)``.
+    its own raw LoRA branch ``scale * B(A x)``, matching the legacy v1
+    training-time semantics; the normalization is folded in only when the
+    task is saved into the cumulative state.
     """
 
     def __init__(
@@ -346,19 +348,11 @@ class _CumulativeSharedAQKV(nn.Module):
         self.register_buffer("h_v", h_v.clone(), persistent=False)
         self.register_buffer("q_v_t", q_v_t.clone(), persistent=False)
 
-    def _norm_cur(self, x, a_weight, b_weight):
-        denom = torch.norm(a_weight) * torch.norm(b_weight) + 1e-8
-        return F.linear(F.linear(x, a_weight), b_weight) / denom
-
     def forward(self, x):
         new_q = F.linear(F.linear(x, self.q_q_t), self.h_q)
         new_v = F.linear(F.linear(x, self.q_v_t), self.h_v)
-        new_q = new_q + self.scaling_cur[0](
-            self._norm_cur(x, self.a_q.weight, self.b_q.weight)
-        )
-        new_v = new_v + self.scaling_cur[0](
-            self._norm_cur(x, self.a_v.weight, self.b_v.weight)
-        )
+        new_q = new_q + self.scaling_cur[0](self.b_q(self.a_q(x)))
+        new_v = new_v + self.scaling_cur[0](self.b_v(self.a_v(x)))
         qkv = self.qkv(x)
         qkv[:, :, : self.dim] += new_q
         qkv[:, :, -self.dim :] += new_v

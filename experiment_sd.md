@@ -377,6 +377,21 @@
 - 决策：主方法先用 **cumulative+gauge（无 LRPT）** 跑 C100；INR 侧最低验收 Final ≥78.76 已满足（79.06）。LRPT 是否保留待多 seed 稳定性证据。
 - 下一步：C100 cumulative+gauge（`sa_cumulative_c100_seed1993_gauge`）。
 
+### EXP-016/017 补充：主方法多 seed（INR）
+
+- 状态：INR 4 seeds 完成（1995/1/2/3，均 exit=0，无逐任务 B 文件，LoRA 371,040）；C100 3 seeds 运行中。
+- 结果（cumulative+gauge，20 epoch × 10 tasks）：
+  | seed | Final Top1 | AvgAcc | Forgetting |
+  | --- | ---: | ---: | ---: |
+  | 1995 | 79.06 | 81.77 | 6.82 |
+  | 1 | 77.99 | 82.54 | 6.77 |
+  | 2 | 78.69 | 82.01 | 8.26 |
+  | 3 | 78.09 | 82.78 | 9.60 |
+  | mean±std | 78.46±0.48 | 82.28±0.37 | 7.86±1.31 |
+- 诊断：gauge residual/rotation/preservation 均为 1e-8~3e-8（科学计数法实测），历史算子保持近乎精确；每任务数据完整。
+- 分析：Final 均值 78.46 低于 SD-LoRA seed1995 基线（78.76），但 seed1995 单点 79.06 达标；同 seed 基线（EXP-009 seed1/2/3）尚未运行，配对比较待补。seed 间 Forgetting 方差较大（6.77–9.60），反映类序对旧类保持的影响。
+- 下一步：C100 seed1/2/3 完成后，运行 EXP-009 同 seed 对照队列，做配对显著性。
+
 ## EXP-017 C100 cumulative+gauge（主方法第二数据集验证）
 
 - 日期：2026-08-06

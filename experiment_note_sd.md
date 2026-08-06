@@ -427,6 +427,13 @@
 - **配置**：`exps/sa_cumulative_cub_seed1_gauge.json`（与 INR 同超参，cumulative+gauge，无 LRPT）+ 运行脚本，commit `9c2ca2f`；待多 seed 队列结束后运行。
 - **多 seed 部分结果**：seed1 INR gauge Final 77.99 / AvgAcc 82.54 / Forgetting 6.77（与 seed1995 的 79.06 不同属正常——seed 决定类序；同 seed 基线 EXP-009 待跑）。
 
+## 2026-08-07 00:09 INR 多 seed 完成
+
+- **结果**（cumulative+gauge，4 seeds）：1995=79.06/81.77/6.82、1=77.99/82.54/6.77、2=78.69/82.01/8.26、3=78.09/82.78/9.60；mean±std Final 78.46±0.48、AvgAcc 82.28±0.37、Forgetting 7.86±1.31。全部 exit=0，产物无逐任务 B 文件，LoRA 371,040。
+- **诊断**：科学计数法下每任务 residual/rotation/preservation ≈1e-8~3e-8，历史算子保持近乎精确（此前 %.6f 显示为 0 属于截断）。
+- **判断**：seed1995 单点过最低线（79.06），但 4-seed 均值 78.46 略低于 SD-LoRA 基线单点 78.76；需要 EXP-009 同 seed 对照后才能判断相对旧方法的统计关系。Forgetting 方差大（类序敏感）。
+- **下一步**：C100 seed1/2/3 运行中；随后 EXP-009 同 seed 队列（`run_sa_baseline_multiseed_queue.sh`）→ 配对 t 检验 → 任务长度/CUB/测量。
+
 ## 2026-08-06 23:00 诊断-遗忘相关性初算与诊断精度修正
 
 - **工具**：新增 `scripts/drift_forgetting_correlation.py`（最终精度矩阵 → 每任务遗忘；日志诊断 → Pearson/Spearman）。

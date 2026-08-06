@@ -141,7 +141,7 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - **Phase C（gauge alignment）**：完整 INR 已跑两档——cumulative-only 78.78/81.69/7.28（触发停止线，口径检查确认为无 gauge 的固有失真）；cumulative+gauge 79.06/81.77/6.82（Final ≥78.76 ✓、Forgetting 较 EXP-009 -0.44、AvgAcc 仍低 0.70）。保存时 QR canonicalization + `H_old_aligned = H_old Q_old^T Q_new` + 每任务残差/基底旋转/算子保持日志已落地；`cumulative_gauge=false` 消融可用。
 - **Phase D（residual LRPT）**：rank-10/bias/λ=1 默认值，不继续扫 rank/damping。
 - **单 seed 筛选**：已完成——INR cumulative-only（78.78，停止线已查）、INR cumulative+gauge（79.06）、gauge+LRPT INR（78.49，LRPT 降为消融）、C100 cumulative+gauge（87.70）。**双数据集最低验收线达成**（INR 79.06 ≥78.76、C100 87.70 ≥86.89、状态减 ≥85%、单模型推理）。
-- **多 seed（进行中）**：INR/C100 × seeds 1/2/3（`run_sa_cumulative_multiseed_queue.sh`，6 个完整运行）；随后补强基线、消融与 FLOPs/吞吐/显存测量，再进入论文整理。
+- **多 seed**：INR 4 seeds 完成（78.46±0.48 / 82.28±0.37 / 7.86±1.31）；C100 3 seeds 运行中；随后 EXP-009 同 seed 对照（`run_sa_baseline_multiseed_queue.sh`）做配对显著性，再补任务长度/CUB/测量与论文回填。
 
 ## 8. 论文准备清单（对应 method_revision_sd.md §11）
 

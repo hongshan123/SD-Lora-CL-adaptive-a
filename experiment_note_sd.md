@@ -343,3 +343,28 @@
 - **观察**：INR rawproto r10 task0=91.11，task1=52.74，灾难性；终止。离线双头融合评估因缺少每任务原型快照而口径无效，已放弃。
 - **判断**：raw 空间低秩 transport 与原型归一化分类空间不匹配；回到 normalized 空间，试 generic affine r10 + adaptive（V 投影强度）。
 - **下一步**：INR adaptive 先跑；达标后 C100 adaptive。
+
+## 2026-08-06 19:28 generic adaptive INR 未过（差 0.01/0.11/0.58）
+
+- **观察**：INR affine r10 + adaptive final=79.13、AvgAcc=82.86、Forgetting=6.84，三个门槛（79.14/82.97/6.26）均未过；比普通 affine r10（79.29/83.00/6.61）全面变差。
+- **判断**：按 prototype 在 transport 输入方向上的投影缩放补偿强度没有泛化收益；adaptive 作为 generic 变体关闭。INR-first 规则下不跑 C100 adaptive。
+- **下一步**：method_revision_sd.md 已先行定稿新方向——Gauge-Aligned Cumulative Shared-A；LRPT 只保留为 residual correction。
+
+## 2026-08-06 20:09 训练期原型一致性正则 INR 未过
+
+- **观察**：`sa_prototype_consistency_weight=0.1`（EMA 余弦，commit fcc8882）INR final=78.41、AvgAcc=81.91、Forgetting=7.45；低于原始 SD-LoRA 与 EXP-009。训练日志正常（一致性项 0.03–0.05、无 NaN），Task 8 76.05 为各变体最低。
+- **判断**：训练期把当前批次特征拉向 EMA 原型会牺牲新任务可塑性，正则不是漂移补偿的替代；记录为负结果，不跑 C100。
+- **下一步**：两项结果与既有 rank/damping/raw/classmean/JVP/operator 一起关闭 LRPT 局部微调路线，开始实现 method_revision_sd.md 的 Phase A（累计 B 纯代数等价性）。
+
+## 2026-08-06 20:15 工作树清理与 Phase A 启动
+
+- **动作**：`git stash` 丢弃工作树中未使用的 `lrpt_adaptive_min/max` 参数化（stash@{0}，可恢复；无配置引用，属于已关闭 adaptive 路线）；`git status` 干净。
+- **计划**：Phase A 在 `backbone/sa_lora.py` 增加 `fold_cumulative_up_projection` 等纯函数，新增等价性单测（算子/feature/logits < 1e-5），通过后单独 commit；随后更新三份文档。
+
+## 2026-08-06 20:35 Phase A 完成并提交
+
+- **实现**：`fold_cumulative_up_projection`（单分支折叠）与 `fold_all_cumulative_up_projections`（全 Q/V 分支），公式 `H = sum_i s_i B_i / (||A|| ||B_i||)`，与现有 bank forward 的 scale/normalization 口径逐项一致。
+- **验证**：新增 `tests/test_sa_cumulative.py` 5 个用例：算子等价（<1e-5）、真实 `_SharedAQKV` feature 等价（<1e-5）、tiny ViT logits 等价（<1e-5）、与 `save_merged_lora` 产物一致（atol 1e-6）、输入校验；全量 32 passed。
+- **提交**：commit `c666ac0`（代码+测试）；工作树仅剩文档改动。
+- **判断**：Phase A 证明固定 A 下累计 B 是精确代数等价，不是近似；Phase B 可以放心把 artifact 从 O(T) 个 B 文件改为单累计 B。
+- **下一步**：Phase B——`SA_STATE_VERSION` 升级、在线累计保存/加载、Task 0 后即合并、显式迁移脚本、DDP 无重复累计验证。

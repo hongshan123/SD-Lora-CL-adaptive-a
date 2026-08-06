@@ -280,3 +280,41 @@
 - 下一步：同一框架内的结构性变体 **raw-space 原型**——原型改为“未归一化特征的类均值再归一化”，LRPT 也在 raw 空间拟合与应用。先跑 INR rawproto r10 验证，达标后跑 C100。
 - 结果（raw-space 原型，INR 失败）：task0 Top1=91.11 正常，但 task1 骤降至 52.74，明显灾难性；按 INR-first 规则终止，不跑 C100。raw 空间低秩 transport 不适配原型归一化后的分类空间。
 - 下一步：generic affine r10 + `lrpt_adaptive`（按 prototype 在 transport 输入方向上的投影自适应补偿强度，之前只在 LoRA-aware 上测过；直接针对 C100 中 T5/T7 被过度校正的问题）。INR 先跑。
+
+## EXP-013 训练期原型一致性正则（EMA cosine）与 generic adaptive 负结果
+
+- 日期：2026-08-06
+- 状态：完成（两项 INR 均未达标，作为已关闭路线记录）
+- 目标/假设：
+  1. generic affine r10 + `lrpt_adaptive`：按旧 prototype 在 transport 基底上的投影自适应补偿强度（强度 0.5–1.0），避免低投影类被过度校正；
+  2. 训练期原型一致性正则（`sa_prototype_consistency_weight=0.1`）：EMA 类原型与当前批次特征做余弦一致项，稳定原型在线估计，不保存额外持久参数、不回放。
+- 改动：adaptive 复用 EXP-011 的 `lrpt_adaptive`（配置提交 c0ad739）；一致性正则新增 `models/sa_sdlora.py`、`models/sdlora.py`（commit fcc8882）。
+- 配置与命令：
+  - adaptive：`exps/lrpt_sa_sdlora_inr_affine_r10_adaptive_seed1995.json`，`bash run_lrpt_affine_r10_adaptive_inr.sh`；
+  - consistency：`exps/lrpt_sa_sdlora_inr_proto_consistency_seed1995.json`，`bash run_lrpt_proto_consistency_inr.sh`。
+- 结果（generic affine r10 + adaptive，INR seed1995）：
+  - final Top1=**79.13**（门槛 ≥79.14 ✗，差 0.01）、AvgAcc=**82.86**（门槛 82.97 ✗，差 0.11）、Forgetting=**6.84**（门槛 6.26 ✗）；
+  - 曲线 `[91.11, 86.61, 85.45, 83.29, 82.12, 82.62, 79.92, 79.69, 78.64, 79.13]`。
+- 结果（training-time prototype consistency，INR seed1995）：
+  - final Top1=**78.41**（基线 78.76 ✗，门槛 79.14 ✗）、AvgAcc=**81.91**（✗）、Forgetting=**7.45**（✗）；
+  - 曲线 `[91.11, 85.62, 84.79, 82.87, 81.0, 81.64, 79.42, 78.23, 76.05, 78.41]`；每任务一致性项 0.03–0.05，训练正常、无 NaN。
+- 分析：
+  - adaptive 比普通 affine r10（79.29/83.00/6.61）全面变差（Final -0.16、AvgAcc -0.14、Forgetting +0.23），按投影强度缩放补偿没有带来泛化收益；
+  - consistency 正则使当前任务特征与 EMA 原型靠拢，反而压低了中后期任务精度（Task 8 76.05 是各变体最低），Final 低于原始基线；该正则不改变参数状态，但直接干扰了新任务可塑性。
+- 结论：LRPT 框架内的 adaptive/一致性正则两类小步调整均为干净负结果。结合此前 rank/damping/raw/classmean/JVP/operator 全部负结果，**关闭 LRPT 局部超参数与训练期正则路线**，按 method_revision_sd.md 转向 **Gauge-Aligned Cumulative Shared-A**（结构改变参数随任务数增长的方式，而不是继续优化同一特征回归）。
+- 工程清理：adaptive 未提交的 `lrpt_adaptive_min/max` 参数化改动属于已关闭路线且无配置使用，已 `git stash`（stash@{0}，可恢复），工作树回到 HEAD 干净状态。
+
+## EXP-014 Gauge-Aligned Cumulative Shared-A（Phase A：纯代数等价性）
+
+- 日期：2026-08-06
+- 状态：完成
+- 目标/假设：历史 B bank 可精确折叠为累计上投影 `H = sum_i s_i * B_i / (||A|| ||B_i||)`；固定 A 时 bank forward 与 cumulative forward 逐层算子、feature、logits 误差均应 < 1e-5。
+- 改动：`backbone/sa_lora.py` 新增 `fold_cumulative_up_projection` / `fold_all_cumulative_up_projections` 纯函数；新增 `tests/test_sa_cumulative.py`（commit `c666ac0`）。
+- 理论依据：见 method_revision_sd.md 第 3–4 节（`sum_i s_i * Bbar_i * Abar = (sum_i s_i * Bbar_i) * Abar`）。
+- 结果/分析：
+  - 算子等价：`H @ A` 与逐任务 `s_i B_i A / (||A|| ||B_i||)` 求和相对 Frobenius 误差 < 1e-5；
+  - feature 等价：真实 `_SharedAQKV` bank 前向与 cumulative 前向最大绝对误差 < 1e-5（3 历史任务、Q/V 双分支）；
+  - logits 等价：tiny ViT 全模型 + 随机线性头最大绝对误差 < 1e-5；
+  - 与 `save_merged_lora` 产物逐分支 `allclose(atol=1e-6)`；
+  - 输入校验（空 bank、数量不匹配、非标量 scale、缺任务 scale）均抛 ValueError；全量测试 32 passed。
+- 下一步：Phase B 在线累计状态（SA_STATE_VERSION 升级 + 迁移脚本 + 单 artifact 全流程）。

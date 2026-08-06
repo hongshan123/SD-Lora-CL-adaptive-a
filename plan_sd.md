@@ -130,3 +130,14 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 控制组完成：drift 相关性弱，operator-level 路线关闭；回到 affine LRPT 主线，C100 affine r10 第三次复跑。
 - C100 affine r10 三次均差 0.05–0.13，排除方差；迭代中：raw-space 原型变体（INR 先跑）。
 - raw-space 原型 INR 失败（task1 52.74），已终止；迭代中：generic affine r10 + adaptive。
+- generic affine r10 + adaptive INR 失败（79.13/82.86/6.84，三项均差 0.01/0.11/0.58）；训练期原型一致性正则 INR 失败（78.41/81.91/7.45）。LRPT 局部微调与训练期正则路线全部关闭。
+
+## 7. 新主线：Online Gauge-Aligned Cumulative Shared-A（2026-08-06）
+
+- 完整方案、碰撞边界、验收线、实现计划与停止条件见 `method_revision_sd.md`。
+- 核心：把历史 B bank 在线折叠为累计上投影 `H_t` + canonical 下投影 `Q_t^T`，持久状态从 `O(Tdr)` 降为 `O(dr)`（预计总状态减约 86%），再用闭式 gauge alignment 保持历史有效算子；affine LRPT 降级为剩余漂移的 residual correction。
+- **Phase A（纯代数等价性）**：完成（commit `c666ac0`）——累计折叠纯函数 + 固定 A 下 bank/cumulative 的算子、feature、logits 等价测试（<1e-5，32 tests passed）。
+- **Phase B（在线累计状态）**：待启动（下一步）——`SA_STATE_VERSION` 升级、单 artifact 全流程、旧产物显式迁移脚本、4 卡 DDP 无重复累计测试。
+- **Phase C（gauge alignment）**：训练前后 QR canonicalization、`H_old_aligned = H_old Q_old^T Q_new`、principal angles/projection residual 日志。
+- **Phase D（residual LRPT）**：rank-10/bias/λ=1 默认值，不继续扫 rank/damping。
+- **单 seed 筛选顺序**：INR cumulative only → INR cumulative+gauge → C100 → gauge+residual LRPT；最低验收线：INR Final ≥78.76、C100 Final ≥86.89、含 prototype 状态减 ≥80%、无需 task-id/router/逐任务 adapter。

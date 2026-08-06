@@ -35,6 +35,7 @@
 - class-wise JVP sensitivity：出现灾难性遗忘，已回退。
 - effective operator stability loss：将算子漂移压低 10 至 30 倍，但 Forgetting 只改善约 0.12，且 AvgAcc 下降。
 - generic adaptive transport：ImageNet-R 为 79.13 / 82.86 / 6.84，弱于普通 affine rank-10。
+- training-time prototype consistency（EMA cosine，w=0.1）：ImageNet-R 为 78.41 / 81.91 / 7.45，Final 低于原始基线，训练期原型拉近牺牲新任务可塑性。
 
 这些结果说明继续做小范围超参数微调的收益很低。下一步必须改变参数状态随任务增长的结构，而不是继续优化同一个 feature regression。
 
@@ -190,6 +191,8 @@ LoRA total:                            368,640
 2. 使用实际 scale 和 normalization 计算有效上投影。
 3. 固定 A 时验证 bank forward 与 cumulative forward 一致。
 4. 要求每层有效算子误差、feature 误差和 logits 误差均小于 `1e-5` 量级。
+
+状态：完成（commit `c666ac0`，2026-08-06）。`tests/test_sa_cumulative.py` 验证固定 A 下算子/feature/logits 等价误差 < 1e-5，且累计 B 与 `save_merged_lora` 产物一致；全量 32 tests passed。
 
 ### Phase B：在线累计状态
 

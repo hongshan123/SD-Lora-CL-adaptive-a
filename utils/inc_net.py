@@ -53,6 +53,7 @@ def get_backbone(args, pretrained=False):
                 shared_a_orthogonal=args.get("sa_shared_a_orthogonal", True),
                 train_a_all_tasks=args.get("sa_train_a_all_tasks", False),
                 delete_per_task_files=args.get("sa_delete_per_task_files", False),
+                cumulative_state=args.get("sa_cumulative_state", False),
             )
         else:
             model = LoRA_ViT_timm(

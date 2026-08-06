@@ -276,3 +276,5 @@
 - 控制组（EXP-012 诊断）：`sa_operator_stability_lambda=0.0`，仅记录每任务保存后的 `relative_effective_drift`，不加入训练损失，其余配置与 EXP-009/EXP-012 完全一致。目的是判断“算子漂移”与 Forgetting/AvgAcc 是否相关；若控制组的 raw drift 也很小或与遗忘无单调关系，则 operator-level 正则路线停止。
 - 控制组结果（INR seed1995，lambda=0）：Final Top1=79.39、AvgAcc=82.47、Forgetting=7.10；raw drift 序列 0.0911/0.0202/0.0118/0.0048/0.0082/0.0081/0.0062/0.0097/0.0075。与 EXP-012（lambda=1，drift≈0.002–0.004）相比，drift 高 10–30 倍，但 Forgetting 仅差 0.12、AvgAcc 反而高 0.27。
 - 结论：raw operator drift 与遗忘相关性弱；operator-level 正则路线正式关闭。回到 generic affine LRPT（INR 已达标、C100 最佳 92.46/7.12），第三次复跑 C100 affine r10 验证是否能过门槛。
+- 结果（C100 affine r10 第三次复跑 RERUN3，仍未过）：final Top1=88.58（✓）、AvgAcc=92.50（门槛 92.57 ✗，差 0.07）、Forgetting=7.17（门槛 7.08 ✗，差 0.09）。三次结果 92.46/7.12、92.48/7.21、92.50/7.17，说明该配置系统性差 0.05–0.13，非方差。
+- 下一步：同一框架内的结构性变体 **raw-space 原型**——原型改为“未归一化特征的类均值再归一化”，LRPT 也在 raw 空间拟合与应用。先跑 INR rawproto r10 验证，达标后跑 C100。

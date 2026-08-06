@@ -431,8 +431,12 @@ class Learner(SDLoraLearner):
         z_old_targets = self._lrpt_pre_targets
         self._lrpt_pre_features = None
         self._lrpt_pre_targets = None
-        z_old = F.normalize(z_old_raw, p=2, dim=1)
-        z_new = F.normalize(z_new_raw, p=2, dim=1)
+        if self.args.get("sa_raw_prototypes", False):
+            z_old = z_old_raw.float()
+            z_new = z_new_raw.float()
+        else:
+            z_old = F.normalize(z_old_raw, p=2, dim=1)
+            z_new = F.normalize(z_new_raw, p=2, dim=1)
         if self._lrpt_fit_target == "classmean":
             fit_old = self._class_mean_prototypes(z_old, z_old_targets)
             fit_new = self._class_mean_prototypes(z_new, z_new_targets)
@@ -614,7 +618,8 @@ class Learner(SDLoraLearner):
             for _, inputs, targets in loader:
                 inputs = inputs.to(self._device, non_blocking=True)
                 feats = raw_network.backbone(inputs)
-                feats = F.normalize(feats, p=2, dim=1)
+                if not self.args.get("sa_raw_prototypes", False):
+                    feats = F.normalize(feats, p=2, dim=1)
                 for f, target in zip(feats.cpu(), targets):
                     c = int(target.item())
                     if sums[c] is None:

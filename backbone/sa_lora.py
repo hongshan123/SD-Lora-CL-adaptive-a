@@ -381,6 +381,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         train_a_all_tasks=False,
         delete_per_task_files=False,
         cumulative_state=False,
+        cumulative_gauge=True,
     ):
         super().__init__()
         assert r > 0
@@ -391,6 +392,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.train_a_all_tasks = bool(train_a_all_tasks)
         self.delete_per_task_files = bool(delete_per_task_files)
         self.cumulative_state = bool(cumulative_state)
+        self.cumulative_gauge = bool(cumulative_gauge)
         self.base_vit = vit_model
 
         if lora_layer:
@@ -775,11 +777,16 @@ class SharedALoRA_ViT_timm(nn.Module):
             s = self.wrapped_param[0].param.detach().cpu().float().reshape(())
             q_t, r = canonical_down_projection(a)
             if idx < len(self.cumulative_up) and self.task_id > 1:
-                h_hist = gauge_align_up_projection(
-                    self.cumulative_up[idx],
-                    self.canonical_down[idx],
-                    q_t,
-                )
+                if self.cumulative_gauge:
+                    h_hist = gauge_align_up_projection(
+                        self.cumulative_up[idx],
+                        self.canonical_down[idx],
+                        q_t,
+                    )
+                else:
+                    # Ablation: keep the old cumulative up projection without
+                    # aligning it to the new canonical basis (cumulative only).
+                    h_hist = self.cumulative_up[idx]
             else:
                 h_hist = torch.zeros_like(b)
             norm_a = torch.linalg.vector_norm(a)

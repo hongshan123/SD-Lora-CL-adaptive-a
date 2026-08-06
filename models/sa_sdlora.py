@@ -138,6 +138,7 @@ class Learner(SDLoraLearner):
             train_a_all_tasks=self.args.get("sa_train_a_all_tasks", False),
             delete_per_task_files=self.args.get("sa_delete_per_task_files", False),
             cumulative_state=self.args.get("sa_cumulative_state", False),
+            cumulative_gauge=self.args.get("sa_cumulative_gauge", True),
         )
         model.out_dim = 768
         return model

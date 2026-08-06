@@ -460,6 +460,60 @@ def test_v2_save_accumulates_gauge_aligned_operator(tmp_path):
         )
 
 
+def test_v2_cumulative_only_keeps_old_h_unaligned(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(73)
+    run = tmp_path / "run"
+    model0 = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    with torch.no_grad():
+        for w in model0.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    model0.save_lora_parameters(str(run), task_id=0)
+
+    model1 = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=1,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_gauge=False,
+    )
+    with torch.no_grad():
+        for w_a in model1.w_As:
+            w_a.weight.add_(0.2 * torch.randn_like(w_a.weight))
+        for w_b in model1.w_Bs:
+            w_b.weight.copy_(torch.randn_like(w_b.weight))
+    model1.save_lora_parameters(str(run), task_id=1)
+
+    state = torch.load(
+        run / "sa_state.pt", map_location="cpu", weights_only=True
+    )
+    for idx, (w_a, w_b) in enumerate(zip(model1.w_As, model1.w_Bs)):
+        a1 = w_a.weight.detach().cpu().float()
+        b1 = w_b.weight.detach().cpu().float()
+        s1 = model1.wrapped_param[0].param.detach().cpu().float().reshape(())
+        _, r_new = canonical_down_projection(a1)
+        norm_a = torch.linalg.vector_norm(a1)
+        norm_b = torch.linalg.vector_norm(b1) + 1e-8
+        h_cur = canonicalize_effective_up_projection(
+            s1 * b1 / (norm_a * norm_b), r_new
+        )
+        # No gauge: old H is carried over unchanged (no projection).
+        assert torch.allclose(
+            state["cumulative_up"][idx],
+            model0.cumulative_up[idx] + h_cur,
+            atol=1e-5,
+        )
+
+
 def test_migrate_v1_to_v2_is_forward_equivalent(tmp_path):
     dim, rank = 6, 2
     torch.manual_seed(61)

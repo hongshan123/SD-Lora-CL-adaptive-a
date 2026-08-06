@@ -391,3 +391,11 @@
 - **动作**：确认 v1 `_SharedAQKV` 当前支路不归一化（历史支路才归一化）；把 `_CumulativeSharedAQKV` 当前支路改为 `scale*B(Ax)`，归一化仅在保存折叠时使用（与 v1 把该任务存入 bank 后的口径一致）；新增 v1/v2 task0 前向等价单测；44 tests passed；commit `a3d3a79`。
 - **影响**：此前 1-epoch smoke 与已中断的完整 INR 使用旧口径，仅作工程参考；完整 INR 以本次修正后重跑为准。
 - **下一步**：重跑完整 INR cumulative-only → gauge。
+
+## 2026-08-06 21:13-21:40 完整 INR：cumulative-only 与 cumulative+gauge
+
+- **cumulative-only**（20 epoch × 10 tasks，exit=0）：Final 78.78、AvgAcc 81.69、Forgetting 7.28；相对 EXP-009 的 79.34/82.47/7.26 下降 0.56/0.78，触发方法文档 >0.5 停止线。每任务 projection residual=0.000000。
+- **判断（停止线检查）**：无 gauge 时保存把旧 H 直接放入新 Q 坐标（H_old @ Q_new^T）；即使 A 只在原 span 内旋转（residual=0 无法捕获），历史算子也被改变。这是表示口径问题，不是训练归一化错误；gauge alignment 正是修这个。
+- **cumulative+gauge**（20 epoch × 10 tasks，exit=0）：Final 79.06（≥基线 78.76 ✓、强目标 79.29 差 0.23）、AvgAcc 81.77（EXP-009 差 0.70）、Forgetting 6.82（EXP-009 -0.44、SD-LoRA +1.21）。相对 cumulative-only：Final +0.28、AvgAcc +0.08、Forgetting -0.46。
+- **判断**：gauge 修正有效且必要；A 行空间几乎不跨 span，历史算子被精确保持。AvgAcc 缺口来源被定位为新任务支路/深层非线性对旧原型的残余漂移——residual LRPT 正对该对象。gauge 首次运行 Forgetting 改善显著，§10 的"连续两次无改善"停止条件未触发。
+- **下一步**：gauge+residual LRPT INR 运行中；预期 Final/AvgAcc 回升到 EXP-009 水平后跑 C100。

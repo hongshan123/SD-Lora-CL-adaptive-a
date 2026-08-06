@@ -214,6 +214,11 @@ LoRA total:                            368,640
 
 Phase B（v2 在线累计状态，commits `27a6574`/`d7ec60a`/`63b267e`）已落地并完成 4 卡 1-epoch DDP smoke：10 任务 exit=0、无逐任务 B 文件、`verify_sa_consistency` feature diff=0.000e+00 PASS。实测 LoRA 状态 371,040（canonical_down 184,320 + cumulative_up 184,320 + triangular_r 2,400）= 基线 10.07%；含 INR 原型 524,640 = 14.23%（减少 85.77%，相对第 7 节表格多出 R 2,400）。保存时执行 QR canonicalization + `H_old_aligned = H_old Q_old^T Q_new` 并逐任务记录相对投影残差；`cumulative_gauge=false` 为 cumulative-only 消融。下一步按第 10 节顺序跑完整 INR。
 
+完整 INR 单 seed 结果（seed1995，20 epoch × 10 tasks）：
+- cumulative-only：Final 78.78 / AvgAcc 81.69 / Forgetting 7.28。相对 EXP-009 下降 0.56，触发 §10 停止线；检查确认无 gauge 时旧 H 被直接放入新 Q 坐标，A 的 span 内旋转也会破坏历史算子，属于表示口径问题而非 scale/normalization 错误。
+- cumulative+gauge：Final 79.06 / AvgAcc 81.77 / Forgetting 6.82。Final ≥78.76 最低线且较 SD-LoRA +0.30，Forgetting 较 EXP-009 -0.44；AvgAcc 仍低 0.70，归因于去掉 v1 隐含重归一化后的残余原型漂移（residual LRPT 对象）。每任务 projection residual≈0，A 基本不跨出旧 span。
+- 进行中：gauge + residual LRPT（`exps/sa_cumulative_inr_seed1995_gauge_lrpt.json`）。
+
 ### Phase D：Residual LRPT
 
 1. prototype pre/post 特征必须来自真正部署的累计模型状态。

@@ -346,3 +346,24 @@
 - 工程过程：首次 smoke 失败——任务 0 由 `utils/inc_net.get_backbone` 构造时未透传 `cumulative_state`，task0 写成 v1 产物，task1 报 legacy mismatch；修复透传后通过（commit `d7ec60a`）。
 - 分析：gauge residual 在 6 位小数下为 0，说明 1-epoch 训练下共享 A 的更新基本保持在旧行空间内（QR 后 Q 未变），gauge alignment 因此精确保持历史算子；完整训练下 A 是否跨出原 span 需看完整 INR 的残差序列。
 - 下一步：按 method_revision_sd.md 顺序跑完整 INR：cumulative-only（`sa_cumulative_gauge=false`）→ cumulative+gauge（默认 true）→ 通过后 C100 → gauge+residual LRPT。
+
+## EXP-016 完整 INR：cumulative-only 与 cumulative+gauge
+
+- 日期：2026-08-06
+- 状态：完成（两档均 exit=0）；gauge+residual LRPT 组合运行中
+- 目标/假设：用完整 20-epoch 训练检验 v2 累计状态（无 gauge / 有 gauge）相对 EXP-009（v1 bank）的性能；按 method_revision_sd.md §10 停止条件判断是否继续。
+- 配置与命令：`exps/sa_cumulative_inr_seed1995_cumulative_only.json`（`sa_cumulative_gauge=false`）、`exps/sa_cumulative_inr_seed1995_gauge.json`（`sa_cumulative_gauge=true`），其余与 EXP-009 一致（prototype 分类器、无 LRPT）；`bash run_sa_cumulative_inr_queue.sh`。
+- 结果（ImageNet-R seed1995）：
+  | 方法 | Final Top1 | AvgAcc | Forgetting | 曲线 |
+  | --- | ---: | ---: | ---: | --- |
+  | EXP-009（v1 bank） | 79.34 | 82.47 | 7.26 | — |
+  | SD-LoRA 基线 | 78.76 | 83.13 | 5.61 | — |
+  | cumulative-only | 78.78 | 81.69 | 7.28 | [90.64, 84.25, 83.32, 82.45, 81.37, 81.01, 78.16, 79.03, 77.94, 78.78] |
+  | cumulative+gauge | **79.06** | 81.77 | **6.82** | [91.26, 84.32, 83.01, 81.96, 81.33, 81.20, 78.35, 79.08, 78.08, 79.06] |
+- 参数与工程：两档产物均只有 `sa_state.pt` + `sa_merged_lora.pt` + `sa_prototypes.pt` + `CLs_*`，无逐任务 B 文件；LoRA 371,040 = 基线 10.07%，含 INR 原型 524,640 = 14.23%（减少 85.77%）；每任务 gauge 日志 `relative_projection_residual=0.000000`（6 位小数）。
+- 分析：
+  - cumulative-only 相对 EXP-009：Final -0.56（触发 §10 的 >0.5 停止线）、AvgAcc -0.78、Forgetting +0.02。停止线要求"先检查历史 scale/normalization 口径"——检查结论：无 gauge 时保存直接用新 Q 坐标存旧 H（`H_old @ Q_new^T`），A 在训练中即使只在原 span 内旋转也会改变历史有效算子；这不是归一化口径错误，而是缺少 gauge alignment 的固有失真。
+  - gauge 相对 cumulative-only：Final +0.28、AvgAcc +0.08、Forgetting -0.46，确认 gauge alignment 是必要的修正；相对 EXP-009：Final -0.28（≤0.5，通过）、Forgetting -0.44（改善）、AvgAcc -0.70（仍低）。
+  - 每任务 projection residual≈0 说明 A 的行空间几乎不跨出旧 span；gauge 在此情形可精确保持历史算子。AvgAcc 缺口主要来自：v1 隐含的"历史 B 用当前 A 重新归一化"被去掉后新任务干扰更直接地作用于旧原型，以及深层非线性残余漂移——这正是 residual LRPT（Phase D）要补偿的对象。
+  - gauge INR Final=79.06 ≥ 最低验收线 78.76（✓），且强目标 79.29 仅差 0.23；AvgAcc 未达强目标 83.00。
+- 下一步：等待 gauge+residual LRPT INR（`exps/sa_cumulative_inr_seed1995_gauge_lrpt.json`，运行中）；若 Final/AvgAcc 回升到 EXP-009 水平则跑 C100。

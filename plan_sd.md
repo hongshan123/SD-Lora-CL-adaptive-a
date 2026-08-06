@@ -138,6 +138,6 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 核心：把历史 B bank 在线折叠为累计上投影 `H_t` + canonical 下投影 `Q_t^T`，持久状态从 `O(Tdr)` 降为 `O(dr)`（预计总状态减约 86%），再用闭式 gauge alignment 保持历史有效算子；affine LRPT 降级为剩余漂移的 residual correction。
 - **Phase A（纯代数等价性）**：完成（commit `c666ac0`）——累计折叠纯函数 + 固定 A 下 bank/cumulative 的算子、feature、logits 等价测试（<1e-5，32 tests passed）。
 - **Phase B（在线累计状态）**：完成（commits `27a6574`/`d7ec60a`/`63b267e`）——v2 单文件状态、`_CumulativeSharedAQKV`、保存时在线累计、v1→v2 显式迁移脚本、4 卡 DDP 1-epoch smoke 通过（exit=0，无逐任务 B 文件，LoRA 371,040 = 基线 10.07%，一致性 PASS）。
-- **Phase C（gauge alignment）**：已随 Phase B 落地——保存时 QR canonicalization + `H_old_aligned = H_old Q_old^T Q_new` + 每任务相对投影残差日志；`cumulative_gauge=false` 提供 cumulative-only 消融。剩余：完整 INR 两档运行并观察残差-遗忘相关性。
+- **Phase C（gauge alignment）**：完整 INR 已跑两档——cumulative-only 78.78/81.69/7.28（触发停止线，口径检查确认为无 gauge 的固有失真）；cumulative+gauge 79.06/81.77/6.82（Final ≥78.76 ✓、Forgetting 较 EXP-009 -0.44、AvgAcc 仍低 0.70）。保存时 QR canonicalization + `H_old_aligned = H_old Q_old^T Q_new` + 每任务残差/基底旋转/算子保持日志已落地；`cumulative_gauge=false` 消融可用。
 - **Phase D（residual LRPT）**：rank-10/bias/λ=1 默认值，不继续扫 rank/damping。
-- **单 seed 筛选顺序**：INR cumulative only → INR cumulative+gauge → C100 → gauge+residual LRPT；最低验收线：INR Final ≥78.76、C100 Final ≥86.89、含 prototype 状态减 ≥80%、无需 task-id/router/逐任务 adapter。
+- **单 seed 筛选顺序**：INR cumulative only（完成，触发停止线但口径已查）→ INR cumulative+gauge（完成，Final 79.06 过最低线）→ gauge+residual LRPT INR（运行中）→ 通过后 C100；最低验收线：INR Final ≥78.76、C100 Final ≥86.89、含 prototype 状态减 ≥80%、无需 task-id/router/逐任务 adapter。

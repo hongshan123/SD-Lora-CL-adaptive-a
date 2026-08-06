@@ -254,3 +254,11 @@
 - **观察**：C100 d0.9 final=88.42、AvgAcc=92.50、Forgetting=7.29；AvgAcc 较 λ=1 微升、Forgetting 变差，仍未过。C100 affine r10（λ=1）的 Forgetting 7.12 仍是最接近门槛的结果。
 - **判断**：单一 λ/rank 微调收益有限。实现双空间 LRPT：样本空间 affine rank10（稳定但欠拟合）+ 类均值 affine rank10（拟合好但单独用过拟合）加权组合（λ_c=0.3），闭式、无网络。
 - **下一步**：C100 affine r10 复跑（方差检查）完成后，跑 INR dual → C100 dual。
+
+## 2026-08-06 10:00-11:10 用户反馈：改为真正的 LoRA-aware transport
+
+- **反馈**：用户要求放弃通用特征回归；保存训练前后共享矩阵，计算 ΔA，分离 shared-A 漂移与新增 B_t；用 JVP（J_A(x)ΔA）或逐层 Q/V LoRA 残差变化构造 transport 基底；只学习少量层权重/rank 系数；为每类可存 rank-10 响应统计；优先解决不同历史任务漂移方向不一致（按层/prototype 置信度自适应补偿强度）；并做通用 LRPT、仅 ΔA、ΔA+B_t、逐层四组消融。
+- **实现过程**：初版用逐层 qkv 残差 SVD 做基底，发现 1536 维层残差空间与 768 维最终特征空间维度不匹配；改用 `functional_call + forward_ad` 对真实 LoRA 权重做 forward-mode JVP，直接得到最终特征空间漂移响应。修复 flash/efficient attention 高阶反向缺失（切 math SDP）、反向模式 JVP OOM（改 forward-mode + 8 张分块）、CPU/GPU 设备不一致。
+- **冒烟**：1-epoch 全 10 任务通过；task1-9 每任务都应用 JVP 基底 transport；final 重建路径正常。
+- **参数口径**：JVP 基底 U,V（768×10）与 bias 均任务内驻留、用后即弃；持久化仍只有 LoRA 2,027,530 + prototype（INR 153,600 / C100 76,800）。临时锚点/JVP 中间量单独计入峰值显存与训练开销。
+- **下一步**：INR seed1995 正式运行（ΔA+B_t + adaptive）；达标后 C100；随后 delta_a/layerwise 消融与多 seed。

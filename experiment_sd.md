@@ -230,3 +230,14 @@
 - 结果（C100 d0.9，未过）：final Top1=88.42（✓）、AvgAcc=92.50（门槛 92.57 ✗，差 0.07）、Forgetting=7.29（门槛 7.08 ✗）。AvgAcc 略好于 λ=1，Forgetting 反而变差。
 - 分析：λ 微调无法同时满足两个次要指标；C100 affine r10（λ=1）仍是 Forgetting 最优（7.12）。正复跑该配置做方差检查；同时实现双空间 LRPT（样本空间 transport + 加权类均值 transport，闭式组合，避免 classmean 单独过拟合）。
 - 下一步：C100 affine r10 复跑结果后，按 INR-first 规则跑 INR dual；若过再跑 C100 dual。
+
+## EXP-011 LoRA-aware LRPT（用户反馈后重构）
+
+- 日期：2026-08-06
+- 状态：实现完成、冒烟通过；INR seed1995 正式运行中
+- 反馈与目标：不再对完整特征映射做自由 SVD；保存训练前后共享矩阵，计算 ΔA=A_t-A_{t-1}，用 forward-mode JVP 计算 J_A(x)ΔA + J_B(x)ΔB_t 的真实 LoRA 响应，以这些响应构造最终特征空间的 transport 基底；仅用少量层权重/rank 系数，并支持按 prototype 在漂移基底上的投影自适应补偿强度。要求四组消融：通用 LRPT、仅 ΔA、ΔA+B_t、逐层 LoRA-aware。
+- 改动：`backbone/lrpt.py` 新增 `fit_affine_map`、`low_rank_factors`、`project_map_to_basis`、`fit_layerwise_weights`、`apply_transport_adaptive`；`models/sa_sdlora.py` 新增 `lrpt_basis`（generic/delta_a/delta_a_b/layerwise）、`lrpt_adaptive`，采集当前任务每类 2 张锚点图，用 `functional_call + forward_ad` 对 48 个 LoRA 权重做 JVP，SVD 取 top-r 右奇异向量作为漂移基底，再把经验仿射映射投影到基底上。commit `d6c91d8`。
+- 工程要点：JVP 需 math SDP 后端（flash/efficient attention 不支持高阶/forward tangent）；forward-mode AD 避免反向模式 OOM；锚点按 8 张分块。
+- 冒烟验证（1-epoch 全 10 任务 INR seed1995）：每任务 JVP 基底应用成功，final 任务重建路径通过；LRPT 每任务 relative_drift_error ≈ 0.85–0.90（基底约束下略高于自由拟合，但目标是泛化到旧类）。
+- 配置：`exps/lrpt_lora_inr_seed1995.json`（ΔA+B_t + adaptive）、`exps/lrpt_lora_da_inr_seed1995.json`（仅 ΔA）、`exps/lrpt_lora_lw_inr_seed1995.json`（逐层）、`exps/lrpt_lora_c100_seed1993.json`。
+- 下一步：INR seed1995 正式运行；达标后跑 C100；随后补 C100 的 delta_a/layerwise 消融与多 seed。

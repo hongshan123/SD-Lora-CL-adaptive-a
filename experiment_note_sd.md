@@ -268,3 +268,9 @@
 - **观察**：INR LoRA-aware（ΔA+B_t + adaptive）final=79.49、AvgAcc=82.64、Forgetting=6.36，**未过 INR 门槛**（AvgAcc 差 0.33）。final Top1 是各变体最高，但 task2–7 普遍低于 generic affine。
 - **判断**：adaptive 的 0.5 下限可能过度削弱补偿；先跑 adaptive=False（全强度）的 LoRA-aware INR。若仍不过，按用户反馈切回原方案（generic affine LRPT）。
 - **下一步**：INR NA 运行中。
+
+## 2026-08-06 12:22-12:35 INR LoRA-aware（无 adaptive）达标
+
+- **观察**：INR LoRA-aware NA final=79.43、AvgAcc=82.68、Forgetting=6.18。Final 过，Forgetting ≤6.26 过（AvgAcc 分支差 0.29 但不影响，二者取其一）。adaptive 关闭后 Forgetting 改善（6.36→6.18），AvgAcc 略升。
+- **判断**：LoRA-aware 通过 INR；按规则跑 C100 LoRA-aware NA。若 C100 也过（Forgetting ≤7.08 或 AvgAcc ≥92.57），则用户反馈的新方法验收成立；若不过，切回 generic affine LRPT 完成单 seed 后做多 seed。
+- **下一步**：C100 NA 运行中。

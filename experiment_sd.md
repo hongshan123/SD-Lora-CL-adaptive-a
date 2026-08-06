@@ -244,3 +244,5 @@
 - 结果（INR LoRA-aware ΔA+B_t + adaptive，未过）：final Top1=79.49（✓）、AvgAcc=82.64（门槛 82.97 ✗，差 0.33）、Forgetting=6.36（门槛 6.26 ✗，差 0.10）。Final 高但中早期任务低于 generic affine，AvgAcc 被拉低。
 - 分析：adaptive 强度（0.5–1.0）可能是 AvgAcc 下降主因（泛化路径补偿不足）；先做受控变量：关闭 adaptive（λ=1）再跑 INR。
 - 若仍不过：按用户反馈切回原本设计（generic affine LRPT，此前 INR 全过、C100 最优 92.46/7.12）。
+- 结果（INR LoRA-aware ΔA+B_t，无 adaptive，**达标**）：final Top1=79.43（≥79.14 ✓）、AvgAcc=82.68（门槛 82.97 ✗，但 Forgetting=6.18 ≤ 6.26 ✓）。LoRA-aware 在 INR 上通过 Forgetting 分支。
+- 下一步：C100 LoRA-aware（无 adaptive）运行中；目标 Forgetting ≤7.08 或 AvgAcc ≥92.57，Final ≥88.22。

@@ -332,7 +332,7 @@
 - 状态：工程完成；1-epoch DDP smoke 通过；完整 INR 筛选待跑
 - 目标/假设：历史 B bank 在线折叠为单套 canonical 状态（Q^T + H + R），持久 LoRA 状态与任务数无关；任务结束后把当前 B 折叠进 H，并用闭式 gauge alignment 把历史算子投影到新 Q 基底，保留其行空间内部分；每任务日志记录相对投影残差。
 - 改动：
-  - `backbone/sa_lora.py`：`SA_STATE_VERSION=2`；`_CumulativeSharedAQKV`（历史 = H@Q^T 固定，当前 = scale*B(Ax)/(||A||||B||)）；`_save_cumulative_state`（QR canonicalization → gauge align → 折叠当前任务 → 写单文件）；`migrate_sa_state_v1_to_v2`；`cumulative_gauge` 消融开关（commit `27a6574`、`63b267e`）。
+  - `backbone/sa_lora.py`：`SA_STATE_VERSION=2`；`_CumulativeSharedAQKV`（历史 = H@Q^T 固定，当前 = scale*B(Ax) 与 v1 训练口径一致，归一化在保存时折叠）；`_save_cumulative_state`（QR canonicalization → gauge align → 折叠当前任务 → 写单文件）；`migrate_sa_state_v1_to_v2`；`cumulative_gauge` 消融开关（commits `27a6574`、`63b267e`、`a3d3a79`）。
   - `utils/inc_net.py`、`models/sa_sdlora.py`：任务 0 构造与逐任务 update 透传 `sa_cumulative_state` / `sa_cumulative_gauge`（commit `d7ec60a`、`63b267e`）。
   - `scripts/migrate_sa_state_v1_to_v2.py`（显式迁移，v1 state 备份为 `sa_state.pt.v1`）；`scripts/measure_sa_artifact.py` 支持 v2 计数。
   - `tests/test_sa_cumulative.py` 新增 9 个 Phase B 用例（roundtrip、v1/v2 前向等价、gauge 累积公式、no-gauge 消融、迁移等价、flag 冲突、残差诊断）。

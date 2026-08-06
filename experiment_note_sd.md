@@ -384,3 +384,10 @@
 - **smoke 结果**（1 epoch × 10 tasks，exit=0）：10 任务无 NaN/崩溃；产物无逐任务 B 文件；LoRA 371,040 = 基线 10.07%（减少 89.93%），含 INR 原型 524,640 = 14.23%（减少 85.77%）；`verify_sa_consistency` feature diff = 0.000e+00 PASS；每任务 gauge residual 6 位小数下为 0。
 - **判断**：v2 管线的构造/保存/恢复/重建路径可信。gauge residual≈0 提示 1-epoch 下 A 基本不跨行空间；完整训练是否跨出原 span 待观察。1-epoch 指标仅验证管线，不作为性能依据。
 - **下一步**：完整 INR cumulative-only（gauge=false）→ INR cumulative+gauge → C100 → residual LRPT 组合；每任务记录 gauge residual 与旧类遗忘的相关性。
+
+## 2026-08-06 20:47 语义修正：v2 当前任务支路对齐 v1（不归一化）
+
+- **观察**：完整 INR cumulative-only task0 训练 acc 89.45，低于 EXP-009 系 task0 的约 92，怀疑 v2 当前任务支路归一化与 v1 的 `scale*B(Ax)` 不一致。
+- **动作**：确认 v1 `_SharedAQKV` 当前支路不归一化（历史支路才归一化）；把 `_CumulativeSharedAQKV` 当前支路改为 `scale*B(Ax)`，归一化仅在保存折叠时使用（与 v1 把该任务存入 bank 后的口径一致）；新增 v1/v2 task0 前向等价单测；44 tests passed；commit `a3d3a79`。
+- **影响**：此前 1-epoch smoke 与已中断的完整 INR 使用旧口径，仅作工程参考；完整 INR 以本次修正后重跑为准。
+- **下一步**：重跑完整 INR cumulative-only → gauge。

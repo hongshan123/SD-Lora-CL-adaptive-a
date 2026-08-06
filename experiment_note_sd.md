@@ -325,3 +325,9 @@
 - **动作**：将保存后诊断条件改为 `_cur_task > 0`（lambda=0 也记录 raw drift），新增 `exps/sa_sdlora_operator_stability_logonly_inr_seed1995.json`（lambda=0，其余同 EXP-009/EXP-012）。训练损失钩子在 lambda<=0 时不加入任何项，因此训练路径等价于 EXP-009。
 - **判断**：控制组可同时验证两点：(1) EXP-009 本身的 raw operator drift 大小；(2) drift 与每任务旧类遗忘是否相关。若控制组 drift 与 EXP-012 相当而遗忘更好，说明该算子不是遗忘主因。
 - **下一步**：运行 INR 控制组；完成后与 EXP-009/EXP-012 对比。
+
+## 2026-08-06 17:29 控制组完成：operator drift 与遗忘相关性弱
+
+- **观察**：lambda=0 控制组 Final=79.39、AvgAcc=82.47、Forgetting=7.10，基本复现 EXP-009（79.34/82.47/7.26）。raw drift 序列为 0.091/0.020/0.012/0.005/0.008/0.008/0.006/0.010/0.007；EXP-012 约束后为 0.003/0.003/0.003/0.002/0.003/0.003/0.002/0.004/0.003。
+- **判断**：drift 被压低 10–30 倍，Forgetting 只改善 0.12，同时 AvgAcc 损失 0.27。该算子不是遗忘主因，operator-level 正则无继续价值。
+- **下一步**：回到 generic affine LRPT，第三次复跑 C100 affine r10（前两次 92.46/7.12、92.48/7.21）。

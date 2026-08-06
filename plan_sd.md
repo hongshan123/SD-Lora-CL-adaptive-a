@@ -127,3 +127,4 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 完整 INR（lambda=1.0）已经完成：Final=79.39，AvgAcc=82.20，Forgetting=6.98。相对 EXP-009 只减少 Forgetting 0.28，却使 AvgAcc 降低 0.27，未满足 `F<=6.26` 或 `AvgAcc>=82.97`；此分支停止在 INR，不创建 C100 配置。
 - 后续原则：先验证被约束的 raw operator drift 是否与最终旧类精度相关，再决定是否保留任何 operator-level 正则；禁止没有此诊断的 lambda 扫描。
 - 控制组：lambda=0 只记录 raw drift（INR seed1995）已配置，运行中；据结果决定是否彻底关闭 operator-level 路线。
+- 控制组完成：drift 相关性弱，operator-level 路线关闭；回到 affine LRPT 主线，C100 affine r10 第三次复跑。

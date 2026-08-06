@@ -108,7 +108,7 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 
 - 阶段 A：碰撞审计与文献（本节完成）。
 - 阶段 B：实现 LRPT（配对特征缓存 → 闭式 rank-r transport → 递归更新原型）；单测 + 恢复一致性测试；提交（已完成，commit `4b8ae92`；冒烟通过）。
-- 阶段 C：INR seed1995 的 rank10/rank16/affine 均通过；C100 affine rank10 最佳（92.46/7.12）；d0.5 未过 INR。迭代中：damping λ=0.9。
+- 阶段 C：INR seed1995 的 rank10/rank16/affine/d0.9 均通过；C100 affine rank10 最佳（92.46/7.12）。迭代中：C100 d0.9。
 - 阶段 D：CIFAR-100 seed1993 运行；双数据集通过后多 seed + 强基线 + 消融 + 测量。
 - 阶段 E：归档三份 md、完整日志与复现测试。
 

@@ -376,3 +376,14 @@
 - 分析：residual LRPT 在累计状态上确实改善 AvgAcc（+0.42）与 Forgetting（-0.44），但 Final 比 gauge-only 低 0.57 且低于原始基线；与 v1 上的 generic affine LRPT（79.29/83.00/6.61）相比 Final/AvgAcc 都更低。单 seed 增益方向不一致（AvgAcc/F 改善、Final 回退），按 method_revision_sd.md Phase D 规则不把 LRPT 保留为主方法组件，只作为消融。
 - 决策：主方法先用 **cumulative+gauge（无 LRPT）** 跑 C100；INR 侧最低验收 Final ≥78.76 已满足（79.06）。LRPT 是否保留待多 seed 稳定性证据。
 - 下一步：C100 cumulative+gauge（`sa_cumulative_c100_seed1993_gauge`）。
+
+## EXP-017 C100 cumulative+gauge（主方法第二数据集验证）
+
+- 日期：2026-08-06
+- 状态：完成（exit=0）
+- 配置：`exps/sa_cumulative_c100_seed1993_gauge.json`（EXP-009 C100 配置 + `sa_cumulative_state=true` / `sa_cumulative_gauge=true`，无 LRPT）。
+- 结果（CIFAR-100 seed1993）：Final Top1=**87.70**（基线 86.89 ✓ +0.81；EXP-009 88.42 -0.72）、AvgAcc=**91.83**（EXP-009 92.07 -0.24）、Forgetting=**8.53**（EXP-009 8.08 +0.45）；曲线 `[98.2, 96.35, 94.5, 93.55, 91.6, 90.55, 90.57, 87.85, 87.38, 87.7]`。每任务 gauge 三项诊断均为 0.000000。
+- 参数与工程：产物仅 `sa_state.pt` + `sa_merged_lora.pt` + `sa_prototypes.pt` + `CLs_*`；LoRA 371,040 = 基线 10.07%，含 C100 原型 76,800 后 447,840 = 12.15%（减少 87.85%）。
+- 分析：C100 Final 87.70 ≥ 最低验收线 86.89（✓），且高于原始 SD-LoRA 基线 +0.81；相对 EXP-009 低 0.72（主要来自后半段：T7 87.85/T8 87.38 vs EXP-009 88.21/87.57），AvgAcc 仅低 0.24。C100 与 INR 一样，旧类精度保持优于 v1 重归一化方案，但最终任务略低。
+- 验收结论（单 seed）：cumulative+gauge 在两个数据集都满足最低方法验收线（INR 79.06 ≥78.76、C100 87.70 ≥86.89），含 prototype 状态减少 ≥85%，推理单模型无 task-id/router/逐任务 adapter。按 method_revision_sd.md §14，**优先进入多 seed 与论文阶段**，不再做单 seed 微调。
+- 下一步：多 seed（INR/C100 × seeds 1/2/3，`run_sa_cumulative_multiseed_queue.sh`，运行中）；随后补强基线、消融与 FLOPs/吞吐/显存测量。

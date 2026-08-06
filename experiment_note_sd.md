@@ -405,3 +405,9 @@
 - **观察**：Final 78.49（低于基线 78.76 和 gauge-only 79.06）、AvgAcc 82.19（gauge-only +0.42）、Forgetting 6.38（gauge-only -0.44）。LRPT drift_error 0.86–0.88，每任务 gauge 三项诊断均为 0。
 - **判断**：LRPT 在累计状态下改善早期任务与遗忘，但最终任务被拉低；单 seed 增益不一致，按 Phase D 规则不保留为主方法组件，保留为消融。主方法取 cumulative+gauge。
 - **决策**：INR 最低线（Final ≥78.76）已由 gauge-only 79.06 满足；按 method_revision_sd.md §14，跑 C100 cumulative+gauge 检查第二个数据集；若 C100 Final ≥86.89 则进入多 seed/论文阶段，不再做单 seed 微调。
+
+## 2026-08-06 22:53 C100 cumulative+gauge：Final 87.70，双数据集最低线达成
+
+- **观察**：C100 Final 87.70（基线 86.89 +0.81、EXP-009 88.42 -0.72）、AvgAcc 91.83、Forgetting 8.53；曲线前半段持续高于 EXP-009（T1-T5 高 1-3 分），后半段 T7/T8 略低。gauge 三项诊断均为 0；产物无逐任务 B 文件。
+- **判断**：cumulative+gauge 在两个数据集都过最低验收线（INR 79.06 / C100 87.70），状态减 85.77%/87.85%；符合 §14"即使 Top1 不再额外提高也优先进入多 seed 和论文阶段"的条件。
+- **下一步**：启动多 seed 队列（INR/C100 × seeds 1/2/3，6 个完整运行，约 3-4 小时）；之后补强基线（SA-LoRA/CL-LoRA 可比划分）、消融（cumulative-only、无 prototype、LRPT 有无）与 FLOPs/吞吐/显存测量，最后进入论文整理。

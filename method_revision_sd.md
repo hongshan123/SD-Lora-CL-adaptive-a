@@ -220,6 +220,14 @@ Phase B（v2 在线累计状态，commits `27a6574`/`d7ec60a`/`63b267e`）已落
 - gauge + residual LRPT：Final 78.49 / AvgAcc 82.19 / Forgetting 6.38。LRPT 改善 AvgAcc/Forgetting（相对 gauge-only +0.42/-0.44）但 Final 回退 0.57 且低于原始基线，单 seed 增益方向不一致；按 Phase D 规则暂不保留为主方法组件（保留为消融）。
 - 主方法决定：**cumulative + gauge（无 LRPT）**。下一步 C100 验证；若 C100 Final ≥86.89，按 §14 优先进入多 seed 与论文阶段。
 
+### 单 seed 验收（2026-08-06）
+
+- ImageNet-R seed1995：Final 79.06 ≥ 78.76 ✓（SD-LoRA +0.30；EXP-009 -0.28）。
+- CIFAR-100 seed1993：Final 87.70 ≥ 86.89 ✓（SD-LoRA +0.81；EXP-009 -0.72）。
+- 持久状态：LoRA 371,040 = 10.07%（含 R 2,400）；INR 含原型 524,640 = 14.23%（-85.77%），C100 含原型 447,840 = 12.15%（-87.85%）。推理为单 canonical 模型，无 task-id/router/逐任务 adapter；恢复训练无需历史 B bank。
+- 每任务 gauge projection residual / basis rotation / operator preservation 在 6 位小数下均为 0：A 基本不跨出旧行空间，历史有效算子被精确保持。
+- 结论：按 §14，优先进入多 seed（INR/C100 × seeds 1/2/3）与论文阶段。
+
 ### Phase D：Residual LRPT
 
 1. prototype pre/post 特征必须来自真正部署的累计模型状态。

@@ -11,6 +11,7 @@ which reproduces the exact forward of the per-task bank at evaluation time.
 
 import math
 import os
+from collections.abc import Sequence
 
 import timm
 import torch
@@ -42,6 +43,88 @@ def _fixed_orthogonal_down(in_dim, target_rank, seed, dtype=torch.float32):
     random_matrix = torch.randn(in_dim, target_rank, generator=generator)
     q, _ = torch.linalg.qr(random_matrix, mode="reduced")
     return q.t().contiguous().to(dtype)
+
+
+def fold_cumulative_up_projection(
+    shared_a: Tensor,
+    up_weights: Sequence[Tensor],
+    scales: Sequence[Tensor],
+    *,
+    device=None,
+    dtype=None,
+    eps: float = 1e-8,
+) -> Tensor:
+    """Fold the historical B bank into one cumulative up projection.
+
+    For a fixed down projection ``A``, each historical task contributes
+    ``scale_i * B_i(A x) / (||A|| ||B_i||)`` to the Shared-A LoRA forward.
+    The exact bank sum is reproduced by a single cumulative up projection
+
+        H = sum_i scale_i * B_i / (||A|| ||B_i||)
+
+    followed by ``H(A x)``.  The returned tensor has the same shape as each
+    ``B_i`` (``dim x rank``).
+    """
+    if len(up_weights) == 0:
+        raise ValueError("at least one historical up projection is required")
+    if len(up_weights) != len(scales):
+        raise ValueError("up projection and scale counts must match")
+
+    if device is None:
+        device = up_weights[0].device
+    if dtype is None:
+        dtype = up_weights[0].dtype
+
+    shared_a = shared_a.to(device=device, dtype=dtype)
+    norm_a = torch.linalg.vector_norm(shared_a)
+    total = torch.zeros_like(up_weights[0], device=device, dtype=dtype)
+    for up_weight, scale in zip(up_weights, scales):
+        if scale.numel() != 1:
+            raise ValueError("each historical scale must be scalar")
+        up = up_weight.to(device=device, dtype=dtype)
+        denom = norm_a * torch.linalg.vector_norm(up) + eps
+        total = total + scale.to(device=device, dtype=dtype).reshape(()) * up / denom
+    return total
+
+
+def fold_all_cumulative_up_projections(
+    shared_a_list: Sequence[Tensor],
+    saved_b_tasks: dict[int, Sequence[Tensor]],
+    scales: dict[int, Tensor],
+    *,
+    device=None,
+    dtype=None,
+    eps: float = 1e-8,
+) -> list[Tensor]:
+    """Fold every Q/V branch across all historical tasks."""
+    task_ids = sorted(saved_b_tasks)
+    if not task_ids:
+        raise ValueError("at least one historical task is required")
+    branch_count = len(shared_a_list)
+    if branch_count == 0:
+        raise ValueError("at least one shared down projection is required")
+    for task_id in task_ids:
+        if len(saved_b_tasks[task_id]) != branch_count:
+            raise ValueError(
+                "task {} has {} branches; expected {}".format(
+                    task_id, len(saved_b_tasks[task_id]), branch_count
+                )
+            )
+        if task_id not in scales:
+            raise ValueError("missing scale for task {}".format(task_id))
+    cumulative = []
+    for branch in range(branch_count):
+        cumulative.append(
+            fold_cumulative_up_projection(
+                shared_a_list[branch],
+                [saved_b_tasks[task_id][branch] for task_id in task_ids],
+                [scales[task_id] for task_id in task_ids],
+                device=device,
+                dtype=dtype,
+                eps=eps,
+            )
+        )
+    return cumulative
 
 
 class _SharedAQKV(nn.Module):

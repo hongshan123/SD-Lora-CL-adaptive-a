@@ -227,3 +227,6 @@
 - 下一步：试更温和的 λ=0.9（INR 先跑）；若仍不稳定，回到 λ=1（affine r10）并考虑 C100 复跑/其他机制。
 - 结果（INR d0.9，达标）：final Top1=79.26（≥79.14 ✓）、AvgAcc=83.10（≥82.97 ✓）、Forgetting=6.65。λ=0.9 比 λ=1 的 INR AvgAcc 高 0.10，比 λ=0.5 高 0.19。
 - 下一步：C100 d0.9 运行中（目标 Forgetting ≤7.08 或 AvgAcc ≥92.57）。
+- 结果（C100 d0.9，未过）：final Top1=88.42（✓）、AvgAcc=92.50（门槛 92.57 ✗，差 0.07）、Forgetting=7.29（门槛 7.08 ✗）。AvgAcc 略好于 λ=1，Forgetting 反而变差。
+- 分析：λ 微调无法同时满足两个次要指标；C100 affine r10（λ=1）仍是 Forgetting 最优（7.12）。正复跑该配置做方差检查；同时实现双空间 LRPT（样本空间 transport + 加权类均值 transport，闭式组合，避免 classmean 单独过拟合）。
+- 下一步：C100 affine r10 复跑结果后，按 INR-first 规则跑 INR dual；若过再跑 C100 dual。

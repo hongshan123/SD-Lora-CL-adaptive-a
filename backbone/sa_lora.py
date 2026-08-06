@@ -169,6 +169,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         # next task is trained. They never enter the saved Shared-A artifact.
         self._operator_reference_down = []
         self._operator_reference_up = []
+        self._operator_reference_task_count = 0
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -251,6 +252,7 @@ class SharedALoRA_ViT_timm(nn.Module):
 
     def _capture_old_operator_reference(self):
         """Snapshot the historical LoRA operator before shared A is updated."""
+        self._operator_reference_task_count = self.task_id
         reference_scales = [
             self.wrapped_param_prev[task_id].param.detach().cpu().clone()
             for task_id in range(self.task_id)
@@ -277,20 +279,20 @@ class SharedALoRA_ViT_timm(nn.Module):
         therefore it protects the exact old LoRA bank used in the forward pass,
         not just the shared down projection in isolation.
         """
-        if self.task_id == 0:
+        if self._operator_reference_task_count == 0:
             return self.w_As[0].weight.new_zeros(())
         if not self._operator_reference_down or not self._operator_reference_up:
             raise RuntimeError("missing Shared-A historical operator reference")
 
         current_scales = [
             self.wrapped_param_prev[task_id].param
-            for task_id in range(self.task_id)
+            for task_id in range(self._operator_reference_task_count)
         ]
         losses = []
         for index, w_a in enumerate(self.w_As):
             historical_up = [
                 self.saved_b_tasks[task_id][index]
-                for task_id in range(self.task_id)
+                for task_id in range(self._operator_reference_task_count)
             ]
             current_up = aggregate_normalized_up_projections(
                 historical_up,

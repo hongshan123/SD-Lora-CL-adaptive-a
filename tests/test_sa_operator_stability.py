@@ -133,4 +133,6 @@ def test_shared_a_history_penalty_starts_at_zero_and_is_not_persistent(tmp_path)
     with torch.no_grad():
         task1.w_As[0].weight.add_(0.25)
     assert task1.old_operator_stability_loss().item() > 0.0
+    task1.save_lora_parameters(str(tmp_path), task_id=1)
+    assert task1.old_operator_stability_loss().item() > 0.0
     assert not any("_operator_reference" in key for key in task1.state_dict())

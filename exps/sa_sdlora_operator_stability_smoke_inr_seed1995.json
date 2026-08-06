@@ -1,5 +1,5 @@
 {
-    "prefix": "sa_sdlora_proto_inr_seed1995_operator_stability_smoke_l01",
+    "prefix": "sa_sdlora_proto_inr_seed1995_operator_stability_smoke_l01_r2",
     "dataset": "imagenetr",
     "memory_size": 0,
     "memory_per_class": 0,
@@ -13,7 +13,7 @@
     "seed": [1995],
     "optimizer": "adam",
     "scheduler": "constant",
-    "filepath": "./ImageNetR_SA_SDLORA_PROTO_OPERATOR_STABILITY_SMOKE_SEED1995_L01/",
+    "filepath": "./ImageNetR_SA_SDLORA_PROTO_OPERATOR_STABILITY_SMOKE_SEED1995_L01_R2/",
     "init_epoch": 1,
     "init_lr": 0.01,
     "init_milestones": [10000],

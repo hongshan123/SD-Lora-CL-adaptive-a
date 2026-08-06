@@ -300,3 +300,9 @@
 - **判断**：不再恢复该 prototype transport。Shared-A 的旧分支有可精确计算的线性形式：`sum_i scale_i normalize(B_i) @ normalize(A)`。应保护这个真实历史算子，而非拟合一个不受约束的特征/类别漂移映射。
 - **实现/测试**：在 cuda6 的 sdlora 环境，纯函数与极小 Shared-A 骨干测试通过：Task 0 loss=0、Task 1 初始 loss=0、扰动 A 后 loss>0、A 与历史 scale 均有有限梯度、快照不进入 state dict。GPU 0-3 空闲，准备运行 1-epoch x 10-task DDP smoke。
 - **风险**：过大的 lambda 会限制 A 的塑性，导致当前任务学习不足；初始 lambda=0.1 只作为安全验证，需从日志中的 raw relative drift 与分类损失比例判断是否做完整训练或调整。
+
+## 2026-08-06 15:55 首次 DDP smoke 的保存后诊断修复
+
+- **观察**：Task 0=79.56，符合 1-epoch 预期且没有稳定项；Task 1 的训练日志出现 `operator_stability=0.0008`，说明损失路径、DDP 与梯度均工作。随后保存阶段报 `KeyError: 1`。
+- **判断**：错误发生在训练之后的诊断，不影响已执行的反向传播。`save_lora_parameters` 会递增 backbone 的 `task_id`，但 `saved_b_tasks` 只含构造时加载的旧 B；稳定项必须固定使用构造时快照的历史任务数，不能读取可变计数。
+- **动作**：增加 `_operator_reference_task_count`，将所有历史 B/scale 遍历改为该冻结计数，并在单测中模拟保存后再次调用。使用新输出目录重跑 DDP smoke，禁止复用失败产物。

@@ -264,5 +264,6 @@
 - 配置与命令：`exps/sa_sdlora_operator_stability_smoke_inr_seed1995.json`；`GPU_IDS=0,1,2,3 bash run_sa_operator_stability_smoke_inr.sh`。
 - 理论依据/文献：InfLoRA（CVPR 2024）和 LoRA-DRS（CVPR 2025）均从 LoRA 参数/子空间限制任务干扰；本实验不同于冻结子空间或梯度投影，直接约束当前网络前向中全部历史 B bank 与共享 A 构成的精确有效线性算子。它也不同于 LDC 的特征空间漂移回归，不学习或应用 prototype transport。
 - 参数与合规：快照只在当前任务训练内存中存在，未注册为 module buffer，`state_dict` 与 artifact 不含它；最终持久参数仍为 EXP-009 的 LoRA+prototype 口径（INR 2,181,130），满足预算。Task 0 返回严格零损失。
-- 结果：待 DDP 冒烟。
+- 结果（首次 DDP smoke，已定位工程 bug）：Task 0 训练/评估正常（79.56），且无 `operator_stability`；Task 1 训练期出现有限稳定项 0.0008。训练结束保存后诊断调用报 `KeyError: 1`，原因是 `save_lora_parameters()` 令 `task_id` 自增，而当前对象尚未加载该任务的 B 文件，诊断错误地以可变 `task_id` 遍历历史 B。不是遗忘或梯度异常。
+- 修复：稳定项改用构造时冻结的 `_operator_reference_task_count`，并增加“保存后仍能计算稳定项”的回归测试。修复后从全新 smoke 输出目录重跑。
 - 下一步：若 smoke 通过，运行 `exps/sa_sdlora_operator_stability_inr_seed1995.json` 的 20 epoch 完整 INR；若出现 Task 0 异常或非有限 loss，立即停止并回退本 commit。

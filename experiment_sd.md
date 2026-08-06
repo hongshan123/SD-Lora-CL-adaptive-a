@@ -246,3 +246,5 @@
 - 若仍不过：按用户反馈切回原本设计（generic affine LRPT，此前 INR 全过、C100 最优 92.46/7.12）。
 - 结果（INR LoRA-aware ΔA+B_t，无 adaptive，**达标**）：final Top1=79.43（≥79.14 ✓）、AvgAcc=82.68（门槛 82.97 ✗，但 Forgetting=6.18 ≤ 6.26 ✓）。LoRA-aware 在 INR 上通过 Forgetting 分支。
 - 下一步：C100 LoRA-aware（无 adaptive）运行中；目标 Forgetting ≤7.08 或 AvgAcc ≥92.57，Final ≥88.22。
+- 结果（C100 LoRA-aware ΔA+B_t，无 adaptive，未过）：final Top1=88.25（≥88.22 ✓ 险过）、AvgAcc=92.25（门槛 92.57 ✗）、Forgetting=7.54（门槛 7.08 ✗）。
+- 结论（按用户反馈）：LoRA-aware JVP 方案单 seed 未达标（INR 过、C100 不过），**切换回原本设计**（generic 样本空间 affine LRPT rank10）。该方案 INR 已过（79.29/83.00/6.61），C100 最佳 88.58/92.46/7.12（差 0.11/0.04）。复跑 C100 affine r10 做方差检查；若过则进入多 seed。

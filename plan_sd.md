@@ -148,11 +148,11 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 | 项目 | 状态 |
 | --- | --- |
 | 多 seed（≥3，mean±std + 显著性） | 运行中（INR/C100 × seeds 1/2/3，6 个完整运行） |
-| 任务长度 T=5/10/20/40 | 配置已就绪（INR T5/T20/T40、C100 T5/T20，commit 后待跑）；INR T10/C100 T10 已有单 seed 数据 |
+| 任务长度 T=5/10/20/40 | 运行中（`run_sa_cumulative_tasklen_queue.sh`：INR T5/T20/T40 + C100 T5/T20，seed1995/1993）；T10 已有数据 |
 | 额外数据集（ImageNet-A/CUB/DomainNet） | CUB-200-2011 已下载并构建 `data/cub/train|test`（5994/5794 张，200 类，DataManager 验证通过），`sa_cumulative_cub_seed1_gauge.json` 就绪（commit `9c2ca2f`），待 GPU 空闲后运行；ImageNet-A/DomainNet 待评估 |
 | 强基线 | SD-LoRA（有）、EXP-009 Shared-A+prototype（有）、SA-LoRA r10/r20（有）、generic affine LRPT（有）；InfLoRA/CL-LoRA/LoRA-DRS/DGS 未实现，待评估可复现性 |
 | 消融 | cumulative-only（有单 seed）、gauge+LRPT（有单 seed）、无 prototype（待定）、EXP-009（有） |
-| 测量（FLOPs/吞吐/峰值显存） | `scripts/measure_sa_flops.py` 就绪，GPU 空闲后对主方法产物跑 |
+| 测量（FLOPs/吞吐/峰值显存） | `scripts/measure_sa_flops.py` 就绪；CPU 预测量已出（C100 batch8=2.707e11 FLOPs、29.4 img/s），GPU 实测待任务长度队列后 |
 | 恢复/merged 一致性 | `verify_sa_consistency.py` 已在多个产物 PASS；主方法多 seed 产物逐一复验 |
 | 相关性分析 | 初算完成（`scripts/drift_forgetting_correlation.py`）：operator drift 弱相关（r=0.26）、控制组负相关（r=-0.73，塑性混杂）、gauge 诊断零方差、LRPT drift 弱相关；论文按此如实报告 |
 | 参数量随 T 曲线 | v2 恒定 371,040（LoRA）；v1 线性增长可解析计算，论文阶段制图 |

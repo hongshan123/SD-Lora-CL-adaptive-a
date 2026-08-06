@@ -126,3 +126,4 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 该项只使用已保存的旧 B、历史 scale 和当前共享 A；不读取旧图像、不新增持久状态、不改变 Task 0，也不移动 prototype。1-epoch x 10-task 四卡 smoke 已通过：Task 0 无稳定项、Task 1 起各项有限、保存/重建/一致性审计均通过。由于 smoke 中 lambda=0.1 仅贡献约 0.0008（相对 CE=1.976 过弱），完整 INR 使用 lambda=1.0；若仍无指标增益，再以日志中的 raw drift 决定是否提高或放弃该正则。
 - 完整 INR（lambda=1.0）已经完成：Final=79.39，AvgAcc=82.20，Forgetting=6.98。相对 EXP-009 只减少 Forgetting 0.28，却使 AvgAcc 降低 0.27，未满足 `F<=6.26` 或 `AvgAcc>=82.97`；此分支停止在 INR，不创建 C100 配置。
 - 后续原则：先验证被约束的 raw operator drift 是否与最终旧类精度相关，再决定是否保留任何 operator-level 正则；禁止没有此诊断的 lambda 扫描。
+- 控制组：lambda=0 只记录 raw drift（INR seed1995）已配置，运行中；据结果决定是否彻底关闭 operator-level 路线。

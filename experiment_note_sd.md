@@ -319,3 +319,9 @@
 - **工程审计**：artifact 参数为 2,181,130（SD-LoRA 的 59.17%，预算内）；bank/merged feature 最大差 1.001e-05、prototype logits 差 2.384e-07，均 PASS。Task 1--9 raw operator drift 为约 0.002--0.004，约束没有失效；训练中无 NaN、DDP/保存错误或 Task 0 污染。
 - **判断**：有效算子稳定性是一个可实现且安全的约束，但不是充分的遗忘代理。它只保持历史 `sum_i s_i B_i @ A` 的局部线性支路；新任务 B、注意力/MLP 的非线性与深层累积仍可使最终旧类特征和原型决策边界变化。把 lambda 再增大更可能削弱当前任务可塑性，不能据此期待跨过 0.72 的 Forgetting 缺口。
 - **决策**：EXP-012 在 INR 未达到 `Final>=79.14` 且 `F<=6.26 或 AvgAcc>=82.97` 的联合门槛，不按 INR-first 规则运行 C100。先补一个不带正则但记录同一 raw drift 的受控诊断，确认 drift 与 Forgetting 的相关性；若弱，停止 operator-level 路线，避免重复 lambda/rank 扫描。
+
+## 2026-08-06 17:00 启动 operator drift 控制组
+
+- **动作**：将保存后诊断条件改为 `_cur_task > 0`（lambda=0 也记录 raw drift），新增 `exps/sa_sdlora_operator_stability_logonly_inr_seed1995.json`（lambda=0，其余同 EXP-009/EXP-012）。训练损失钩子在 lambda<=0 时不加入任何项，因此训练路径等价于 EXP-009。
+- **判断**：控制组可同时验证两点：(1) EXP-009 本身的 raw operator drift 大小；(2) drift 与每任务旧类遗忘是否相关。若控制组 drift 与 EXP-012 相当而遗忘更好，说明该算子不是遗忘主因。
+- **下一步**：运行 INR 控制组；完成后与 EXP-009/EXP-012 对比。

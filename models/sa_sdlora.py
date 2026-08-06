@@ -155,10 +155,7 @@ class Learner(SDLoraLearner):
             )
         super().incremental_train(data_manager)
         if self._is_main_process():
-            if (
-                self._sa_operator_stability_lambda > 0
-                and self._cur_task > 0
-            ):
+            if self._cur_task > 0:
                 with torch.no_grad():
                     operator_drift = float(
                         self._raw_network()

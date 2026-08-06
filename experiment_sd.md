@@ -273,3 +273,4 @@
 - 最终产物审计：持久参数 2,181,130（基线 59.17%，预算内）；per-task bank 与 merged backbone feature 最大差 1.001e-05，prototype logits 最大差 2.384e-07，均 PASS。
 - 分析：该项确实降低了 EXP-009 的 Forgetting，但收益不足且损失了 AvgAcc。它严格控制的是历史 LoRA 线性支路的聚合算子，而不是共享 A、新 B 与后续 ViT 非线性共同诱发的最终特征漂移；小算子漂移不等价于旧类原型和分类边界稳定。继续盲扫 lambda 预期主要牺牲新任务塑性，故将此方法记录为干净的负结果。
 - 下一步：按 INR-first 规则不跑 C100。若继续本研究方向，应先用无正则的受控日志测量同一 raw operator drift 与指标的相关性；若相关性弱，则不再以该算子作为主约束目标，回到已有的 affine LRPT/其他直接面向原型或分类边界的机制。
+- 控制组（EXP-012 诊断）：`sa_operator_stability_lambda=0.0`，仅记录每任务保存后的 `relative_effective_drift`，不加入训练损失，其余配置与 EXP-009/EXP-012 完全一致。目的是判断“算子漂移”与 Forgetting/AvgAcc 是否相关；若控制组的 raw drift 也很小或与遗忘无单调关系，则 operator-level 正则路线停止。

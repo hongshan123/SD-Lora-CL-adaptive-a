@@ -98,6 +98,11 @@ class Learner(SDLoraLearner):
         self._sa_operator_stability_lambda = float(
             args.get("sa_operator_stability_lambda", 0.0)
         )
+        self._sa_prototype_consistency_weight = float(
+            args.get("sa_prototype_consistency_weight", 0.0)
+        )
+        self._proto_ema = {}
+        self._proto_ema_task = None
         if self._sa_operator_stability_lambda < 0:
             raise ValueError("sa_operator_stability_lambda must be non-negative")
         if (
@@ -200,13 +205,43 @@ class Learner(SDLoraLearner):
                 )
                 raw_network.backbone.cleanup_per_task_files(self.args["filepath"])
 
-    def _additional_training_losses(self):
-        if self._sa_operator_stability_lambda <= 0 or self._cur_task <= 0:
-            return {}
-        operator_loss = self._raw_network().backbone.old_operator_stability_loss()
-        return {
-            "operator_stability": self._sa_operator_stability_lambda * operator_loss
-        }
+    def _additional_training_losses(
+        self, inputs=None, targets=None, features=None
+    ):
+        losses = {}
+        if self._sa_operator_stability_lambda > 0 and self._cur_task > 0:
+            operator_loss = (
+                self._raw_network().backbone.old_operator_stability_loss()
+            )
+            losses["operator_stability"] = (
+                self._sa_operator_stability_lambda * operator_loss
+            )
+        w = self._sa_prototype_consistency_weight
+        if w <= 0 or features is None or targets is None:
+            return losses
+        if self._proto_ema_task != self._cur_task:
+            self._proto_ema = {}
+            self._proto_ema_task = self._cur_task
+        feats = F.normalize(features.float(), p=2, dim=1)
+        momentum = 0.1
+        with torch.no_grad():
+            for f, t in zip(feats, targets):
+                c = int(t.item())
+                if c not in self._proto_ema:
+                    self._proto_ema[c] = f.clone()
+                else:
+                    self._proto_ema[c] = F.normalize(
+                        (1.0 - momentum) * self._proto_ema[c]
+                        + momentum * f,
+                        p=2,
+                        dim=0,
+                    )
+        proto_matrix = torch.stack(
+            [self._proto_ema[int(t.item())] for t in targets]
+        ).to(feats.device)
+        cosine = (feats * proto_matrix).sum(dim=1)
+        losses["prototype_consistency"] = w * (1.0 - cosine).mean()
+        return losses
 
     def _extract_current_task_features(
         self, data_manager, task_index=None, normalize=False, return_targets=False

@@ -57,7 +57,9 @@ class Learner(BaseLearner):
             return self._network.module
         return self._network
 
-    def _additional_training_losses(self):
+    def _additional_training_losses(
+        self, inputs=None, targets=None, features=None
+    ):
         """Optional learner-specific loss terms for incremental tasks."""
         return {}
 
@@ -248,12 +250,25 @@ class Learner(BaseLearner):
                 train_loader.sampler.set_epoch(epoch)
             self._network.train()
             losses = 0.0
+            extra_loss_sums = {}
             correct, total = 0, 0
             num_batches = 0
             for i, (_, inputs, targets) in enumerate(train_loader):
                 inputs, targets = inputs.to(self._device), targets.to(self._device)
-                logits = self._network(inputs)["logits"]
+                out = self._network(inputs)
+                logits = out["logits"]
+                features = out.get("features", None)
                 loss = F.cross_entropy(logits, targets)
+                extra_losses = self._additional_training_losses(
+                    inputs, targets, features=features
+                )
+                for name, extra_loss in extra_losses.items():
+                    if extra_loss.ndim != 0:
+                        raise ValueError("additional training losses must be scalar")
+                    loss = loss + extra_loss
+                    extra_loss_sums[name] = (
+                        extra_loss_sums.get(name, 0.0) + extra_loss.detach().item()
+                    )
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -270,6 +285,12 @@ class Learner(BaseLearner):
             correct_sum = self._sync_sum(correct.item())
             total_sum = self._sync_sum(total)
             train_acc = round(correct_sum * 100 / max(total_sum, 1), 2)
+            extra_loss_info = ""
+            for name, value in extra_loss_sums.items():
+                value_sum = self._sync_sum(value)
+                extra_loss_info += ", {} {:.4f}".format(
+                    name, value_sum / max(batch_sum, 1)
+                )
 
             test_acc = None
             if epoch % 5 == 0:
@@ -279,21 +300,23 @@ class Learner(BaseLearner):
                 self._barrier()
 
             if test_acc is not None:
-                info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}, Test_accy {:.2f}".format(
+                info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}, Test_accy {:.2f}{}".format(
                     self._cur_task,
                     epoch + 1,
                     self.args["init_epoch"],
                     loss_sum / max(batch_sum, 1),
                     train_acc,
                     test_acc,
+                    extra_loss_info,
                 )
             else:
-                info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}".format(
+                info = "Task {}, Epoch {}/{} => Loss {:.3f}, Train_accy {:.2f}{}".format(
                     self._cur_task,
                     epoch + 1,
                     self.args["init_epoch"],
                     loss_sum / max(batch_sum, 1),
                     train_acc,
+                    extra_loss_info,
                 )
 
             if self._is_main_process():
@@ -316,6 +339,7 @@ class Learner(BaseLearner):
                 inputs, targets = inputs.to(self._device), targets.to(self._device)
                 # logits = self._network(inputs)["logits"]
                 logits, ortho_loss = self._network(inputs, ortho_loss=True)
+                features = logits.get("features", None)
                 logits = logits['logits'] 
                 
 
@@ -326,7 +350,9 @@ class Learner(BaseLearner):
                 # print('@@@@@@@@@@@@@@loss2', loss_clf, torch.mean(ortho_loss))
 
                 loss = loss_clf
-                extra_losses = self._additional_training_losses()
+                extra_losses = self._additional_training_losses(
+                    inputs, targets, features=features
+                )
                 for name, extra_loss in extra_losses.items():
                     if extra_loss.ndim != 0:
                         raise ValueError("additional training losses must be scalar")

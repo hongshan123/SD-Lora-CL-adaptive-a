@@ -280,3 +280,9 @@
 - **观察**：C100 LoRA-aware NA final=88.25、AvgAcc=92.25、Forgetting=7.54，未过门槛。LoRA-aware 在 INR 过（Forgetting 6.18）但 C100 全面低于 generic affine。
 - **判断**：按用户反馈“如果以上方法无法达标，再切换回原本设计的方法”，主方法切回 generic affine LRPT（rank10，bias，λ=1）。INR 已达标；C100 最佳 92.46/7.12，复跑该配置做方差检查。
 - **下一步**：C100 affine r10 rerun 运行中；若过，进入多 seed 与归档；若仍差一点，再评估 λ=0.95 或类均值残差校准等小步调整。
+
+## 2026-08-06 14:44-14:55 C100 affine r10 复跑仍未过，rank12 试验
+
+- **观察**：C100 affine r10 RERUN2 final=88.46、AvgAcc=92.48、Forgetting=7.21；两次运行都差门槛 0.09–0.13（AvgAcc）/0.04–0.13（Forgetting）。INR affine r10 已过。
+- **判断**：λ/复跑无解；试 rank12（介于最优 rank10 与变差的 rank16 之间）。
+- **下一步**：INR affine rank12 → C100 affine rank12。

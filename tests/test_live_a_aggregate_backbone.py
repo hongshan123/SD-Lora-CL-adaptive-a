@@ -346,3 +346,31 @@ def test_migrate_v1_to_v4_preserves_operator(tmp_path):
         atol=1e-5,
     )
     assert v4_state["task_id"] == len(v1_state["scales"])
+
+
+def test_freeze_old_scales_disables_historical_scale_grad(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(37)
+    run = tmp_path / "run"
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+    )
+    with torch.no_grad():
+        for w in model.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    model.save_lora_parameters(str(run), task_id=0)
+
+    reloaded = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=1,
+        train_a_all_tasks=True,
+        freeze_old_scales=True,
+    )
+    assert reloaded.wrapped_param_prev[0].param.requires_grad is False
+    assert reloaded.wrapped_param[0].param.requires_grad is True

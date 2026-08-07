@@ -148,7 +148,7 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 | 项目 | 状态 |
 | --- | --- |
 | 多 seed（≥3，mean±std + 显著性） | 运行中（INR/C100 × seeds 1/2/3，6 个完整运行） |
-| 任务长度 T=5/10/20/40 | 运行中（`run_sa_cumulative_tasklen_queue.sh`：INR T5/T20/T40 + C100 T5/T20，seed1995/1993）；T10 已有数据 |
+| 任务长度 T=5/10/20/40 | 完成——INR T5/T10/T20/T40=77.54/79.06/77.03/75.31、C100 T5/T10/T20=88.06/87.70/85.63（Final）；Forgetting 随 T 单调恶化，LoRA 状态恒 371,040 |
 | 额外数据集（ImageNet-A/CUB/DomainNet） | CUB-200-2011 已下载并构建 `data/cub/train|test`（5994/5794 张，200 类，DataManager 验证通过），`sa_cumulative_cub_seed1_gauge.json` 就绪（commit `9c2ca2f`），待 GPU 空闲后运行；ImageNet-A/DomainNet 待评估 |
 | 强基线 | SD-LoRA（有）、EXP-009 Shared-A+prototype（有）、SA-LoRA r10/r20（有）、generic affine LRPT（有）；InfLoRA/CL-LoRA/LoRA-DRS/DGS 未实现，待评估可复现性 |
 | 消融 | cumulative-only（有单 seed）、gauge+LRPT（有单 seed）、无 prototype（待定）、EXP-009（有） |

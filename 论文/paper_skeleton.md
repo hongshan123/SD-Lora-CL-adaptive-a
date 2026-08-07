@@ -74,7 +74,9 @@ We propose an online gauge-aligned cumulative LoRA framework for rehearsal-free 
 
 ### 4.3 任务长度（待回填）
 
-- INR T=5/10/20/40；C100 T=5/10/20。
+- INR T=5/10/20/40：77.54/79.06/77.03/75.31（Final），F=8.83/6.82/9.51/12.34。
+- C100 T=5/10/20：88.06/87.70/85.63（Final），F=8.77/8.53/10.72。
+- 每任务持久 LoRA 恒为 371,040（O(1)），与任务数无关。
 
 ### 4.4 效率与审计（待回填）
 

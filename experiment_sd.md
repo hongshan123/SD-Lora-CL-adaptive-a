@@ -482,3 +482,24 @@
   - operator_preservation（aligned）：与 residual 逐任务一致（4.36e-2…1.79e-2）
 - 分析：真实历史算子保持误差为 1.3%–4.4%，不是 1e-8；共享 A 在训练中确实跨出旧行空间，gauge alignment 只能保留行空间内部分。旧日志与论文 draft 中的“近精确保持（~1e-8）”作废。精度指标与 EXP-016 接近，说明该误差不直接决定 final Top1，但它为 Union-SVD（保留联合子空间的最优 rank-r 近似）提供了动机与基线。
 - 下一步：Union-SVD smoke 与 Stage A 四档 INR（union/gauge × r4/r8）运行中。
+
+## EXP-021 Stage A：Union-SVD vs Gauge（INR seed1995，r4/r8）
+
+- 日期：2026-08-07
+- 状态：完成（四档 exit=0；union r10 同秩对照运行中）
+- 目标/假设：Union-SVD 先合并完整有效算子再取固定秩最优近似，应优于 gauge 的“投影到新基底再合并”（尤其旧算子 out-of-span 部分）；容量匹配比较 union/gauge × r4/r8。
+- 配置与命令：`run_sa_cumulative_union_svd_queue.sh`（四档，20 epoch × 10 tasks，seed1995，prototype 分类器）；commit `1526068`。
+- 结果（INR seed1995）：
+  | 方法 | Final Top1 | AvgAcc | Forgetting | LoRA 参数 |
+  | --- | ---: | ---: | ---: | ---: |
+  | union_svd_r4 | 77.59 | 81.63 | 7.59 | 147,840 |
+  | gauge_r4 | 77.09 | 81.26 | 8.20 | 147,840 |
+  | union_svd_r8 | 78.69 | 82.31 | 6.77 | 295,680 |
+  | gauge_r8 | 78.24 | 81.98 | 6.88 | 295,680 |
+  | gauge_r10（EXP-016 参照） | 79.06 | 81.77 | 6.82 | 371,040 |
+  | EXP-009（参照） | 79.34 | 82.47 | 7.26 | 2,027,530 |
+- 分析：
+  - Union-SVD 在 r4/r8 上都一致优于同秩 gauge（r4：Final +0.50、AvgAcc +0.37、F -0.61；r8：Final +0.45、AvgAcc +0.33、F -0.11），机制方向成立。
+  - union_r8 相对当前 gauge_r10 恢复 AvgAcc +0.54、F -0.05，但 Final 仍低 0.37；Stage A 的 C100 进入门槛（Final ≥79.10）未通过（78.69，差 0.41），AvgAcc 82.31 刚好过 82.30、F 6.77 过 7.30。
+  - r4 两档均明显低于门槛，说明低秩容量仍是主要瓶颈；r8 的联合子空间保存只部分补偿。
+- 下一步：等待 union_r10（与 gauge_r10 容量匹配的直接对照）完成；若仍未过 Final ≥79.10 门槛，按 plan §6 停止 rank 扩展，进入 P1 诊断（离线原型漂移 + 公平任务长度基线），并按诊断结论决定是否实现 P3 activation sketch。

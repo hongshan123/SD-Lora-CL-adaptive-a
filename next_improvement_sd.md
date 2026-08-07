@@ -351,3 +351,8 @@ lambda * ||DeltaW_l U_l||_F^2
   队列脚本；离线原型漂移诊断脚本 `scripts/diagnose_prototype_drift.py` 就绪。
 - **待执行**：P0DIAG 完整结果 → union_svd DDP smoke → Stage A 四档完整 INR → 门槛判定 →
   C100/多 seed → P1 公平基线队列与离线诊断 → 论文回填。
+- **Stage A 中间结果（2026-08-07 13:42）**：union_svd_r4/gauge_r4/union_svd_r8/gauge_r8 均完成：
+  union r4 77.59/81.63/7.59 vs gauge r4 77.09/81.26/8.20；union r8 78.69/82.31/6.77 vs
+  gauge r8 78.24/81.98/6.88。Union 在两种秩下一致优于同秩 gauge，但 union r8 未达 C100
+  进入门槛 Final ≥79.10（差 0.41）。union r10（与 gauge r10 容量匹配）运行中；若仍未过，
+  停止 rank 扩展并转入 P1 诊断 + P3 条件评估。

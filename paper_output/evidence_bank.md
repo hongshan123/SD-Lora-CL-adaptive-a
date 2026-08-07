@@ -38,6 +38,33 @@
 
 TOST（±0.5 margin, α=0.05）：INR Final/AvgAcc 不等价（p_upper=0.0026/0.0006，p_lower=0.7976/0.5952）；INR Forgetting 等价（p_upper=0.0315，p_lower=0.0445）；C100 Final 不等价（p_upper=0.0117，p_lower=0.0970）；C100 AvgAcc/Forgetting 等价。
 
+## E-INR-DIAG-P0（pre-save gauge 诊断，INR seed1995，2026-08-07）
+
+| task | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| projection residual / preservation | 4.36e-2 | 2.69e-2 | 2.63e-2 | 1.31e-2 | 2.13e-2 | 2.08e-2 | 1.49e-2 | 2.57e-2 | 1.79e-2 |
+| basis rotation | 2.96e-2 | 2.87e-2 | 5.46e-2 | 1.34e-3 | 2.20e-3 | 2.83e-2 | 1.75e-3 | 2.88e-2 | 1.91e-3 |
+
+性能复现：78.91/81.86/7.02（原 gauge 79.06/81.77/6.82，单次噪声范围内）。
+
+## E-STAGE-A（Union-SVD vs Gauge，INR seed1995）
+
+| 方法 | Final | AvgAcc | F | LoRA 参数 |
+| --- | ---: | ---: | ---: | ---: |
+| union_svd_r4 | 77.59 | 81.63 | 7.59 | 147,840 |
+| gauge_r4 | 77.09 | 81.26 | 8.20 | 147,840 |
+| union_svd_r8 | 78.69 | 82.31 | 6.77 | 296,448 |
+| gauge_r8 | 78.24 | 81.98 | 6.88 | 296,448 |
+| union_svd_r10 | 78.61 | 81.91 | 7.05 | 371,040 |
+| gauge_r10（主方法） | 79.06 | 81.77 | 6.82 | 371,040 |
+
+一致性审计：union r4/r8/r10 `verify_sa_consistency.py` 全部 PASS（diff=0）。
+
+## E-DIAG-PROTO（离线原型漂移诊断，INR seed1995，仅诊断）
+
+- 存储训练期原型：79.06；当前骨干重算原型：79.43（+0.37）；冻结 base ViT + base 原型：79.43；base-vs-final 原型余弦均值 1.0000。
+- 判断：原型坐标过期与 backbone 干扰均不主导；不触发 P3 activation sketch。
+
 ## E-TL（任务长度，seed1995/1993，cumulative+gauge）
 
 | ID | 数据集 | T | Final | AvgAcc | Forgetting |

@@ -234,6 +234,13 @@ Phase B（v2 在线累计状态，commits `27a6574`/`d7ec60a`/`63b267e`）已落
 - 任务长度：INR T5/T20/T40、C100 T5/T20 配置已就绪待跑。
 - 测量脚本与一致性审计脚本已具备；强基线/额外数据集/相关分析见 plan_sd.md §8 清单。
 
+### 论文准备状态（2026-08-07 更新）
+
+- 多 seed、任务长度、CUB-200、GPU 测量、一致性审计、相关性分析全部完成并记录（EXP-016~019）。
+- 配对显著性：与 EXP-009 无显著差异（p≥0.117），LoRA -81.7%；CUB 主方法 +8.04 Final。
+- 首稿完成：`paper_output/first_draft/main.md`（含 research spine / evidence bank / claim register / citation bank / blueprints / rationale matrix / manifest）。
+- 剩余：引用核实、训练峰值显存表、CUB 多 seed（可选）、外部强基线（limitations）、图与 LaTeX。
+
 ### Phase D：Residual LRPT
 
 1. prototype pre/post 特征必须来自真正部署的累计模型状态。

@@ -463,6 +463,12 @@
 - **判断**：论文所需数据基本齐备（多 seed、任务长度、额外数据集、效率、相关性、一致性）；剩余强基线（InfLoRA/CL-LoRA/LoRA-DRS/DGS）未实现，作为 limitations/未来工作。
 - **下一步**：写论文初稿（`论文/paper_draft.md`），回填全部结果。
 
+## 2026-08-07 12:00 论文首稿完成
+
+- **产出**：按 research-architect-draft 规范建立 `paper_output/` 全套构件（spine/evidence/claim/citation/blueprints/rationale），并完成 `first_draft/main.md` 首稿（摘要、引言、相关工作、方法、实验、讨论、局限、结论、参考文献）；commit `3b9b4d6`。
+- **主张边界**：主主张是 O(1) 状态 + 与 EXP-009 统计等价（p≥0.117）+ CUB 单 seed +8.04；不主张全面超越 SD-LoRA 或外部方法。
+- **TODO**：引用核实（5+ 条）、训练峰值显存表、图与 LaTeX、可选 CUB 多 seed / ImageNet-A / 外部基线。
+
 ## 2026-08-06 23:00 诊断-遗忘相关性初算与诊断精度修正
 
 - **工具**：新增 `scripts/drift_forgetting_correlation.py`（最终精度矩阵 → 每任务遗忘；日志诊断 → Pearson/Spearman）。

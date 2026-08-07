@@ -156,4 +156,4 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 | 恢复/merged 一致性 | `verify_sa_consistency.py` 已在 INR（seed1995/seed3）、C100（seed1993）、CUB 主方法产物 PASS（diff=0） |
 | 相关性分析 | 初算完成（`scripts/drift_forgetting_correlation.py`）：operator drift 弱相关（r=0.26）、控制组负相关（r=-0.73，塑性混杂）、gauge 诊断零方差、LRPT drift 弱相关；论文按此如实报告 |
 | 参数量随 T 曲线 | v2 恒定 371,040（LoRA）；v1 线性增长可解析计算，论文阶段制图 |
-| 论文初稿 | 待多 seed 与测量完成后起草（`论文/` 目前只有 CL-LoRA/k-merge 参考 PDF） |
+| 论文初稿 | 首稿完成（`paper_output/first_draft/main.md`，含 spine/evidence/claims/citations/blueprints/rationale 全套构件，commit `3b9b4d6`）；待补：引用核实、训练显存表、图与 LaTeX |

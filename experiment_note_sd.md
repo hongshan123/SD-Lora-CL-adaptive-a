@@ -508,3 +508,10 @@
 - **测试**：新增 6 个用例（全秩等价、截断误差与显式 SVD 一致、union 误差 ≤ gauge 投影误差、v3 roundtrip 无逐任务 B 文件、v2+union 报错要求迁移、v2→v3 同秩迁移保持算子）；全量 61 passed。
 - **配置**：Stage A 的 INR seed1995 四档（union_svd_r4 / gauge_r4 / union_svd_r8 / gauge_r8）与 union_svd smoke 配置、队列脚本；P1 公平任务长度基线配置（EXP-009 INR T5/T20/T40、C100 T5/T20；SD-LoRA INR T20/T40）与队列脚本；离线漂移诊断脚本 `scripts/diagnose_prototype_drift.py`。
 - **下一步**：P0DIAG 完整 INR 结束后跑 union_svd smoke（4 卡 DDP 1-epoch），通过后跑 Stage A 四档完整 INR，按门槛决定 C100。
+
+## 2026-08-07 P0DIAG 完成：真实 pre-save gauge 诊断与性能复现
+
+- **结果**（INR seed1995，20 epoch × 10 tasks，exit=0）：Final 78.91 / AvgAcc 81.86 / Forgetting 7.02；对照 EXP-016 gauge（79.06/81.77/6.82）在单次运行噪声范围内一致。
+- **pre-save 诊断**（task1–9）：projection residual / preservation 均值约 2.1e-2（范围 1.3e-2–4.4e-2），rotation 1.3e-3–5.5e-2。**结论：真实历史算子保持误差为百分之几，不是旧日志的 ~1e-8**；gauge 只能保留新基底内的部分，旧方向确有丢失。
+- **判断**：这使 EXP-016/017 及论文 draft 中的“近精确保持”机制证据作废；精度未明显变化说明该误差不是 final Top1 的唯一决定因素，但它正说明需要 Union-SVD 这类联合子空间最优压缩。P0-2 修复完成（代码 commit `ec23df0`，重跑 EXP-020 记录见 `experiment_sd.md`）。
+- **下一步**：union_svd smoke 运行中（已到 task4，truncation_error≈3.4e-3 级别，无崩溃）；随后 Stage A 四档 INR。

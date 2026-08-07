@@ -465,5 +465,20 @@
 - 结果（CIFAR-100 seed1993）：Final Top1=**87.70**（基线 86.89 ✓ +0.81；EXP-009 88.42 -0.72）、AvgAcc=**91.83**（EXP-009 92.07 -0.24）、Forgetting=**8.53**（EXP-009 8.08 +0.45）；曲线 `[98.2, 96.35, 94.5, 93.55, 91.6, 90.55, 90.57, 87.85, 87.38, 87.7]`。每任务 gauge 三项诊断均为 0.000000。
 - 参数与工程：产物仅 `sa_state.pt` + `sa_merged_lora.pt` + `sa_prototypes.pt` + `CLs_*`；LoRA 371,040 = 基线 10.07%，含 C100 原型 76,800 后 447,840 = 12.15%（减少 87.85%）。
 - 分析：C100 Final 87.70 ≥ 最低验收线 86.89（✓），且高于原始 SD-LoRA 基线 +0.81；相对 EXP-009 低 0.72（主要来自后半段：T7 87.85/T8 87.38 vs EXP-009 88.21/87.57），AvgAcc 仅低 0.24。C100 与 INR 一样，旧类精度保持优于 v1 重归一化方案，但最终任务略低。
+- ⚠️ 2026-08-07 修订：本实验日志中的“每任务 gauge 诊断均为 0.000000”是保存后自比较的无效值（P0-2）；真实 pre-save 诊断以 EXP-020 重跑为准（residual 约 1.3e-2–4.4e-2）。
 - 验收结论（单 seed）：cumulative+gauge 在两个数据集都满足最低方法验收线（INR 79.06 ≥78.76、C100 87.70 ≥86.89），含 prototype 状态减少 ≥85%，推理单模型无 task-id/router/逐任务 adapter。按 method_revision_sd.md §14，**优先进入多 seed 与论文阶段**，不再做单 seed 微调。
 - 下一步：多 seed（INR/C100 × seeds 1/2/3，`run_sa_cumulative_multiseed_queue.sh`，运行中）；随后补强基线、消融与 FLOPs/吞吐/显存测量。
+
+## EXP-020 P0-2 pre-save gauge 诊断重跑（INR seed1995）
+
+- 日期：2026-08-07
+- 状态：完成（exit=0）
+- 目标/假设：EXP-016/017 日志中的 gauge 诊断在保存后被覆盖，不能证明历史算子保持；本实验用修复后的 pre-save 缓存诊断重跑完整 INR seed1995，验证真实 residual/rotation/preservation。
+- 配置与命令：`exps/sa_cumulative_inr_seed1995_gauge_p0diag.json`（与 EXP-016 gauge 完全同超参，仅新目录）；`ImageNetR_SA_CUMULATIVE_INR_SEED1995_GAUGE_P0DIAG/`；commit `ec23df0`（修复）+ `7b93b21`（配置）。
+- 结果：Final Top1=**78.91**、AvgAcc=**81.86**、Forgetting=**7.02**；曲线 `[91.42, 84.55, 83.16, 82.34, 81.5, 81.09, 78.52, 79.12, 78.02, 78.91]`。对照 EXP-016 gauge（79.06/81.77/6.82）：Final -0.15、AvgAcc +0.09、Forgetting +0.20，单次运行噪声范围内一致。
+- pre-save 诊断（task1–9）：
+  - relative_projection_residual：4.36e-2 / 2.69e-2 / 2.63e-2 / 1.31e-2 / 2.13e-2 / 2.08e-2 / 1.49e-2 / 2.57e-2 / 1.79e-2（均值 ≈2.13e-2）
+  - basis_rotation_fro：2.96e-2 / 2.87e-2 / 5.46e-2 / 1.34e-3 / 2.20e-3 / 2.83e-2 / 1.75e-3 / 2.88e-2 / 1.91e-3
+  - operator_preservation（aligned）：与 residual 逐任务一致（4.36e-2…1.79e-2）
+- 分析：真实历史算子保持误差为 1.3%–4.4%，不是 1e-8；共享 A 在训练中确实跨出旧行空间，gauge alignment 只能保留行空间内部分。旧日志与论文 draft 中的“近精确保持（~1e-8）”作废。精度指标与 EXP-016 接近，说明该误差不直接决定 final Top1，但它为 Union-SVD（保留联合子空间的最优 rank-r 近似）提供了动机与基线。
+- 下一步：Union-SVD smoke 与 Stage A 四档 INR（union/gauge × r4/r8）运行中。

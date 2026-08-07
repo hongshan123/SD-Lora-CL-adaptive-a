@@ -44,6 +44,12 @@ def _parse_log(path):
         float(x)
         for x in re.findall(r"operator_preservation=([\d.eE+-]+)", text)
     ]
+    truncations = [
+        float(x)
+        for x in re.findall(
+            r"max_relative_truncation_error=([\d.eE+-]+)", text
+        )
+    ]
     return {
         "final": values[-1] if values else float("nan"),
         "avg": avgs[-1] if avgs else float("nan"),
@@ -53,6 +59,9 @@ def _parse_log(path):
         "rotation": sum(rotations) / len(rotations) if rotations else float("nan"),
         "preservation": (
             sum(preservations) / len(preservations) if preservations else float("nan")
+        ),
+        "truncation": (
+            sum(truncations) / len(truncations) if truncations else float("nan")
         ),
     }
 
@@ -106,7 +115,7 @@ def main():
     )
     args = parser.parse_args()
     print(
-        "{:<62} {:>8} {:>8} {:>8} {:>6} {:>10} {:>10} {:>10} {:>10}".format(
+        "{:<62} {:>8} {:>8} {:>8} {:>6} {:>10} {:>10} {:>10} {:>10} {:>10}".format(
             "log",
             "final",
             "avgacc",
@@ -115,6 +124,7 @@ def main():
             "residual",
             "rotation",
             "preserve",
+            "trunc_err",
             "lora_params",
         )
     )
@@ -136,7 +146,7 @@ def main():
                 params = _artifact_params(config_path, artifact_dir)
             print(
                 "{:<62} {:8.2f} {:8.2f} {:8.2f} {:6d} {:10.2e} {:10.2e} "
-                "{:10.2e} {:>10}".format(
+                "{:10.2e} {:10.2e} {:>10}".format(
                     path,
                     info["final"],
                     info["avg"],
@@ -145,6 +155,7 @@ def main():
                     info["residual"],
                     info["rotation"],
                     info["preservation"],
+                    info["truncation"],
                     (
                         "{:,}".format(params[0])
                         if params

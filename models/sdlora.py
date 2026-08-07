@@ -337,6 +337,25 @@ class Learner(BaseLearner):
             num_batches = 0
             for i, (_, inputs, targets) in enumerate(train_loader):
                 inputs, targets = inputs.to(self._device), targets.to(self._device)
+                if i == 0:
+                    raw_network = self._raw_network()
+                    live_diag = (
+                        raw_network.backbone.live_a_gradient_diagnostics(inputs)
+                    )
+                    if live_diag is not None and live_diag["historical_dL_dA"] > 0:
+                        logging.info(
+                            "[LiveA-SDLoRA] task %d first-batch diag: "
+                            "hist_dL_dA=%.4e cur_dL_dA=%.4e ratio=%.3f "
+                            "G=%.4e A=%.4e B=%.4e scale=%.4f",
+                            self._cur_task,
+                            live_diag["historical_dL_dA"],
+                            live_diag["current_dL_dA"],
+                            live_diag["ratio_hist_cur"],
+                            live_diag["mean_G_norm"],
+                            live_diag["mean_A_norm"],
+                            live_diag["mean_B_norm"],
+                            live_diag["scale"],
+                        )
                 # logits = self._network(inputs)["logits"]
                 logits, ortho_loss = self._network(inputs, ortho_loss=True)
                 features = logits.get("features", None)

@@ -374,3 +374,47 @@ def test_freeze_old_scales_disables_historical_scale_grad(tmp_path):
     )
     assert reloaded.wrapped_param_prev[0].param.requires_grad is False
     assert reloaded.wrapped_param[0].param.requires_grad is True
+
+
+def test_live_a_gradient_diagnostics_reports_both_branches(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(41)
+    run = tmp_path / "run"
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="live_a_aggregate_b",
+    )
+    with torch.no_grad():
+        for w in model.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    model.save_lora_parameters(str(run), task_id=0)
+
+    reloaded = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=1,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="live_a_aggregate_b",
+    )
+    with torch.no_grad():
+        for w in reloaded.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    x = torch.randn(4, 6, dim)
+    diag = reloaded.live_a_gradient_diagnostics(x)
+    assert diag is not None
+    assert diag["historical_dL_dA"] > 0
+    assert diag["current_dL_dA"] > 0
+    assert diag["mean_G_norm"] > 0
+    assert diag["scale"] > 0
+    # Normal forward/backward still works after the diagnostic autograd pass.
+    out = reloaded(x)
+    loss = out.square().mean()
+    loss.backward()
+    assert all(w.weight.grad is not None for w in reloaded.w_As)

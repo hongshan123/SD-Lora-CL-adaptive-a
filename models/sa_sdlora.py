@@ -178,7 +178,25 @@ class Learner(SDLoraLearner):
                 with torch.no_grad():
                     backbone = self._raw_network().backbone
                     if backbone.cumulative_state:
-                        if backbone.cumulative_merge == "union_svd":
+                        if (
+                            backbone.cumulative_merge
+                            == "live_a_aggregate_b"
+                        ):
+                            stats = getattr(
+                                backbone, "_last_live_a_save_stats", None
+                            )
+                            if stats is not None:
+                                logging.info(
+                                    "[LiveA-SDLoRA] save task %d: "
+                                    "mean_G=%.4e mean_A=%.4e mean_B=%.4e "
+                                    "scale=%.4f",
+                                    self._cur_task,
+                                    stats["mean_G_norm"],
+                                    stats["mean_A_norm"],
+                                    stats["mean_B_norm"],
+                                    stats["scale"],
+                                )
+                        elif backbone.cumulative_merge == "union_svd":
                             trunc_error = getattr(
                                 backbone,
                                 "_last_union_svd_truncation_error",

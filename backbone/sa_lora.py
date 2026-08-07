@@ -591,6 +591,18 @@ class _LiveAAggregateQKV(nn.Module):
         qkv[:, :, -self.dim :] += new_v
         return qkv
 
+    def historical_output(self, x):
+        return (
+            self._norm_live_a(x, self.a_q.weight, self.aggregate_q),
+            self._norm_live_a(x, self.a_v.weight, self.aggregate_v),
+        )
+
+    def current_output(self, x):
+        return (
+            self.scaling_cur[0](self.b_q(self.a_q(x))),
+            self.scaling_cur[0](self.b_v(self.a_v(x))),
+        )
+
 
 class SharedALoRA_ViT_timm(nn.Module):
     def __init__(
@@ -825,6 +837,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         # by _save_cumulative_state before the state is overwritten.
         self._last_cumulative_gauge_diagnostics = None
         self._last_union_svd_truncation_error = None
+        self._last_live_a_save_stats = None
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -1138,6 +1151,70 @@ class SharedALoRA_ViT_timm(nn.Module):
             self.cumulative_up, self.canonical_down, q_t_list
         )
 
+    def live_a_gradient_diagnostics(self, x) -> dict | None:
+        """First-batch Live-A training-path diagnostics.
+
+        Returns norms of the historical/current branch gradients w.r.t. the
+        shared A and the per-branch G/A/B/scale norms, or None when the model
+        is not in Live-A mode.
+        """
+        if self.cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B:
+            return None
+        wrappers = [
+            blk.attn.qkv
+            for blk in self.lora_vit.blocks
+            if isinstance(blk.attn.qkv, _LiveAAggregateQKV)
+        ]
+        if not wrappers:
+            return None
+        a_params = [w.weight for w in self.w_As]
+
+        hist_loss = torch.zeros((), device=x.device)
+        cur_loss = torch.zeros((), device=x.device)
+        g_norm = 0.0
+        a_norm = 0.0
+        b_norm = 0.0
+        for wrapper in wrappers:
+            hq, hv = wrapper.historical_output(x)
+            cq, cv = wrapper.current_output(x)
+            hist_loss = hist_loss + hq.square().sum() + hv.square().sum()
+            cur_loss = cur_loss + cq.square().sum() + cv.square().sum()
+            g_norm = g_norm + (
+                wrapper.aggregate_q.square().sum()
+                + wrapper.aggregate_v.square().sum()
+            ).item()
+            a_norm = a_norm + (
+                wrapper.a_q.weight.square().sum()
+                + wrapper.a_v.weight.square().sum()
+            ).item()
+            b_norm = b_norm + (
+                wrapper.b_q.weight.square().sum()
+                + wrapper.b_v.weight.square().sum()
+            ).item()
+        hist_grads = torch.autograd.grad(
+            hist_loss, a_params, retain_graph=True
+        )
+        cur_grads = torch.autograd.grad(
+            cur_loss, a_params, retain_graph=True
+        )
+        hist_da_norm = sum(
+            g.detach().square().sum().item() for g in hist_grads
+        ) ** 0.5
+        cur_da_norm = sum(
+            g.detach().square().sum().item() for g in cur_grads
+        ) ** 0.5
+        return {
+            "historical_dL_dA": hist_da_norm,
+            "current_dL_dA": cur_da_norm,
+            "ratio_hist_cur": (
+                hist_da_norm / max(cur_da_norm, 1e-12)
+            ),
+            "mean_G_norm": (g_norm / len(wrappers)) ** 0.5,
+            "mean_A_norm": (a_norm / len(wrappers)) ** 0.5,
+            "mean_B_norm": (b_norm / len(wrappers)) ** 0.5,
+            "scale": float(self.wrapped_param[0].param.detach().item()),
+        }
+
     def _load_state(self):
         path = _join_path(self.save_file, SA_STATE_FILENAME)
         if os.path.exists(path):
@@ -1340,6 +1417,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         if not os.path.exists(filename):
             os.makedirs(filename)
         aggregate_up = []
+        g_sum = 0.0
+        a_sum = 0.0
+        b_sum = 0.0
+        scale_value = None
         for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
             b = w_b.weight.detach().cpu().float()
             s = (
@@ -1358,6 +1439,17 @@ class SharedALoRA_ViT_timm(nn.Module):
                 torch.linalg.vector_norm(b) + 1e-8
             )
             aggregate_up.append(g_new)
+            g_sum = g_sum + g_new.square().sum().item()
+            a_sum = a_sum + w_a.weight.detach().square().sum().item()
+            b_sum = b_sum + b.square().sum().item()
+            scale_value = float(s)
+        n = len(aggregate_up)
+        self._last_live_a_save_stats = {
+            "mean_G_norm": (g_sum / n) ** 0.5,
+            "mean_A_norm": (a_sum / n) ** 0.5,
+            "mean_B_norm": (b_sum / n) ** 0.5,
+            "scale": scale_value,
+        }
         shared_a = [
             w_a.weight.detach().cpu().float() for w_a in self.w_As
         ]

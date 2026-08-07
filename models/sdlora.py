@@ -339,8 +339,11 @@ class Learner(BaseLearner):
                 inputs, targets = inputs.to(self._device), targets.to(self._device)
                 if i == 0:
                     raw_network = self._raw_network()
+                    backbone = raw_network.backbone
+                    tokens = backbone.lora_vit.patch_embed(inputs)
+                    tokens = backbone.lora_vit.pos_drop(tokens)
                     live_diag = (
-                        raw_network.backbone.live_a_gradient_diagnostics(inputs)
+                        backbone.live_a_gradient_diagnostics(tokens)
                     )
                     if live_diag is not None and live_diag["historical_dL_dA"] > 0:
                         logging.info(

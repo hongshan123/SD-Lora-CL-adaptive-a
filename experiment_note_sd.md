@@ -521,3 +521,11 @@
 - **结果**：exit=0，10 任务全部完成；Final Top1=66.66、AvgAcc≈70.4（1-epoch 仅管线验证，不参与性能对比）、Forgetting=8.26。每任务 `max_relative_truncation_error` ≈ 0.8e-3–6.5e-3。
 - **产物**：仅 `sa_state.pt` + `sa_merged_lora.pt` + `CLs_*`，无逐任务 B 文件；版本 3（union_svd），rank=4；LoRA 参数 147,840 = 基线 4.01%。
 - **判断**：v3 在线累计、保存/加载、DDP 无重复累计、无崩溃全部通过；Stage A 完整四档 INR 已自动开始（当前 r4 union_svd 运行中）。
+
+## 2026-08-07 Stage A 关闭与 P1 离线诊断
+
+- **Stage A 四档 INR 结果**（seed1995）：union r4 77.59/81.63/7.59、gauge r4 77.09/81.26/8.20、union r8 78.69/82.31/6.77、gauge r8 78.24/81.98/6.88；补充同秩 union r10 = 78.61/81.91/7.05（gauge r10 79.06/81.77/6.82）。
+- **判断**：Union-SVD 在三种秩下一致改善 AvgAcc/Forgetting（r4/r8 全面更优，r10 AvgAcc +0.14），但 Final 均未达到 C100 进入门槛（≥79.10），且 r10 仍低于 gauge_r10 0.45。联合子空间保存补偿了旧类保持，但最终任务缺口依旧；按 plan 停止 rank 扩展，不实现 r12/r16。
+- **P1 离线诊断**（`scripts/diagnose_prototype_drift.py`，旧训练数据，仅诊断）：stored prototypes 79.06 → 最终空间重算原型 79.43（+0.37）；冻结 base ViT + base 原型 79.43；base-vs-final 原型余弦 1.0000（归一化原型方向几乎不动）。**结论：原型坐标过期不是主要瓶颈（重算仅 +0.37），backbone 干扰也不主导（base 与 final 同分）**；按 plan 不实现 P3 activation sketch，保留 gauge_r10 作为主方法诚实结果，转入公平任务长度基线与论文收尾。
+- **一致性审计**：union r4/r8/r10 产物 `verify_sa_consistency.py` 全部 PASS（feature/prototype logits diff=0）；参数量 147,840 / 296,448 / 371,040（含原型 301,440 / 450,048 / 524,640）。
+- **下一步**：P1 公平任务长度基线队列运行中（EXP-009 INR T5/T20/T40、C100 T5/T20；SD-LoRA INR T20/T40）；完成后回填任务长度对比表并更新论文。

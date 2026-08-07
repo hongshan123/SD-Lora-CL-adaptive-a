@@ -515,3 +515,9 @@
 - **pre-save 诊断**（task1–9）：projection residual / preservation 均值约 2.1e-2（范围 1.3e-2–4.4e-2），rotation 1.3e-3–5.5e-2。**结论：真实历史算子保持误差为百分之几，不是旧日志的 ~1e-8**；gauge 只能保留新基底内的部分，旧方向确有丢失。
 - **判断**：这使 EXP-016/017 及论文 draft 中的“近精确保持”机制证据作废；精度未明显变化说明该误差不是 final Top1 的唯一决定因素，但它正说明需要 Union-SVD 这类联合子空间最优压缩。P0-2 修复完成（代码 commit `ec23df0`，重跑 EXP-020 记录见 `experiment_sd.md`）。
 - **下一步**：union_svd smoke 运行中（已到 task4，truncation_error≈3.4e-3 级别，无崩溃）；随后 Stage A 四档 INR。
+
+## 2026-08-07 union-svd v3 smoke 完成（4 卡 DDP，1-epoch × 10 tasks）
+
+- **结果**：exit=0，10 任务全部完成；Final Top1=66.66、AvgAcc≈70.4（1-epoch 仅管线验证，不参与性能对比）、Forgetting=8.26。每任务 `max_relative_truncation_error` ≈ 0.8e-3–6.5e-3。
+- **产物**：仅 `sa_state.pt` + `sa_merged_lora.pt` + `CLs_*`，无逐任务 B 文件；版本 3（union_svd），rank=4；LoRA 参数 147,840 = 基线 4.01%。
+- **判断**：v3 在线累计、保存/加载、DDP 无重复累计、无崩溃全部通过；Stage A 完整四档 INR 已自动开始（当前 r4 union_svd 运行中）。

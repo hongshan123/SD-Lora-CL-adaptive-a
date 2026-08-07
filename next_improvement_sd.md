@@ -332,3 +332,22 @@ lambda * ||DeltaW_l U_l||_F^2
   “约 82% LoRA 压缩、0.5--0.7 INR 精度代价”的诚实结果；
 - 任何 A 会主张都必须建立在正确 seed 配对、真实 pre-save gauge 诊断、同协议长序列基线
   和完整参数/计算核算之上。
+
+## 13. 执行状态（2026-08-07）
+
+- **P0-1 完成**（commit `442bdc5`）：`scripts/multiseed_stats.py` 重写为 seed 内连接配对，
+  输出逐 pair 明细/paired t/95%CI/Cohen's dz/TOST；新增 7 个单测（全量 52→55 passing）；
+  重算结果与 `next_improvement_sd.md` §2 一致（INR Final/AvgAcc 显著下降，C100 与
+  Forgetting 不显著，TOST ±0.5 不等价）。论文/实验文档中的“统计等价”表述已全部修正。
+- **P0-2 代码完成**（commit `ec23df0`）：gauge 诊断改为 `_save_cumulative_state` 覆盖
+  旧状态前缓存到 `_last_cumulative_gauge_diagnostics`，日志读缓存；新增同 span/out-of-span/
+  保存缓存单测（全量 55→58 passing）。完整 INR seed1995 重跑进行中（配置
+  `exps/sa_cumulative_inr_seed1995_gauge_p0diag.json`，目录
+  `ImageNetR_SA_CUMULATIVE_INR_SEED1995_GAUGE_P0DIAG`）；首任务 pre-save
+  residual≈4.36e-2、rotation≈2.96e-2、preservation≈4.36e-2，确认旧日志 1e-8 无效。
+- **P2 代码完成**（commit `1526068`）：v3 union-SVD 累计状态（纯函数、保存/加载/迁移、
+  日志、配置、脚本、单测 61 passing）；Stage A 四档 INR 配置与 smoke 队列就绪。
+- **P1 配置完成**：EXP-009 INR T5/T20/T40、C100 T5/T20，SD-LoRA INR T20/T40 配置与
+  队列脚本；离线原型漂移诊断脚本 `scripts/diagnose_prototype_drift.py` 就绪。
+- **待执行**：P0DIAG 完整结果 → union_svd DDP smoke → Stage A 四档完整 INR → 门槛判定 →
+  C100/多 seed → P1 公平基线队列与离线诊断 → 论文回填。

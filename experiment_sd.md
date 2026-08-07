@@ -536,4 +536,9 @@
 - 结果（EXP-009-freeze-old-scale，INR seed1995）：Final=**79.38**、AvgAcc=**82.16**、Forgetting=**7.11**；曲线 `[91.42,85.54,83.77,82.15,81.33,81.53,78.59,79.12,78.75,79.38]`。
   - 对照完整 EXP-009（79.34/82.47/7.26）：Final +0.04、AvgAcc -0.31、F -0.15。
   - 分析：冻结历史 scale 对 Final 几乎无影响，AvgAcc 略降 0.31（处于任务书“若 ≤0.3 则 scale 不是主因”的临界点附近）；说明历史 scale 继续适配不是主要收益来源，Live-A 折叠进 G 的近似可接受。
-- 下一步：等待 live-a-aggregate-b 结果；若与 freeze-old-scale 差异 ≤0.1 且 INR Final ≥79.10 / AvgAcc ≥82.30 / F ≤7.50，进入 C100 seed1993。
+- 结果（live-a-aggregate-b，INR seed1995）：Final=**79.64**、AvgAcc=**82.10**、Forgetting=**6.67**；曲线 `[90.95,85.01,83.57,82.34,81.63,81.66,78.54,79.27,78.41,79.64]`。
+  - 对照：完整 EXP-009（79.34/82.47/7.26）Final +0.30、AvgAcc -0.37、F -0.59；freeze-old-scale（79.38/82.16/7.11）Final +0.26、AvgAcc -0.06、F -0.44；当前 gauge（79.06/81.77/6.82）Final +0.58、AvgAcc +0.33、F -0.15。
+  - 产物：LoRA 368,640（基线 10.00%）+ 原型 153,600 = 522,240（14.17%，减 85.83%）；无逐任务 B；`verify_sa_consistency` PASS（feature 7.2e-6 / logit 2.4e-7）。
+- 门槛判定：INR 三项中 Final 79.64 ≥79.10 ✓、Forgetting 6.67 ≤7.50 ✓、AvgAcc 82.10 <82.30 ✗（差 0.20），**未达任务书 INR 门槛，不启动 C100**。
+- 实现等价性：freeze-old-scale 与 live-a 的 AvgAcc 差 0.06（≤0.1 ✓）、Final 差 0.26（>0.1，单 seed 方差范围内，但按任务书先补实现诊断再复跑）；K-group 幅度增强不触发（freeze 相对完整 EXP-009 的 Final 未下降，AvgAcc 仅 -0.31）。
+- 下一步：补 §8 训练期诊断（历史/当前分支 dL/dA、G/A/B/scale 范数、保存前后 probe 误差）并复跑 INR live-a；若复跑稳定通过 AvgAcc ≥82.30 再进入 C100。

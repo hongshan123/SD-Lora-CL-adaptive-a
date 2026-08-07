@@ -307,6 +307,105 @@ def test_gauge_alignment_projects_old_operator():
     assert residual.item() == pytest.approx(expected.item(), abs=1e-5)
 
 
+def test_gauge_diagnostics_same_span_is_zero():
+    torch.manual_seed(59)
+    dim, rank = 8, 3
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(dim), r=rank, filepath="/tmp/sa-diag-same-span"
+    )
+    h = torch.randn(dim, rank)
+    q_old, _ = canonical_down_projection(torch.randn(rank, dim))
+    q_new = q_old
+    diag = model._compute_gauge_diagnostics_between([h], [q_old], [q_new])
+    assert diag["branches"] == 1
+    assert diag["residual"] < 1e-6
+    assert diag["rotation_fro"] == pytest.approx(0.0, abs=1e-5)
+    assert diag["preservation"] < 1e-6
+
+    # Same span, rotated basis: residual/preservation stay zero, rotation > 0.
+    o = torch.linalg.qr(torch.randn(rank, rank), mode="reduced")[0]
+    q_rot = o.t() @ q_old
+    diag_rot = model._compute_gauge_diagnostics_between(
+        [h], [q_old], [q_rot]
+    )
+    assert diag_rot["residual"] < 1e-6
+    assert diag_rot["preservation"] < 1e-6
+    assert diag_rot["rotation_fro"] > 1e-3
+
+
+def test_gauge_diagnostics_out_of_span_is_nonzero():
+    dim, rank = 6, 3
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(dim), r=rank, filepath="/tmp/sa-diag-out-of-span"
+    )
+    h = torch.randn(dim, rank)
+    # Old rows span the first `rank` axes, new rows the last `rank` axes.
+    q_old = torch.cat(
+        [torch.eye(rank), torch.zeros(rank, dim - rank)], dim=1
+    )
+    q_new = torch.cat(
+        [torch.zeros(rank, dim - rank), torch.eye(rank)], dim=1
+    )
+    diag = model._compute_gauge_diagnostics_between([h], [q_old], [q_new])
+    assert diag["residual"] > 1e-6
+    assert diag["residual"] == pytest.approx(1.0, abs=1e-5)
+    # Orthogonal bases: the best aligned approximation is the zero operator.
+    assert diag["preservation"] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_save_caches_pre_save_gauge_diagnostics(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(67)
+    run = tmp_path / "run"
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    with torch.no_grad():
+        for w in model.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    model.save_lora_parameters(str(run), task_id=0)
+    assert model._last_cumulative_gauge_diagnostics["branches"] == 0
+
+    m1 = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=1,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    with torch.no_grad():
+        for w in m1.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+        for w in m1.w_As:
+            w.weight.add_(0.3 * torch.randn_like(w.weight))
+    old_up = list(m1.cumulative_up)
+    old_down = list(m1.canonical_down)
+    m1.save_lora_parameters(str(run), task_id=1)
+
+    diag = m1._last_cumulative_gauge_diagnostics
+    assert diag is not None
+    assert diag["branches"] == 2
+    q_t_list = [
+        canonical_down_projection(w.weight.detach().cpu())[0]
+        for w in m1.w_As
+    ]
+    manual = m1._compute_gauge_diagnostics_between(
+        old_up, old_down, q_t_list
+    )
+    assert diag["residual"] == pytest.approx(manual["residual"], abs=1e-6)
+    assert diag["residual"] > 1e-6
+    # The post-save method compares the overwritten state with itself and
+    # must NOT be used as mechanism evidence.
+    post_save = m1.cumulative_gauge_diagnostics()
+    assert post_save["residual"] < diag["residual"]
+
+
 def test_v2_fresh_run_roundtrip_without_per_task_files(tmp_path):
     dim, rank = 6, 2
     torch.manual_seed(47)

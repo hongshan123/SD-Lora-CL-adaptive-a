@@ -490,3 +490,10 @@
 - **判断**：INR Final/AvgAcc 是显著小幅下降，论文/实验文档中的“统计等价”“无显著差异（p≥0.117）”全部作废；后续论文主张必须用“O(1) 状态 + 约 0.5–0.65 个点的小幅显著代价（INR）/不显著（C100）+ Forgetting 不变”。
 - **同步文档**：`paper_output/`（abstract、4.2 表、结论、claim C5、evidence E-PAIR、spine、blueprints、rationale）、`论文/result_table_single_seed.md`、`论文/paper_skeleton.md`、`experiment_sd.md`、`plan_sd.md`、`method_revision_sd.md`、本文档均已更新。
 - **下一步**：P0-2 修复 gauge 诊断生命周期（保存前缓存），加单元测试并重跑一个完整 INR seed。
+
+## 2026-08-07 P0-2 修复：gauge 诊断改为保存前缓存
+
+- **问题**：`models/sa_sdlora.py` 在 `super().incremental_train()` 返回后调用 `cumulative_gauge_diagnostics()`，但父类保存已用新状态覆盖 `cumulative_up/canonical_down`，日志中的 ~1e-8 是“新状态与自身比较”，不能证明历史算子被保持。
+- **修复**：`backbone/sa_lora.py` 新增 `_compute_gauge_diagnostics_between()`，在 `_save_cumulative_state()` 覆盖旧状态前用旧 `(H_old, Q_old)` 与训练后新 `Q_new` 计算 residual/rotation/preservation，缓存到非持久字段 `_last_cumulative_gauge_diagnostics`；训练日志改读缓存。`cumulative_gauge_diagnostics()` 保留但注明只用于测试/手动检查。
+- **测试**：新增同 span（零 residual/preservation、旋转可测）、正交补空间（residual≈1、preservation≈1）、保存缓存非平凡值且后保存自比较显著小于 pre-save 值三个用例；全量 55 passed。
+- **下一步**：提交后重跑 INR seed1995 完整一轮（新目录 `ImageNetR_SA_CUMULATIVE_INR_SEED1995_GAUGE_P0DIAG`），验证真实 pre-save 诊断序列并更新机制结论；旧日志不得再作为机制证据。

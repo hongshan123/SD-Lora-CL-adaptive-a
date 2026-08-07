@@ -490,6 +490,9 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._operator_reference_down = []
         self._operator_reference_up = []
         self._operator_reference_task_count = 0
+        # Diagnostics computed from the *pre-save* historical state; populated
+        # by _save_cumulative_state before the state is overwritten.
+        self._last_cumulative_gauge_diagnostics = None
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -698,16 +701,19 @@ class SharedALoRA_ViT_timm(nn.Module):
             residuals.append(float(rel))
         return float(torch.tensor(residuals).mean())
 
-    def cumulative_gauge_diagnostics(self) -> dict:
-        """Per-branch gauge diagnostics against the current trained A.
+    def _compute_gauge_diagnostics_between(
+        self, cumulative_up, canonical_down, q_t_list
+    ) -> dict:
+        """Per-branch gauge diagnostics between an old state and new bases.
 
-        Returns the mean relative projection residual (out-of-span part),
-        the RMS basis rotation ``||Q_old^T Q_new - I||_F / sqrt(r)`` (in-span
-        orientation change), and the relative operator preservation error
-        after alignment ``||H_old Q_old^T - H_aligned Q_new^T||_F /
-        ||H_old Q_old^T||_F``.
+        ``cumulative_up``/``canonical_down`` describe the old historical
+        operator ``H_old Q_old^T`` and ``q_t_list`` are the new canonical
+        down-projections ``Q_new^T`` of the trained shared A.  Returns mean
+        relative projection residual (out-of-span part), RMS basis rotation
+        ``||Q_old^T Q_new - I||_F / sqrt(r)``, and relative operator
+        preservation error after closed-form gauge alignment.
         """
-        if not self.cumulative_state or not self.cumulative_up:
+        if len(cumulative_up) == 0:
             return {
                 "residual": 0.0,
                 "rotation_fro": 0.0,
@@ -717,10 +723,9 @@ class SharedALoRA_ViT_timm(nn.Module):
         residuals = []
         rotations = []
         preservations = []
-        for idx, w_a in enumerate(self.w_As):
-            q_t, _ = canonical_down_projection(w_a.weight.detach().cpu())
-            h = self.cumulative_up[idx]
-            q_old_t = self.canonical_down[idx]
+        for idx, q_t in enumerate(q_t_list):
+            h = cumulative_up[idx]
+            q_old_t = canonical_down[idx]
             old_operator = h.double() @ q_old_t.double()
             old_norm = old_operator.norm()
             rel_residual = gauge_projection_residual(h, q_old_t, q_t) / (
@@ -746,6 +751,30 @@ class SharedALoRA_ViT_timm(nn.Module):
             "preservation": float(torch.tensor(preservations).mean()),
             "branches": len(residuals),
         }
+
+    def cumulative_gauge_diagnostics(self) -> dict:
+        """Current-state diagnostics (for tests and manual inspection).
+
+        NOTE: after ``_save_cumulative_state`` the stored state has already
+        been overwritten, so this method compares the new state with itself
+        and returns ~0.  Training logs must use
+        ``_last_cumulative_gauge_diagnostics``, which is captured before the
+        state is replaced.
+        """
+        if not self.cumulative_state or not self.cumulative_up:
+            return {
+                "residual": 0.0,
+                "rotation_fro": 0.0,
+                "preservation": 0.0,
+                "branches": 0,
+            }
+        q_t_list = [
+            canonical_down_projection(w_a.weight.detach().cpu())[0]
+            for w_a in self.w_As
+        ]
+        return self._compute_gauge_diagnostics_between(
+            self.cumulative_up, self.canonical_down, q_t_list
+        )
 
     def _load_state(self):
         path = _join_path(self.save_file, SA_STATE_FILENAME)
@@ -811,6 +840,25 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.task_id += 1
         if not os.path.exists(filename):
             os.makedirs(filename)
+        # Capture the *pre-save* gauge diagnostics against the newly trained
+        # shared A before the historical state is overwritten below.
+        if len(self.cumulative_up) > 0:
+            q_t_list = [
+                canonical_down_projection(w_a.weight.detach().cpu())[0]
+                for w_a in self.w_As
+            ]
+            self._last_cumulative_gauge_diagnostics = (
+                self._compute_gauge_diagnostics_between(
+                    self.cumulative_up, self.canonical_down, q_t_list
+                )
+            )
+        else:
+            self._last_cumulative_gauge_diagnostics = {
+                "residual": 0.0,
+                "rotation_fro": 0.0,
+                "preservation": 0.0,
+                "branches": 0,
+            }
         canonical_down = []
         cumulative_up = []
         triangular_r = []

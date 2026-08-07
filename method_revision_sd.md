@@ -241,6 +241,12 @@ Phase B（v2 在线累计状态，commits `27a6574`/`d7ec60a`/`63b267e`）已落
 - 首稿完成：`paper_output/first_draft/main.md`（含 research spine / evidence bank / claim register / citation bank / blueprints / rationale matrix / manifest）。
 - 剩余：引用核实、训练峰值显存表、CUB 多 seed（可选）、外部强基线（limitations）、图与 LaTeX。
 
+### 2026-08-07 可信度修复（P0/P2）
+
+- 配对显著性修正：早期 `p≥0.117` 因 seed 错配无效；seed 内连接后 INR Final/AvgAcc 显著（p=0.026/0.009），C100 与 Forgetting 不显著；论文不得写统计等价。
+- gauge 诊断修正：pre-save 重跑首任务 residual≈4.36e-2（非 1e-8），旧诊断日志作废；机制证据以 `_last_cumulative_gauge_diagnostics` 为准。
+- P2 Union-SVD（v3）已实现并通过单测（61 passing），Stage A 四档 INR 运行中。
+
 ### Phase D：Residual LRPT
 
 1. prototype pre/post 特征必须来自真正部署的累计模型状态。

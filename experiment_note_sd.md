@@ -573,6 +573,15 @@
 - 一致性：`verify_sa_consistency.py` PASS（feature diff 7.2e-6）。
 - 下一步：完整 INR seed1995 两档（freeze-old-scale → live-a-aggregate-b）已启动。
 
+## 2026-08-07 Live-A INR 首轮结果与实现诊断
+
+- **freeze-old-scale**（INR seed1995）：79.38 / 82.16 / 7.11（对照 EXP-009：Final +0.04、AvgAcc -0.31、F -0.15）。
+- **live-a-aggregate-b**（INR seed1995）：79.64 / 82.10 / 6.67（对照 EXP-009：Final +0.30、AvgAcc -0.37、F -0.59；对照 gauge：Final +0.58、AvgAcc +0.33、F -0.15）。产物 522,240 参数（含原型，减 85.83%），一致性 PASS。
+- **门槛**：Final 79.64 ✓、F 6.67 ✓、AvgAcc 82.10 ✗（<82.30 差 0.20），未达任务书 INR 门槛，暂不启动 C100。
+- **实现诊断**：新增 `live_a_gradient_diagnostics`（token 输入修复后），task1 首 epoch 历史分支 dL/dA≈5.3e3–5.6e3、当前分支≈3.0e3–3.6e3，ratio≈1.5–1.9——**live A 确实收到历史 bank 梯度**，机制成立；修复前 raw-image 输入导致 shape crash 已修复并提交（`a5e9197`、`6148009`）。
+- **复跑**：`live_a_aggregate_b_inr_seed1995_diag2` 完整运行中（每 epoch 首 batch 日志为早期版本，已限制为首 epoch）。
+- **下一步**：复跑结果出来后再判定 AvgAcc 门槛（单 seed 方差）与 C100。
+
 ## 2026-08-07 修正后的原型漂移诊断（true frozen base）
 
 - 修复 base-model 原地修改 bug 后重跑（INR seed1995，gauge 产物）：

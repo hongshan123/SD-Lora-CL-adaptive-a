@@ -77,10 +77,15 @@ def _artifact_params(config_path, artifact_dir):
     state = __import__("torch").load(
         state_path, map_location="cpu", weights_only=True
     )
-    if int(state.get("version", -1)) in (2, 3):
+    version = int(state.get("version", -1))
+    if version in (2, 3):
         total = _count_tensors(state.get("canonical_down", [])) + _count_tensors(
             state.get("cumulative_up", [])
         ) + _count_tensors(state.get("triangular_r", []))
+    elif version == 4:
+        total = _count_tensors(state.get("shared_a", [])) + _count_tensors(
+            state.get("aggregate_up", [])
+        )
     else:
         total = _count_tensors(state.get("shared_a", [])) + _count_tensors(
             list(state.get("scales", {}).values())

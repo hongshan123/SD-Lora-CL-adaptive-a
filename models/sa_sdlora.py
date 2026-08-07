@@ -141,6 +141,8 @@ class Learner(SDLoraLearner):
             cumulative_gauge=self.args.get("sa_cumulative_gauge", True),
             cumulative_merge=self.args.get("sa_cumulative_merge", "gauge"),
             cumulative_rank=self.args.get("sa_cumulative_rank", None),
+            freeze_old_scales=self.args.get("sa_freeze_old_scales", False),
+            live_a_history_groups=self.args.get("sa_live_a_history_groups", 1),
         )
         model.out_dim = 768
         return model

@@ -74,6 +74,8 @@ def main():
         cumulative_gauge=config.get("sa_cumulative_gauge", True),
         cumulative_merge=config.get("sa_cumulative_merge", "gauge"),
         cumulative_rank=config.get("sa_cumulative_rank", None),
+        freeze_old_scales=config.get("sa_freeze_old_scales", False),
+        live_a_history_groups=config.get("sa_live_a_history_groups", 1),
     ).to(device)
 
     merged_path = "{}/sa_merged_lora.pt".format(cli.artifact)

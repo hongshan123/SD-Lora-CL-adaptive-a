@@ -556,3 +556,12 @@
   - 新增 freeze-old-scale / live-a-aggregate-b 的 INR/C100 配置与 INR 队列脚本（commit `661c19f`）。
 - **约束**：`run_p1_tasklen_baselines.sh` 未结束，未修改 `backbone/`、`models/`、`utils/`；代码实现须等队列完全结束后开始。
 - **下一步**：等待队列 → 实现 `live_a_aggregate_b` 模式（v4 artifact）+ `sa_freeze_old_scales` 消融 → bank-to-aggregate 梯度等价测试 → INR seed1995 两档实验。
+
+## 2026-08-07 Live-A Aggregate-B 实现完成（v4 state）
+
+- 用户已要求终止 P1 队列并优先验证新方法；`run_p1_tasklen_baselines.sh` 已终止（C100 T20 未完成，GPU 全部释放）。
+- **实现**（`backbone/sa_lora.py`）：`SA_STATE_VERSION=4` + `merge_mode="live_a_aggregate_b"`；新增 `_LiveAAggregateQKV`（历史分支 `G A x/||A||` 使用可训练 live A，当前分支保持 v1 raw `s B(Ax)`）；`_save_live_a_state` 把 `G_next=G_old+sB/||B||` 写入磁盘，但内存保留旧 G + 当前 raw B（非最终任务评估语义与 EXP-009 一致）；`save_merged_lora` 输出 `G_total/||A||`；新增 `migrate_sa_state_v1_to_v4`；旧 v1/v2/v3 artifact 遇到 live_a 配置显式报错要求迁移。
+- **消融**：`sa_freeze_old_scales=True` 在 v1 bank 重建后冻结全部历史 scale 参数（EXP-009-freeze-old-scale）。
+- **测试**：新增 backbone 级 6 项（bank↔aggregate forward/A-grad 等价、task0/多任务 roundtrip、raw-current 语义、final rebuild=merged、旧版本拒绝、v1→v4 迁移保算子）；math 级 12 项；全量 **79 passed**。
+- **离线验证**：`migrate_sa_v1_to_live_a_aggregate.py --state-v4` 在 INR 产物上 PASS（feature diff 6.1e-6、logit 3.0e-7），v4 state 可加载续训且 A 可训练。
+- **下一步**：4 卡 DDP smoke → INR seed1995 `exp009_freeze_old_scale` + `live_a_aggregate_b` → 对比门槛（freeze 与 aggregate 差 ≤0.1、Live-A Final ≥79.10/AvgAcc ≥82.30/F ≤7.50）→ C100。

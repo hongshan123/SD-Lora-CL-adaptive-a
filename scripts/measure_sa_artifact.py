@@ -40,16 +40,21 @@ def main():
     canonical_down = 0
     cumulative_up = 0
     triangular_r = 0
+    aggregate_up = 0
     prototypes = 0
     merged_b = 0
 
     state_path = os.path.join(directory, "sa_state.pt")
     if os.path.exists(state_path):
         state = torch.load(state_path, map_location="cpu", weights_only=True)
-        if int(state.get("version", -1)) in (2, 3):
+        version = int(state.get("version", -1))
+        if version in (2, 3):
             canonical_down = _count_tensors(state.get("canonical_down", []))
             cumulative_up = _count_tensors(state.get("cumulative_up", []))
             triangular_r = _count_tensors(state.get("triangular_r", []))
+        elif version == 4:
+            shared_a = _count_tensors(state.get("shared_a", []))
+            aggregate_up = _count_tensors(state.get("aggregate_up", []))
         else:
             shared_a = _count_tensors(state.get("shared_a", []))
             scales = _count_tensors(list(state.get("scales", {}).values()))
@@ -77,6 +82,7 @@ def main():
         + canonical_down
         + cumulative_up
         + triangular_r
+        + aggregate_up
     )
     with_prototypes = lora_total + prototypes
     baseline = 3_686_400
@@ -89,6 +95,7 @@ def main():
     print("  canonical_down (v2) = {:>10,}".format(canonical_down))
     print("  cumulative_up (v2)  = {:>10,}".format(cumulative_up))
     print("  triangular_r (v2)   = {:>10,}".format(triangular_r))
+    print("  aggregate_up (v4)   = {:>10,}".format(aggregate_up))
     print("  lora_total          = {:>10,}  ({:.2%} of baseline)".format(
         lora_total, lora_total / baseline
     ))

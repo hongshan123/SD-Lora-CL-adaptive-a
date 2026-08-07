@@ -57,6 +57,8 @@ def get_backbone(args, pretrained=False):
                 cumulative_gauge=args.get("sa_cumulative_gauge", True),
                 cumulative_merge=args.get("sa_cumulative_merge", "gauge"),
                 cumulative_rank=args.get("sa_cumulative_rank", None),
+                freeze_old_scales=args.get("sa_freeze_old_scales", False),
+                live_a_history_groups=args.get("sa_live_a_history_groups", 1),
             )
         else:
             model = LoRA_ViT_timm(

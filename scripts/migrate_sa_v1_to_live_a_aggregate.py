@@ -33,6 +33,7 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backbone.linears import PrototypeCosineHead
+from backbone.sa_lora import migrate_sa_state_v1_to_v4
 from scripts.evaluate_sa_sdlora import _MergedQKV, build_merged_backbone
 from utils.data_manager import DataManager
 
@@ -107,6 +108,7 @@ def load_v1_aggregate(artifact):
 
 
 def verify_equivalence(base_model, aggregate_state, artifact, device, samples=8):
+    torch.manual_seed(0)
     merged_path = Path(artifact) / "sa_merged_lora.pt"
     merged_state = torch.load(merged_path, map_location=device, weights_only=True)
     merged_backbone = build_merged_backbone(
@@ -178,6 +180,11 @@ def main():
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--eval", action="store_true")
     parser.add_argument("--samples", type=int, default=8)
+    parser.add_argument(
+        "--state-v4",
+        action="store_true",
+        help="also write a v4 sa_state.pt for continuing Live-A training",
+    )
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -185,6 +192,13 @@ def main():
     out_path = Path(args.artifact) / LIVE_A_AGGREGATE_FILENAME
     torch.save(aggregate_state, out_path)
     print("wrote {}".format(out_path))
+    if args.state_v4:
+        migrated = migrate_sa_state_v1_to_v4(args.artifact)
+        print(
+            "wrote v4 sa_state.pt (task_id={}, branches={})".format(
+                migrated["task_id"], len(migrated["aggregate_up"])
+            )
+        )
 
     base_model = timm.create_model(
         "vit_base_patch16_224", pretrained=True, num_classes=0

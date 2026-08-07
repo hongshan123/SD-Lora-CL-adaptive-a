@@ -31,8 +31,10 @@ from backbone.sa_operator_stability import (
 SA_STATE_VERSION = 2
 SA_STATE_VERSION_LEGACY = 1
 SA_STATE_VERSION_UNION = 3
+SA_STATE_VERSION_LIVE_A = 4
 SA_MERGE_MODE_GAUGE = "gauge"
 SA_MERGE_MODE_UNION_SVD = "union_svd"
+SA_MERGE_MODE_LIVE_A_AGGREGATE_B = "live_a_aggregate_b"
 SA_STATE_FILENAME = "sa_state.pt"
 SA_MERGED_FILENAME = "sa_merged_lora.pt"
 
@@ -364,6 +366,66 @@ def migrate_sa_state_v2_to_v3(
     return new_state
 
 
+def migrate_sa_state_v1_to_v4(
+    filepath: str, force: bool = False
+) -> dict:
+    """Explicitly migrate a v1 EXP-009 artifact to v4 Live-A Aggregate-B.
+
+    Computes ``G = sum_i s_i B_i / ||B_i||`` from the saved B files and the
+    final shared A, then writes a v4 ``sa_state.pt``.  The original v1 state
+    is backed up to ``sa_state.pt.v1`` and the per-task B files are kept as a
+    backup.
+    """
+    state_path = _join_path(filepath, SA_STATE_FILENAME)
+    state = torch.load(state_path, map_location="cpu", weights_only=True)
+    if int(state.get("version", -1)) != SA_STATE_VERSION_LEGACY:
+        raise ValueError(
+            "artifact is not legacy v1 (version={}); nothing to migrate".format(
+                state.get("version", -1)
+            )
+        )
+    task_ids = sorted(int(task_id) for task_id in state.get("scales", {}))
+    if not task_ids:
+        raise ValueError("legacy artifact has no saved tasks")
+    shared_a = [w.detach().cpu().float() for w in state["shared_a"]]
+    branches = len(shared_a)
+    aggregate_up = []
+    for branch in range(branches):
+        total = None
+        for task_id in task_ids:
+            path = _join_path(
+                filepath, "sa_lora_w_b_{}.pt".format(task_id)
+            )
+            b_list = torch.load(path, map_location="cpu", weights_only=True)
+            b = b_list[branch].float()
+            s = state["scales"][task_id].reshape(())
+            term = s * b / (torch.linalg.vector_norm(b) + 1e-8)
+            total = term if total is None else total + term
+        aggregate_up.append(total)
+    new_state = {
+        "version": SA_STATE_VERSION_LIVE_A,
+        "task_id": len(task_ids),
+        "rank": shared_a[0].shape[0],
+        "merge_mode": SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
+        "aggregate_up": aggregate_up,
+        "shared_a": shared_a,
+        "history_groups": 1,
+        "migrated_from": {"version": SA_STATE_VERSION_LEGACY},
+    }
+    backup_path = state_path + ".v1"
+    if os.path.exists(backup_path):
+        if not force:
+            raise FileExistsError(
+                "backup already exists: {}; pass --force to overwrite".format(
+                    backup_path
+                )
+            )
+        os.remove(backup_path)
+    os.replace(state_path, backup_path)
+    torch.save(new_state, state_path)
+    return new_state
+
+
 class _SharedAQKV(nn.Module):
     """QKV wrapper: base qkv + shared-A LoRA bank with per-task B matrices."""
 
@@ -474,6 +536,62 @@ class _CumulativeSharedAQKV(nn.Module):
         return qkv
 
 
+class _LiveAAggregateQKV(nn.Module):
+    """QKV wrapper for Live-A Aggregate-B.
+
+    The historical branch is ``G A x / ||A||`` with the *live* shared A (the
+    same differentiable A used by the current task), matching EXP-009's bank
+    gradient path when historical scales are folded and frozen.  The current
+    task branch keeps the legacy raw semantics ``scale * B(Ax)`` (no
+    normalization), so non-final evaluation after save still sees
+    ``old G + current raw B`` exactly like the v1 bank.
+    """
+
+    def __init__(
+        self,
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        aggregate_q,
+        aggregate_v,
+        scaling_cur,
+        layer_index,
+        history_groups=1,
+    ):
+        super().__init__()
+        self.qkv = qkv
+        self.a_q = a_q
+        self.a_v = a_v
+        self.b_q = b_q
+        self.b_v = b_v
+        self.scaling_cur = scaling_cur
+        self.layer_index = layer_index
+        self.dim = qkv.in_features
+        self.history_groups = int(history_groups)
+        self.register_buffer(
+            "aggregate_q", aggregate_q.clone(), persistent=False
+        )
+        self.register_buffer(
+            "aggregate_v", aggregate_v.clone(), persistent=False
+        )
+
+    def _norm_live_a(self, x, a_weight, aggregate):
+        denom = torch.linalg.vector_norm(a_weight) + 1e-8
+        return F.linear(F.linear(x, a_weight), aggregate / denom)
+
+    def forward(self, x):
+        new_q = self._norm_live_a(x, self.a_q.weight, self.aggregate_q)
+        new_v = self._norm_live_a(x, self.a_v.weight, self.aggregate_v)
+        new_q = new_q + self.scaling_cur[0](self.b_q(self.a_q(x)))
+        new_v = new_v + self.scaling_cur[0](self.b_v(self.a_v(x)))
+        qkv = self.qkv(x)
+        qkv[:, :, : self.dim] += new_q
+        qkv[:, :, -self.dim :] += new_v
+        return qkv
+
+
 class SharedALoRA_ViT_timm(nn.Module):
     def __init__(
         self,
@@ -493,15 +611,31 @@ class SharedALoRA_ViT_timm(nn.Module):
         cumulative_gauge=True,
         cumulative_merge=SA_MERGE_MODE_GAUGE,
         cumulative_rank=None,
+        freeze_old_scales=False,
+        live_a_history_groups=1,
     ):
         super().__init__()
         assert r > 0
-        if cumulative_merge not in (SA_MERGE_MODE_GAUGE, SA_MERGE_MODE_UNION_SVD):
+        if cumulative_merge not in (
+            SA_MERGE_MODE_GAUGE,
+            SA_MERGE_MODE_UNION_SVD,
+            SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
+        ):
             raise ValueError(
-                "cumulative_merge must be 'gauge' or 'union_svd'; got {}".format(
+                "cumulative_merge must be gauge/union_svd/live_a_aggregate_b; "
+                "got {}".format(
                     cumulative_merge
                 )
             )
+        if (
+            cumulative_merge == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+            and not cumulative_state
+        ):
+            raise ValueError(
+                "live_a_aggregate_b requires sa_cumulative_state=True"
+            )
+        if int(live_a_history_groups) < 1:
+            raise ValueError("sa_live_a_history_groups must be >= 1")
         self.rank = r
         self.cumulative_rank = (
             int(cumulative_rank) if cumulative_rank is not None else r
@@ -512,6 +646,8 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "got {}".format(self.cumulative_rank)
             )
         self.cumulative_merge = cumulative_merge
+        self.freeze_old_scales = bool(freeze_old_scales)
+        self.live_a_history_groups = int(live_a_history_groups)
         self.save_file = filepath
         self.increment = increment
         self.shared_a_orthogonal = bool(shared_a_orthogonal)
@@ -540,15 +676,24 @@ class SharedALoRA_ViT_timm(nn.Module):
         if state_version == SA_STATE_VERSION_LEGACY:
             if self.cumulative_state:
                 raise ValueError(
-                    "sa_cumulative_state=True but artifact is legacy v1; "
-                    "run scripts/migrate_sa_state_v1_to_v2.py first"
+                    "sa_cumulative_state=True (merge={}) but artifact is "
+                    "legacy v1; run the explicit migrate script first".format(
+                        self.cumulative_merge
+                    )
                 )
             self.cumulative_state = False
         elif state_version == SA_STATE_VERSION:
-            if self.cumulative_merge == SA_MERGE_MODE_UNION_SVD:
+            if self.cumulative_merge in (
+                SA_MERGE_MODE_UNION_SVD,
+                SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
+            ):
                 raise ValueError(
-                    "sa_cumulative_merge=union_svd but artifact is v2 gauge; "
-                    "run scripts/migrate_sa_state_v2_to_v3.py first"
+                    "sa_cumulative_merge={} but artifact is v2 gauge; "
+                    "run scripts/migrate_sa_state_v2_to_v3.py first "
+                    "(union) or scripts/migrate_sa_v1_to_live_a_aggregate.py "
+                    "first (live-a)".format(
+                        self.cumulative_merge
+                    )
                 )
             self.cumulative_state = True
         elif state_version == SA_STATE_VERSION_UNION:
@@ -556,6 +701,15 @@ class SharedALoRA_ViT_timm(nn.Module):
                 raise ValueError(
                     "artifact is v3 union-SVD but sa_cumulative_merge={}; "
                     "use union_svd or migrate back explicitly".format(
+                        self.cumulative_merge
+                    )
+                )
+            self.cumulative_state = True
+        elif state_version == SA_STATE_VERSION_LIVE_A:
+            if self.cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B:
+                raise ValueError(
+                    "artifact is v4 live-a-aggregate-b but "
+                    "sa_cumulative_merge={}; use live_a_aggregate_b".format(
                         self.cumulative_merge
                     )
                 )
@@ -570,45 +724,76 @@ class SharedALoRA_ViT_timm(nn.Module):
 
         shared_a = state.get("shared_a", [])
         if self.cumulative_state:
-            self.cumulative_up = [
-                t.detach().cpu().float()
-                for t in state.get("cumulative_up", [])
-            ]
-            self.canonical_down = [
-                t.detach().cpu().float()
-                for t in state.get("canonical_down", [])
-            ]
-            self.triangular_r = [
-                t.detach().cpu().float()
-                for t in state.get("triangular_r", [])
-            ]
             expected_branches = 2 * len(self.lora_layer)
-            if self.task_id > 0 and not (
-                len(self.cumulative_up)
-                == len(self.canonical_down)
-                == len(self.triangular_r)
-                == expected_branches
-            ):
-                raise ValueError(
-                    "cumulative Shared-A state must contain {} branches; "
-                    "got cumulative_up={} canonical_down={} triangular_r={}".format(
-                        expected_branches,
-                        len(self.cumulative_up),
-                        len(self.canonical_down),
-                        len(self.triangular_r),
+            if self.cumulative_merge == SA_MERGE_MODE_LIVE_A_AGGREGATE_B:
+                self.aggregate_up = [
+                    t.detach().cpu().float()
+                    for t in state.get("aggregate_up", [])
+                ]
+                self.cumulative_up = []
+                self.canonical_down = []
+                self.triangular_r = []
+                if self.task_id > 0 and len(self.aggregate_up) != expected_branches:
+                    raise ValueError(
+                        "live-a aggregate state must contain {} branches; "
+                        "got aggregate_up={}".format(
+                            expected_branches, len(self.aggregate_up)
+                        )
                     )
-                )
-            if self.task_id > 0 and len(self.cumulative_up) == 0:
-                raise FileNotFoundError(
-                    "{} is required before training task {}".format(
-                        _join_path(self.save_file, SA_STATE_FILENAME),
-                        self.task_id,
+                if self.task_id > 0 and len(self.aggregate_up) == 0:
+                    raise FileNotFoundError(
+                        "{} is required before training task {}".format(
+                            _join_path(self.save_file, SA_STATE_FILENAME),
+                            self.task_id,
+                        )
                     )
-                )
-            shared_a = [
-                (r.t() @ q).float()
-                for q, r in zip(self.canonical_down, self.triangular_r)
-            ]
+                loaded_a = state.get("shared_a", [])
+                if self.task_id > 0 and len(loaded_a) != expected_branches:
+                    raise ValueError(
+                        "live-a state shared_a must contain {} branches; "
+                        "got {}".format(expected_branches, len(loaded_a))
+                    )
+                shared_a = [t.detach().cpu().float() for t in loaded_a]
+            else:
+                self.aggregate_up = []
+                self.cumulative_up = [
+                    t.detach().cpu().float()
+                    for t in state.get("cumulative_up", [])
+                ]
+                self.canonical_down = [
+                    t.detach().cpu().float()
+                    for t in state.get("canonical_down", [])
+                ]
+                self.triangular_r = [
+                    t.detach().cpu().float()
+                    for t in state.get("triangular_r", [])
+                ]
+                if self.task_id > 0 and not (
+                    len(self.cumulative_up)
+                    == len(self.canonical_down)
+                    == len(self.triangular_r)
+                    == expected_branches
+                ):
+                    raise ValueError(
+                        "cumulative Shared-A state must contain {} branches; "
+                        "got cumulative_up={} canonical_down={} triangular_r={}".format(
+                            expected_branches,
+                            len(self.cumulative_up),
+                            len(self.canonical_down),
+                            len(self.triangular_r),
+                        )
+                    )
+                if self.task_id > 0 and len(self.cumulative_up) == 0:
+                    raise FileNotFoundError(
+                        "{} is required before training task {}".format(
+                            _join_path(self.save_file, SA_STATE_FILENAME),
+                            self.task_id,
+                        )
+                    )
+                shared_a = [
+                    (r.t() @ q).float()
+                    for q, r in zip(self.canonical_down, self.triangular_r)
+                ]
             self.saved_b_tasks = {}
         elif self.task_id > 0 and len(shared_a) == 0:
             raise FileNotFoundError(
@@ -667,6 +852,9 @@ class SharedALoRA_ViT_timm(nn.Module):
                     for value in residual_scale_values
                 ]
             )
+            if self.freeze_old_scales:
+                for idx in range(self.task_id):
+                    self.wrapped_param_prev[idx].param.requires_grad_(False)
 
         for layer_index, blk in enumerate(vit_model.blocks):
             if layer_index not in self.lora_layer:
@@ -703,33 +891,60 @@ class SharedALoRA_ViT_timm(nn.Module):
                 )
 
             if self.cumulative_state:
-                if offset < len(self.cumulative_up):
-                    h_q = self.cumulative_up[offset]
-                    q_q_t = self.canonical_down[offset]
-                    h_v = self.cumulative_up[offset + 1]
-                    q_v_t = self.canonical_down[offset + 1]
+                if (
+                    self.cumulative_merge
+                    == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+                ):
+                    agg_q = (
+                        self.aggregate_up[offset]
+                        if offset < len(self.aggregate_up)
+                        else torch.zeros(dim, r)
+                    )
+                    agg_v = (
+                        self.aggregate_up[offset + 1]
+                        if offset + 1 < len(self.aggregate_up)
+                        else torch.zeros(dim, r)
+                    )
+                    blk.attn.qkv = _LiveAAggregateQKV(
+                        qkv,
+                        a_q,
+                        a_v,
+                        b_q,
+                        b_v,
+                        agg_q,
+                        agg_v,
+                        self.wrapped_param,
+                        layer_index,
+                        history_groups=self.live_a_history_groups,
+                    )
                 else:
-                    h_q = torch.zeros(dim, r)
-                    h_v = torch.zeros(dim, r)
-                    q_q_t, _ = canonical_down_projection(
-                        a_q.weight.detach().cpu()
+                    if offset < len(self.cumulative_up):
+                        h_q = self.cumulative_up[offset]
+                        q_q_t = self.canonical_down[offset]
+                        h_v = self.cumulative_up[offset + 1]
+                        q_v_t = self.canonical_down[offset + 1]
+                    else:
+                        h_q = torch.zeros(dim, r)
+                        h_v = torch.zeros(dim, r)
+                        q_q_t, _ = canonical_down_projection(
+                            a_q.weight.detach().cpu()
+                        )
+                        q_v_t, _ = canonical_down_projection(
+                            a_v.weight.detach().cpu()
+                        )
+                    blk.attn.qkv = _CumulativeSharedAQKV(
+                        qkv,
+                        a_q,
+                        a_v,
+                        b_q,
+                        b_v,
+                        h_q,
+                        q_q_t,
+                        h_v,
+                        q_v_t,
+                        self.wrapped_param,
+                        layer_index,
                     )
-                    q_v_t, _ = canonical_down_projection(
-                        a_v.weight.detach().cpu()
-                    )
-                blk.attn.qkv = _CumulativeSharedAQKV(
-                    qkv,
-                    a_q,
-                    a_v,
-                    b_q,
-                    b_v,
-                    h_q,
-                    q_q_t,
-                    h_v,
-                    q_v_t,
-                    self.wrapped_param,
-                    layer_index,
-                )
             else:
                 saved_b_q = [
                     self.saved_b_tasks[task_id][offset]
@@ -932,6 +1147,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 SA_STATE_VERSION_LEGACY,
                 SA_STATE_VERSION,
                 SA_STATE_VERSION_UNION,
+                SA_STATE_VERSION_LIVE_A,
             ):
                 raise ValueError("unsupported shared-A state version")
             return state
@@ -950,7 +1166,13 @@ class SharedALoRA_ViT_timm(nn.Module):
 
     def save_lora_parameters(self, filename: str, task_id) -> None:
         if self.cumulative_state:
-            self._save_cumulative_state(filename, task_id)
+            if (
+                self.cumulative_merge
+                == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+            ):
+                self._save_live_a_state(filename, task_id)
+            else:
+                self._save_cumulative_state(filename, task_id)
             return
         self.task_id += 1
         if not os.path.exists(filename):
@@ -1100,6 +1322,59 @@ class SharedALoRA_ViT_timm(nn.Module):
         )
         self.save_merged_lora(filename)
 
+    def _save_live_a_state(self, filename: str, task_id) -> None:
+        """Save the Live-A Aggregate-B state.
+
+        Writes ``G_next = G_old + s_t B_t / ||B_t||`` plus the current shared
+        A to disk, but deliberately keeps the in-memory ``aggregate_up`` as the
+        *old* G so that non-final evaluation after save still uses the v1
+        semantics ``old G + current raw B``.  The next task's rebuild loads
+        ``G_next`` with a fresh zero B.
+        """
+        if task_id != self.task_id:
+            raise ValueError(
+                "live-a state save called with task_id={} but "
+                "task_id is {}".format(task_id, self.task_id)
+            )
+        self.task_id += 1
+        if not os.path.exists(filename):
+            os.makedirs(filename)
+        aggregate_up = []
+        for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
+            b = w_b.weight.detach().cpu().float()
+            s = (
+                self.wrapped_param[0]
+                .param.detach()
+                .cpu()
+                .float()
+                .reshape(())
+            )
+            g_old = (
+                self.aggregate_up[idx]
+                if idx < len(self.aggregate_up)
+                else torch.zeros_like(b)
+            )
+            g_new = g_old + s * b / (
+                torch.linalg.vector_norm(b) + 1e-8
+            )
+            aggregate_up.append(g_new)
+        shared_a = [
+            w_a.weight.detach().cpu().float() for w_a in self.w_As
+        ]
+        torch.save(
+            {
+                "version": SA_STATE_VERSION_LIVE_A,
+                "task_id": self.task_id,
+                "rank": self.rank,
+                "merge_mode": SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
+                "aggregate_up": aggregate_up,
+                "shared_a": shared_a,
+                "history_groups": self.live_a_history_groups,
+            },
+            _join_path(filename, SA_STATE_FILENAME),
+        )
+        self.save_merged_lora(filename)
+
     def cleanup_per_task_files(self, filename: str) -> None:
         """Delete per-task B files after the final task; merged LoRA remains."""
         if not self.delete_per_task_files:
@@ -1115,6 +1390,48 @@ class SharedALoRA_ViT_timm(nn.Module):
             os.makedirs(filename)
         current_task = self.task_id - 1
         if self.cumulative_state:
+            if (
+                self.cumulative_merge
+                == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+            ):
+                aggregate_total = []
+                for idx, w_b in enumerate(self.w_Bs):
+                    b = w_b.weight.detach().cpu().float()
+                    s = (
+                        self.wrapped_param[0]
+                        .param.detach()
+                        .cpu()
+                        .float()
+                        .reshape(())
+                    )
+                    g_old = (
+                        self.aggregate_up[idx]
+                        if idx < len(self.aggregate_up)
+                        else torch.zeros_like(b)
+                    )
+                    g_total = g_old + s * b / (
+                        torch.linalg.vector_norm(b) + 1e-8
+                    )
+                    aggregate_total.append(g_total)
+                shared_a = [
+                    w.weight.detach().cpu().float() for w in self.w_As
+                ]
+                merged_b = [
+                    g / (torch.linalg.vector_norm(a) + 1e-8)
+                    for g, a in zip(aggregate_total, shared_a)
+                ]
+                torch.save(
+                    {
+                        "version": SA_STATE_VERSION_LIVE_A,
+                        "merge_mode": SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
+                        "shared_a": shared_a,
+                        "merged_b": merged_b,
+                        "aggregate_up": aggregate_total,
+                        "task_id": current_task,
+                    },
+                    _join_path(filename, SA_MERGED_FILENAME),
+                )
+                return
             torch.save(
                 {
                     "version": (

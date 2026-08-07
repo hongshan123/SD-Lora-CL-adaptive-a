@@ -565,3 +565,10 @@
 - **测试**：新增 backbone 级 6 项（bank↔aggregate forward/A-grad 等价、task0/多任务 roundtrip、raw-current 语义、final rebuild=merged、旧版本拒绝、v1→v4 迁移保算子）；math 级 12 项；全量 **79 passed**。
 - **离线验证**：`migrate_sa_v1_to_live_a_aggregate.py --state-v4` 在 INR 产物上 PASS（feature diff 6.1e-6、logit 3.0e-7），v4 state 可加载续训且 A 可训练。
 - **下一步**：4 卡 DDP smoke → INR seed1995 `exp009_freeze_old_scale` + `live_a_aggregate_b` → 对比门槛（freeze 与 aggregate 差 ≤0.1、Live-A Final ≥79.10/AvgAcc ≥82.30/F ≤7.50）→ C100。
+
+## 2026-08-07 Live-A 4 卡 DDP smoke 完成
+
+- 配置：`exps/live_a_aggregate_b_smoke_inr_seed1995.json`（1 epoch × 10 tasks，rank10，prototype off）。
+- 结果：exit=0，10 任务完成（Final 64.7 仅管线验证）；产物仅 v4 `sa_state.pt` + merged + CLs，无逐任务 B；LoRA 参数 368,640 = 基线 10.00%。
+- 一致性：`verify_sa_consistency.py` PASS（feature diff 7.2e-6）。
+- 下一步：完整 INR seed1995 两档（freeze-old-scale → live-a-aggregate-b）已启动。

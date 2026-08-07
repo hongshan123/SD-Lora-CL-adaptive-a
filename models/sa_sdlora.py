@@ -139,6 +139,8 @@ class Learner(SDLoraLearner):
             delete_per_task_files=self.args.get("sa_delete_per_task_files", False),
             cumulative_state=self.args.get("sa_cumulative_state", False),
             cumulative_gauge=self.args.get("sa_cumulative_gauge", True),
+            cumulative_merge=self.args.get("sa_cumulative_merge", "gauge"),
+            cumulative_rank=self.args.get("sa_cumulative_rank", None),
         )
         model.out_dim = 768
         return model
@@ -174,30 +176,47 @@ class Learner(SDLoraLearner):
                 with torch.no_grad():
                     backbone = self._raw_network().backbone
                     if backbone.cumulative_state:
-                        gauge_diag = getattr(
-                            backbone, "_last_cumulative_gauge_diagnostics", None
-                        )
-                        if gauge_diag is None:
-                            logging.warning(
-                                "[SharedA-SDLoRA] pre-save cumulative gauge "
-                                "diagnostics missing; logging zeros"
+                        if backbone.cumulative_merge == "union_svd":
+                            trunc_error = getattr(
+                                backbone,
+                                "_last_union_svd_truncation_error",
+                                None,
                             )
-                            gauge_diag = {
-                                "residual": 0.0,
-                                "rotation_fro": 0.0,
-                                "preservation": 0.0,
-                                "branches": 0,
-                            }
-                        logging.info(
-                            "[SharedA-SDLoRA] cumulative gauge task %d: "
-                            "relative_projection_residual=%.6e "
-                            "basis_rotation_fro=%.6e "
-                            "operator_preservation=%.6e",
-                            self._cur_task,
-                            gauge_diag["residual"],
-                            gauge_diag["rotation_fro"],
-                            gauge_diag["preservation"],
-                        )
+                            logging.info(
+                                "[SharedA-SDLoRA] union-svd task %d: "
+                                "max_relative_truncation_error=%.6e",
+                                self._cur_task,
+                                trunc_error
+                                if trunc_error is not None
+                                else float("nan"),
+                            )
+                        else:
+                            gauge_diag = getattr(
+                                backbone,
+                                "_last_cumulative_gauge_diagnostics",
+                                None,
+                            )
+                            if gauge_diag is None:
+                                logging.warning(
+                                    "[SharedA-SDLoRA] pre-save cumulative "
+                                    "gauge diagnostics missing; logging zeros"
+                                )
+                                gauge_diag = {
+                                    "residual": 0.0,
+                                    "rotation_fro": 0.0,
+                                    "preservation": 0.0,
+                                    "branches": 0,
+                                }
+                            logging.info(
+                                "[SharedA-SDLoRA] cumulative gauge task %d: "
+                                "relative_projection_residual=%.6e "
+                                "basis_rotation_fro=%.6e "
+                                "operator_preservation=%.6e",
+                                self._cur_task,
+                                gauge_diag["residual"],
+                                gauge_diag["rotation_fro"],
+                                gauge_diag["preservation"],
+                            )
                     else:
                         operator_drift = float(
                             backbone.old_operator_stability_loss().item()

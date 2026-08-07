@@ -497,3 +497,14 @@
 - **修复**：`backbone/sa_lora.py` 新增 `_compute_gauge_diagnostics_between()`，在 `_save_cumulative_state()` 覆盖旧状态前用旧 `(H_old, Q_old)` 与训练后新 `Q_new` 计算 residual/rotation/preservation，缓存到非持久字段 `_last_cumulative_gauge_diagnostics`；训练日志改读缓存。`cumulative_gauge_diagnostics()` 保留但注明只用于测试/手动检查。
 - **测试**：新增同 span（零 residual/preservation、旋转可测）、正交补空间（residual≈1、preservation≈1）、保存缓存非平凡值且后保存自比较显著小于 pre-save 值三个用例；全量 55 passed。
 - **下一步**：提交后重跑 INR seed1995 完整一轮（新目录 `ImageNetR_SA_CUMULATIVE_INR_SEED1995_GAUGE_P0DIAG`），验证真实 pre-save 诊断序列并更新机制结论；旧日志不得再作为机制证据。
+
+## 2026-08-07 P2 实现：Fixed-Rank Union-SVD Cumulative LoRA（v3）
+
+- **动机**：gauge 只在任务结束后把旧算子投影到新 `Q_new` 基底，旧算子的 out-of-span 方向会被丢弃（P0DIAG 重跑首任务即显示 pre-save residual≈4.4e-2，非 1e-8）。Union-SVD 改为先合并完整有效算子 `M = H_old Q_old^T + s B A/(||A|| ||B||)`，再做固定秩最优近似，保留新旧方向的联合空间。
+- **实现**：
+  - `backbone/sa_lora.py`：`union_svd_factors()`（左右因子 QR + 小核心 SVD，不构造稠密 d×d 矩阵；返回 canonical_down `V^T`、cumulative_up `UΣ`、奇异值、相对截断误差）；`SA_STATE_VERSION=3` + `merge_mode`；`_save_cumulative_state` 支持 `gauge`/`union_svd` 两种模式（union 保存 `triangular_r=I`）；`migrate_sa_state_v2_to_v3()`（显式迁移、备份 `.v2`）。
+  - `models/sa_sdlora.py`、`utils/inc_net.py` 透传 `sa_cumulative_merge` / `sa_cumulative_rank`；训练日志输出每任务 `max_relative_truncation_error`。
+  - `scripts/migrate_sa_state_v2_to_v3.py`、`measure_sa_artifact.py`/`collect_sa_cumulative_summary.py`/`verify_sa_consistency.py` 支持 v3。
+- **测试**：新增 6 个用例（全秩等价、截断误差与显式 SVD 一致、union 误差 ≤ gauge 投影误差、v3 roundtrip 无逐任务 B 文件、v2+union 报错要求迁移、v2→v3 同秩迁移保持算子）；全量 61 passed。
+- **配置**：Stage A 的 INR seed1995 四档（union_svd_r4 / gauge_r4 / union_svd_r8 / gauge_r8）与 union_svd smoke 配置、队列脚本；P1 公平任务长度基线配置（EXP-009 INR T5/T20/T40、C100 T5/T20；SD-LoRA INR T20/T40）与队列脚本；离线漂移诊断脚本 `scripts/diagnose_prototype_drift.py`。
+- **下一步**：P0DIAG 完整 INR 结束后跑 union_svd smoke（4 卡 DDP 1-epoch），通过后跑 Stage A 四档完整 INR，按门槛决定 C100。

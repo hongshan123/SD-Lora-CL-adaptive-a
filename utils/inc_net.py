@@ -55,6 +55,8 @@ def get_backbone(args, pretrained=False):
                 delete_per_task_files=args.get("sa_delete_per_task_files", False),
                 cumulative_state=args.get("sa_cumulative_state", False),
                 cumulative_gauge=args.get("sa_cumulative_gauge", True),
+                cumulative_merge=args.get("sa_cumulative_merge", "gauge"),
+                cumulative_rank=args.get("sa_cumulative_rank", None),
             )
         else:
             model = LoRA_ViT_timm(

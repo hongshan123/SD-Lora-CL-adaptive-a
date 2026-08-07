@@ -68,7 +68,12 @@ def main():
         filepath=cli.artifact,
         cur_task_index=num_tasks,
         shared_a_orthogonal=config.get("sa_shared_a_orthogonal", True),
+        train_a_all_tasks=config.get("sa_train_a_all_tasks", False),
         delete_per_task_files=False,
+        cumulative_state=config.get("sa_cumulative_state", False),
+        cumulative_gauge=config.get("sa_cumulative_gauge", True),
+        cumulative_merge=config.get("sa_cumulative_merge", "gauge"),
+        cumulative_rank=config.get("sa_cumulative_rank", None),
     ).to(device)
 
     merged_path = "{}/sa_merged_lora.pt".format(cli.artifact)

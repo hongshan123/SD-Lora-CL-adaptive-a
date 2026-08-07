@@ -20,7 +20,9 @@ from backbone.sa_lora import (
     fold_cumulative_up_projection,
     gauge_align_up_projection,
     gauge_projection_residual,
+    migrate_sa_state_v2_to_v3,
     migrate_sa_state_v1_to_v2,
+    union_svd_factors,
 )
 
 
@@ -404,6 +406,191 @@ def test_save_caches_pre_save_gauge_diagnostics(tmp_path):
     # must NOT be used as mechanism evidence.
     post_save = m1.cumulative_gauge_diagnostics()
     assert post_save["residual"] < diag["residual"]
+
+
+def test_union_svd_full_rank_matches_explicit_sum():
+    torch.manual_seed(71)
+    dim, rank = 12, 3
+    l1 = torch.randn(dim, rank)
+    r1 = torch.randn(dim, rank)
+    l2 = torch.randn(dim, rank)
+    r2 = torch.randn(dim, rank)
+    matrix = l1 @ r1.t() + l2 @ r2.t()
+    q_t, h, s, rel_err = union_svd_factors(
+        [l1, l2], [r1, r2], rank=2 * rank
+    )
+    assert rel_err < 1e-8
+    assert torch.allclose(h @ q_t, matrix, atol=1e-6)
+    assert s.shape == (2 * rank,)
+
+
+def test_union_svd_truncation_matches_explicit_svd():
+    torch.manual_seed(83)
+    dim, rank = 12, 4
+    left = torch.randn(dim, 2 * rank)
+    right = torch.randn(dim, 2 * rank)
+    matrix = left @ right.t()
+    u, s, vh = torch.linalg.svd(matrix, full_matrices=False)
+    explicit = u[:, :rank] @ torch.diag(s[:rank]) @ vh[:rank, :]
+    explicit_err = (matrix - explicit).norm() / matrix.norm()
+
+    q_t, h, s_union, rel_err = union_svd_factors(
+        [left], [right], rank=rank
+    )
+    assert rel_err == pytest.approx(float(explicit_err), abs=1e-6)
+    assert torch.allclose(h @ q_t, explicit, atol=1e-5)
+    assert torch.allclose(s_union[:rank], s[:rank], atol=1e-5)
+
+
+def test_union_svd_error_le_gauge_error():
+    torch.manual_seed(97)
+    dim, rank = 10, 3
+    h_old = torch.randn(dim, rank)
+    q_old = torch.linalg.qr(torch.randn(dim, rank), mode="reduced")[0].t()
+    a = torch.randn(rank, dim)
+    b = torch.randn(dim, rank)
+    matrix = h_old @ q_old + b @ a
+
+    # Gauge approximation: project the old operator into span(Q_new), then
+    # add the current task in the new canonical coordinates.
+    q_new, r_new = canonical_down_projection(a)
+    h_aligned = gauge_align_up_projection(h_old, q_old, q_new)
+    h_cur = canonicalize_effective_up_projection(b, r_new)
+    gauge_op = (h_aligned + h_cur) @ q_new
+    gauge_err = (matrix - gauge_op).norm() / matrix.norm()
+
+    q_t, h, _, union_err = union_svd_factors(
+        [h_old, b], [q_old.t(), a.t()], rank=rank
+    )
+    assert union_err <= gauge_err + 1e-5
+
+
+def test_v3_union_roundtrip_without_per_task_files(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(101)
+    run = tmp_path / "run"
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="union_svd",
+    )
+    with torch.no_grad():
+        for w in model.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    model.save_lora_parameters(str(run), task_id=0)
+
+    assert not (run / "sa_lora_w_b_0.pt").exists()
+    assert model._last_union_svd_truncation_error == 0.0
+    state = torch.load(
+        run / "sa_state.pt", map_location="cpu", weights_only=True
+    )
+    assert state["version"] == 3
+    assert state["merge_mode"] == "union_svd"
+    assert state["rank"] == rank
+    assert len(state["canonical_down"]) == 2
+    assert all(torch.equal(r, torch.eye(rank)) for r in state["triangular_r"])
+
+    reloaded = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=1,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="union_svd",
+    )
+    x = torch.randn(4, 6, dim)
+    out = reloaded(x)
+    assert out.shape == (4, 6, dim * 3)
+    assert torch.isfinite(out).all()
+
+    # Loading the v3 artifact with the default gauge merge must fail loudly.
+    with pytest.raises(ValueError, match="v3 union-SVD"):
+        SharedALoRA_ViT_timm(
+            _TinyViT(dim),
+            r=rank,
+            filepath=str(run),
+            cur_task_index=1,
+            train_a_all_tasks=True,
+            cumulative_state=True,
+        )
+
+
+def test_v2_rejects_union_merge_without_migration(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(103)
+    run = tmp_path / "run"
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+    )
+    with torch.no_grad():
+        for w in model.w_Bs:
+            w.weight.copy_(torch.randn_like(w.weight))
+    model.save_lora_parameters(str(run), task_id=0)
+    with pytest.raises(ValueError, match="migrate_sa_state_v2_to_v3"):
+        SharedALoRA_ViT_timm(
+            _TinyViT(dim),
+            r=rank,
+            filepath=str(run),
+            cur_task_index=1,
+            train_a_all_tasks=True,
+            cumulative_state=True,
+            cumulative_merge="union_svd",
+        )
+
+
+def test_migrate_v2_to_v3_preserves_operator_at_same_rank(tmp_path):
+    dim, rank = 6, 2
+    torch.manual_seed(107)
+    run = tmp_path / "run"
+    for task in range(2):
+        model = SharedALoRA_ViT_timm(
+            _TinyViT(dim),
+            r=rank,
+            filepath=str(run),
+            cur_task_index=task,
+            train_a_all_tasks=True,
+            cumulative_state=True,
+        )
+        with torch.no_grad():
+            for w in model.w_Bs:
+                w.weight.copy_(torch.randn_like(w.weight))
+        model.save_lora_parameters(str(run), task_id=task)
+
+    v2 = torch.load(
+        run / "sa_state.pt", map_location="cpu", weights_only=True
+    )
+    migrated = migrate_sa_state_v2_to_v3(str(run), rank=rank)
+    assert migrated["version"] == 3
+    assert (run / "sa_state.pt.v2").exists()
+    for h2, q2, h3, q3 in zip(
+        v2["cumulative_up"],
+        v2["canonical_down"],
+        migrated["cumulative_up"],
+        migrated["canonical_down"],
+    ):
+        assert torch.allclose(h3 @ q3, h2 @ q2, atol=1e-5)
+
+    reloaded = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=2,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="union_svd",
+    )
+    x = torch.randn(4, 6, dim)
+    assert torch.isfinite(reloaded(x)).all()
 
 
 def test_v2_fresh_run_roundtrip_without_per_task_files(tmp_path):

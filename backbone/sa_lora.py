@@ -30,6 +30,9 @@ from backbone.sa_operator_stability import (
 
 SA_STATE_VERSION = 2
 SA_STATE_VERSION_LEGACY = 1
+SA_STATE_VERSION_UNION = 3
+SA_MERGE_MODE_GAUGE = "gauge"
+SA_MERGE_MODE_UNION_SVD = "union_svd"
 SA_STATE_FILENAME = "sa_state.pt"
 SA_MERGED_FILENAME = "sa_merged_lora.pt"
 
@@ -180,6 +183,56 @@ def gauge_projection_residual(
     return residual.norm().to(cumulative_up.dtype)
 
 
+def union_svd_factors(
+    left_factors: Sequence[Tensor],
+    right_factors: Sequence[Tensor],
+    rank: int,
+    eps: float = 1e-12,
+) -> tuple[Tensor, Tensor, Tensor, float]:
+    """Fixed-rank optimal approximation of ``M = sum_i L_i R_i^T``.
+
+    Returns ``(Q^T, H, singular_values, relative_truncation_error)`` such that
+    ``H Q^T`` is the rank-``rank`` truncated SVD of ``M``.  The dense ``d x d``
+    matrix is never materialized: the joint left/right factors are QR-reduced
+    first and only the small ``K x K`` core is decomposed.
+    """
+    if not left_factors:
+        raise ValueError("at least one left factor is required")
+    if len(left_factors) != len(right_factors):
+        raise ValueError("left and right factor counts must match")
+    left = torch.cat([t.to(torch.float64) for t in left_factors], dim=1)
+    right = torch.cat([t.to(torch.float64) for t in right_factors], dim=1)
+    if left.ndim != 2 or right.ndim != 2:
+        raise ValueError("factors must be 2D matrices")
+    if left.shape[0] != right.shape[0]:
+        raise ValueError(
+            "left and right factors must share the output dimension; "
+            "got {} vs {}".format(left.shape[0], right.shape[0])
+        )
+    if left.shape[1] != right.shape[1]:
+        raise ValueError(
+            "left and right factors must share the joint rank; "
+            "got {} vs {}".format(left.shape[1], right.shape[1])
+        )
+    k = left.shape[1]
+    if rank <= 0 or rank > k:
+        raise ValueError("rank must satisfy 0 < rank <= {}".format(k))
+
+    q_l, r_l = torch.linalg.qr(left, mode="reduced")
+    q_r, r_r = torch.linalg.qr(right, mode="reduced")
+    core = r_l @ r_r.t()
+    u_c, s, v_c = torch.linalg.svd(core, full_matrices=False)
+    u_full = q_l @ u_c
+    v_full = q_r @ v_c.t()
+
+    canonical_down = v_full[:, :rank].t().contiguous().float()
+    cumulative_up = (u_full[:, :rank] * s[:rank]).contiguous().float()
+    total_sq = (s.square().sum()).clamp_min(eps)
+    trunc_sq = (s[rank:].square().sum()).clamp_min(0.0)
+    relative_error = float((trunc_sq / total_sq).sqrt())
+    return canonical_down, cumulative_up, s.float(), relative_error
+
+
 def migrate_sa_state_v1_to_v2(filepath: str, force: bool = False) -> dict:
     """Explicitly migrate a legacy v1 artifact to the v2 cumulative state.
 
@@ -236,6 +289,68 @@ def migrate_sa_state_v1_to_v2(filepath: str, force: bool = False) -> dict:
         },
     }
     backup_path = state_path + ".v1"
+    if os.path.exists(backup_path):
+        if not force:
+            raise FileExistsError(
+                "backup already exists: {}; pass --force to overwrite".format(
+                    backup_path
+                )
+            )
+        os.remove(backup_path)
+    os.replace(state_path, backup_path)
+    torch.save(new_state, state_path)
+    return new_state
+
+
+def migrate_sa_state_v2_to_v3(
+    filepath: str, rank: int | None = None, force: bool = False
+) -> dict:
+    """Explicitly migrate a v2 gauge state to a v3 union-SVD state.
+
+    The old ``sa_state.pt`` is backed up to ``sa_state.pt.v2``.  Each branch's
+    exact historical operator ``H Q^T`` is re-factorized with a fixed-rank
+    union SVD at ``rank`` (defaults to the state's stored rank).  Truncating
+    below the stored rank is intentionally lossy; this is an explicit,
+    non-silent migration.
+    """
+    state_path = _join_path(filepath, SA_STATE_FILENAME)
+    state = torch.load(state_path, map_location="cpu", weights_only=True)
+    if int(state.get("version", -1)) != SA_STATE_VERSION:
+        raise ValueError(
+            "artifact is not v2 gauge (version={}); nothing to migrate".format(
+                state.get("version", -1)
+            )
+        )
+    old_rank = int(state["rank"])
+    target_rank = int(rank) if rank is not None else old_rank
+    if target_rank <= 0 or target_rank > old_rank:
+        raise ValueError(
+            "target rank must satisfy 0 < rank <= {}".format(old_rank)
+        )
+    canonical_down = []
+    cumulative_up = []
+    triangular_r = []
+    for h, q_t in zip(state["cumulative_up"], state["canonical_down"]):
+        q_new, h_new, _, _ = union_svd_factors(
+            [h], [q_t.t()], rank=target_rank
+        )
+        canonical_down.append(q_new)
+        cumulative_up.append(h_new)
+        triangular_r.append(torch.eye(target_rank, dtype=torch.float32))
+    new_state = {
+        "version": SA_STATE_VERSION_UNION,
+        "task_id": int(state["task_id"]),
+        "rank": target_rank,
+        "merge_mode": SA_MERGE_MODE_UNION_SVD,
+        "canonical_down": canonical_down,
+        "cumulative_up": cumulative_up,
+        "triangular_r": triangular_r,
+        "migrated_from": {
+            "version": SA_STATE_VERSION,
+            "old_rank": old_rank,
+        },
+    }
+    backup_path = state_path + ".v2"
     if os.path.exists(backup_path):
         if not force:
             raise FileExistsError(
@@ -376,10 +491,27 @@ class SharedALoRA_ViT_timm(nn.Module):
         delete_per_task_files=False,
         cumulative_state=False,
         cumulative_gauge=True,
+        cumulative_merge=SA_MERGE_MODE_GAUGE,
+        cumulative_rank=None,
     ):
         super().__init__()
         assert r > 0
+        if cumulative_merge not in (SA_MERGE_MODE_GAUGE, SA_MERGE_MODE_UNION_SVD):
+            raise ValueError(
+                "cumulative_merge must be 'gauge' or 'union_svd'; got {}".format(
+                    cumulative_merge
+                )
+            )
         self.rank = r
+        self.cumulative_rank = (
+            int(cumulative_rank) if cumulative_rank is not None else r
+        )
+        if self.cumulative_rank <= 0 or self.cumulative_rank > r:
+            raise ValueError(
+                "cumulative_rank must satisfy 0 < rank <= lora_rank; "
+                "got {}".format(self.cumulative_rank)
+            )
+        self.cumulative_merge = cumulative_merge
         self.save_file = filepath
         self.increment = increment
         self.shared_a_orthogonal = bool(shared_a_orthogonal)
@@ -413,6 +545,20 @@ class SharedALoRA_ViT_timm(nn.Module):
                 )
             self.cumulative_state = False
         elif state_version == SA_STATE_VERSION:
+            if self.cumulative_merge == SA_MERGE_MODE_UNION_SVD:
+                raise ValueError(
+                    "sa_cumulative_merge=union_svd but artifact is v2 gauge; "
+                    "run scripts/migrate_sa_state_v2_to_v3.py first"
+                )
+            self.cumulative_state = True
+        elif state_version == SA_STATE_VERSION_UNION:
+            if self.cumulative_merge != SA_MERGE_MODE_UNION_SVD:
+                raise ValueError(
+                    "artifact is v3 union-SVD but sa_cumulative_merge={}; "
+                    "use union_svd or migrate back explicitly".format(
+                        self.cumulative_merge
+                    )
+                )
             self.cumulative_state = True
         elif state_version == -1:
             # Fresh run: the flag decides which version new artifacts use.
@@ -493,6 +639,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         # Diagnostics computed from the *pre-save* historical state; populated
         # by _save_cumulative_state before the state is overwritten.
         self._last_cumulative_gauge_diagnostics = None
+        self._last_union_svd_truncation_error = None
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -781,7 +928,11 @@ class SharedALoRA_ViT_timm(nn.Module):
         if os.path.exists(path):
             state = torch.load(path, map_location="cpu", weights_only=True)
             version = int(state.get("version", -1))
-            if version not in (SA_STATE_VERSION_LEGACY, SA_STATE_VERSION):
+            if version not in (
+                SA_STATE_VERSION_LEGACY,
+                SA_STATE_VERSION,
+                SA_STATE_VERSION_UNION,
+            ):
                 raise ValueError("unsupported shared-A state version")
             return state
         return {"version": -1, "shared_a": [], "scales": {}}
@@ -862,44 +1013,89 @@ class SharedALoRA_ViT_timm(nn.Module):
         canonical_down = []
         cumulative_up = []
         triangular_r = []
-        for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
-            a = w_a.weight.detach().cpu().float()
-            b = w_b.weight.detach().cpu().float()
-            s = self.wrapped_param[0].param.detach().cpu().float().reshape(())
-            q_t, r = canonical_down_projection(a)
-            if idx < len(self.cumulative_up) and self.task_id > 1:
-                if self.cumulative_gauge:
-                    h_hist = gauge_align_up_projection(
-                        self.cumulative_up[idx],
-                        self.canonical_down[idx],
-                        q_t,
-                    )
+        if self.cumulative_merge == SA_MERGE_MODE_UNION_SVD:
+            self._last_union_svd_truncation_error = 0.0
+            for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
+                a = w_a.weight.detach().cpu().float()
+                b = w_b.weight.detach().cpu().float()
+                s = (
+                    self.wrapped_param[0]
+                    .param.detach()
+                    .cpu()
+                    .float()
+                    .reshape(())
+                )
+                norm_a = torch.linalg.vector_norm(a)
+                norm_b = torch.linalg.vector_norm(b) + 1e-8
+                left = []
+                right = []
+                if idx < len(self.cumulative_up):
+                    left.append(self.cumulative_up[idx])
+                    right.append(self.canonical_down[idx].t())
+                left.append(s * b / (norm_a * norm_b))
+                right.append(a.t())
+                q_t, h_t, _, rel_err = union_svd_factors(
+                    left, right, rank=self.cumulative_rank
+                )
+                self._last_union_svd_truncation_error = max(
+                    self._last_union_svd_truncation_error, rel_err
+                )
+                canonical_down.append(q_t)
+                cumulative_up.append(h_t)
+                triangular_r.append(
+                    torch.eye(self.cumulative_rank, dtype=torch.float32)
+                )
+        else:
+            for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
+                a = w_a.weight.detach().cpu().float()
+                b = w_b.weight.detach().cpu().float()
+                s = (
+                    self.wrapped_param[0]
+                    .param.detach()
+                    .cpu()
+                    .float()
+                    .reshape(())
+                )
+                q_t, r = canonical_down_projection(a)
+                if idx < len(self.cumulative_up) and self.task_id > 1:
+                    if self.cumulative_gauge:
+                        h_hist = gauge_align_up_projection(
+                            self.cumulative_up[idx],
+                            self.canonical_down[idx],
+                            q_t,
+                        )
+                    else:
+                        # Ablation: keep the old cumulative up projection
+                        # without aligning it to the new canonical basis.
+                        h_hist = self.cumulative_up[idx]
                 else:
-                    # Ablation: keep the old cumulative up projection without
-                    # aligning it to the new canonical basis (cumulative only).
-                    h_hist = self.cumulative_up[idx]
-            else:
-                h_hist = torch.zeros_like(b)
-            norm_a = torch.linalg.vector_norm(a)
-            norm_b = torch.linalg.vector_norm(b) + 1e-8
-            h_cur_raw = s * b / (norm_a * norm_b)
-            h_cur = canonicalize_effective_up_projection(h_cur_raw, r)
-            cumulative_up.append(h_hist + h_cur)
-            canonical_down.append(q_t)
-            triangular_r.append(r)
+                    h_hist = torch.zeros_like(b)
+                norm_a = torch.linalg.vector_norm(a)
+                norm_b = torch.linalg.vector_norm(b) + 1e-8
+                h_cur_raw = s * b / (norm_a * norm_b)
+                h_cur = canonicalize_effective_up_projection(h_cur_raw, r)
+                cumulative_up.append(h_hist + h_cur)
+                canonical_down.append(q_t)
+                triangular_r.append(r)
 
         self.cumulative_up = cumulative_up
         self.canonical_down = canonical_down
         self.triangular_r = triangular_r
+        state = {
+            "version": (
+                SA_STATE_VERSION_UNION
+                if self.cumulative_merge == SA_MERGE_MODE_UNION_SVD
+                else SA_STATE_VERSION
+            ),
+            "task_id": self.task_id,
+            "rank": self.cumulative_rank,
+            "merge_mode": self.cumulative_merge,
+            "canonical_down": canonical_down,
+            "cumulative_up": cumulative_up,
+            "triangular_r": triangular_r,
+        }
         torch.save(
-            {
-                "version": SA_STATE_VERSION,
-                "task_id": self.task_id,
-                "rank": self.rank,
-                "canonical_down": canonical_down,
-                "cumulative_up": cumulative_up,
-                "triangular_r": triangular_r,
-            },
+            state,
             _join_path(filename, SA_STATE_FILENAME),
         )
         self.save_merged_lora(filename)
@@ -921,11 +1117,18 @@ class SharedALoRA_ViT_timm(nn.Module):
         if self.cumulative_state:
             torch.save(
                 {
-                    "version": SA_STATE_VERSION,
+                    "version": (
+                        SA_STATE_VERSION_UNION
+                        if self.cumulative_merge == SA_MERGE_MODE_UNION_SVD
+                        else SA_STATE_VERSION
+                    ),
+                    "merge_mode": self.cumulative_merge,
                     "shared_a": [q.clone() for q in self.canonical_down],
                     "merged_b": [h.clone() for h in self.cumulative_up],
                     "canonical_down": [q.clone() for q in self.canonical_down],
                     "cumulative_up": [h.clone() for h in self.cumulative_up],
+                    "triangular_r": [r.clone() for r in self.triangular_r],
+                    "rank": self.cumulative_rank,
                     "task_id": current_task,
                 },
                 _join_path(filename, SA_MERGED_FILENAME),

@@ -46,7 +46,7 @@ def main():
     state_path = os.path.join(directory, "sa_state.pt")
     if os.path.exists(state_path):
         state = torch.load(state_path, map_location="cpu", weights_only=True)
-        if int(state.get("version", -1)) == 2:
+        if int(state.get("version", -1)) in (2, 3):
             canonical_down = _count_tensors(state.get("canonical_down", []))
             cumulative_up = _count_tensors(state.get("cumulative_up", []))
             triangular_r = _count_tensors(state.get("triangular_r", []))

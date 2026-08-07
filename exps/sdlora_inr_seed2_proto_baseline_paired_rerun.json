@@ -1,5 +1,5 @@
 {
-    "prefix": "sdlora_inr_seed2_proto_baseline_paired_rerun",
+    "prefix": "sdlora_inr_seed2_proto_baseline_paired_rerun2",
     "dataset": "imagenetr",
     "memory_size": 0,
     "memory_per_class": 0,
@@ -13,7 +13,7 @@
     "seed": [2],
     "optimizer": "adam",
     "scheduler": "constant",
-    "filepath": "./ImageNetR_SDLORA_PROTO_BASELINE_SEED2_PAIRED_RERUN/",
+    "filepath": "./ImageNetR_SDLORA_PROTO_BASELINE_SEED2_PAIRED_RERUN2/",
     "init_epoch": 20,
     "init_lr": 0.01,
     "init_milestones": [10000],

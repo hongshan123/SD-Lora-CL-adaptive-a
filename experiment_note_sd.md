@@ -604,3 +604,16 @@
 - 结果：**88.32 / 91.99 / 8.19**（Final ≥88.10 ✓、AvgAcc ≥91.70 ✓、Forgetting ≤8.70 ✓）。产物 LoRA 368,640 + 原型 76,800 = 445,440；无逐任务 B；`verify_sa_consistency` PASS（feature 7.9e-6 / logit 2.7e-7）。
 - 对照：EXP-009 88.42/92.07/8.08；SD-LoRA 86.89/91.44/5.58。Live-A C100 单 seed 全面达到 Stage A 门槛。
 - 下一步：Stage B 多 seed 配对。已有 EXP-009 INR/C100 × 4 seeds；Live-A 需补 seed1/2/3（INR+C100）；SD-LoRA 需补 seed1/2/3（INR+C100）。
+
+## 2026-08-07 Stage B 配对队列已启动
+
+- 为满足“相同代码版本 + 独立输出目录”，除 Live-A 补跑 seed1/2/3（INR+C100）外，EXP-009 与原始 SD-LoRA 也按当前 HEAD 各补/重跑 4 seeds（INR+C100），全部使用新输出目录。
+- 队列：`run_stage_b_paired_queue.sh`（22 个完整 4 卡 DDP 运行，顺序执行），20:53 启动，首个 `live_a_aggregate_b_inr_seed1` 已进入 Task 0。
+- 预计总时长约 10–15 小时；完成后按 seed 内连接做配对统计（mean/std、paired t-test、95% CI、Cohen's dz、TOST ±0.5）。
+
+## 2026-08-08 Stage B 途中修复：SD-LoRA 基线的 Live-A 诊断调用
+
+- Live-A 与 EXP-009 队列（14 个运行）全部正常完成；进入原始 SD-LoRA 基线时，`models/sdlora.py` 在 task0 无条件调用 `backbone.live_a_gradient_diagnostics(tokens)`，而 `LoRA_ViT_timm` 无该方法，导致 SD-LoRA INR seed1995/1/2/3 与 C100 seed1993/1 立即崩溃（status=1，日志保留为 `*.failed.log`）。
+- 修复：`models/sdlora.py` 增加 `hasattr(backbone, "live_a_gradient_diagnostics")` 保护；全量测试 81 passed。该修复仅影响非 Live-A 模型，Live-A/EXP-009 路径不变。
+- 为避免复用含 task0 部分产物的 rerun1 目录，SD-LoRA 8 个基线配置改为 `*_PAIRED_RERUN2` 独立输出目录；新增 `run_stage_b_sdlora_queue.sh` 只跑这 8 个基线。
+- 下一步：重新启动 SD-LoRA 队列并监控；完成后汇总 Stage B 全部 22+8（实际 14 正常 + 8 重跑）配对结果。

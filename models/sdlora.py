@@ -344,6 +344,8 @@ class Learner(BaseLearner):
                     tokens = backbone.lora_vit.pos_drop(tokens)
                     live_diag = (
                         backbone.live_a_gradient_diagnostics(tokens)
+                        if hasattr(backbone, "live_a_gradient_diagnostics")
+                        else None
                     )
                     if live_diag is not None and live_diag["historical_dL_dA"] > 0:
                         logging.info(

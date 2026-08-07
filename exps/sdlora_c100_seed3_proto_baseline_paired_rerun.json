@@ -1,5 +1,5 @@
 {
-    "prefix": "sdlora_c100_seed3_proto_baseline_paired_rerun",
+    "prefix": "sdlora_c100_seed3_proto_baseline_paired_rerun2",
     "dataset": "cifar224",
     "memory_size": 0,
     "memory_per_class": 0,
@@ -14,7 +14,7 @@
     "scheduler": "cosine",
     "min_lr": 0.005,
     "tuned_epoch": 20,
-    "filepath": "./CF100_SDLORA_PROTO_BASELINE_SEED3_PAIRED_RERUN/",
+    "filepath": "./CF100_SDLORA_PROTO_BASELINE_SEED3_PAIRED_RERUN2/",
     "init_epoch": 20,
     "init_lr": 0.008,
     "init_milestones": [60, 120, 170],

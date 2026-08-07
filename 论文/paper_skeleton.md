@@ -80,9 +80,14 @@ We propose an online gauge-aligned cumulative LoRA framework for rehearsal-free 
 
 ### 4.4 效率与审计（待回填）
 
-- FLOPs/吞吐/峰值显存（GPU 实测）；参数随 T 曲线（v2 恒定 vs v1 线性）。
+- FLOPs/吞吐/峰值显存（GPU 实测）：主方法与 EXP-009 均 1.129e12 FLOPs / ~413 img/s / ~579 MiB（batch32，推理等价）。
+- 参数随 T：v2 恒 371,040（含 R 2,400）；v1 = 184,320 + T×184,320 + T×scale（T=10 时 2,027,530，T=40 时约 7.56M）。
 - merged/恢复一致性：`verify_sa_consistency.py`（已 PASS，feature/prototype logits 差 0）。
 - 相关性：operator drift 弱相关（r=0.26）、gauge 诊断零方差、LRPT drift 弱相关（r=0.18）；控制组 r=-0.73 提示塑性混杂。
+
+### 4.5 额外数据集（已回填）
+
+- CUB-200（seed1）：cumulative+gauge 79.79/87.69/14.20 vs EXP-009 71.75/84.93/23.31（Final +8.04）。
 
 ## 5. Ablations（待回填多 seed）
 

@@ -455,6 +455,14 @@
 - **动作**：`run_sa_cumulative_cub.sh` 启动（CUB-200 seed1，10 任务，cumulative+gauge），验证额外数据集。
 - **下一步**：CUB 完成后跑 GPU FLOPs/吞吐/显存与一致性审计；回填论文（含参数量 vs T 曲线）。
 
+## 2026-08-07 11:15 CUB 对照与 GPU 测量完成
+
+- **CUB-200**：主方法 79.79/87.69/14.20 vs EXP-009 71.75/84.93/23.31（Final +8.04、F -9.11）；细粒度数据上 v1 重归一化损害更大，gauge-aligned 累计状态显著更稳（单 seed）。
+- **GPU 测量**（batch32）：主方法 INR/C100 与 EXP-009 INR 均为 FLOPs 1.129e12、吞吐 ~412-415 img/s、峰值显存 ~578-579 MiB——推理算子等价；差异在持久状态（-82% LoRA）与训练期复杂度。
+- **一致性**：INR seed3、CUB 主方法产物 `verify_sa_consistency` PASS（diff=0）。
+- **判断**：论文所需数据基本齐备（多 seed、任务长度、额外数据集、效率、相关性、一致性）；剩余强基线（InfLoRA/CL-LoRA/LoRA-DRS/DGS）未实现，作为 limitations/未来工作。
+- **下一步**：写论文初稿（`论文/paper_draft.md`），回填全部结果。
+
 ## 2026-08-06 23:00 诊断-遗忘相关性初算与诊断精度修正
 
 - **工具**：新增 `scripts/drift_forgetting_correlation.py`（最终精度矩阵 → 每任务遗忘；日志诊断 → Pearson/Spearman）。

@@ -149,11 +149,11 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 | --- | --- |
 | 多 seed（≥3，mean±std + 显著性） | 运行中（INR/C100 × seeds 1/2/3，6 个完整运行） |
 | 任务长度 T=5/10/20/40 | 完成——INR T5/T10/T20/T40=77.54/79.06/77.03/75.31、C100 T5/T10/T20=88.06/87.70/85.63（Final）；Forgetting 随 T 单调恶化，LoRA 状态恒 371,040 |
-| 额外数据集（ImageNet-A/CUB/DomainNet） | CUB-200-2011 已下载并构建 `data/cub/train|test`（5994/5794 张，200 类，DataManager 验证通过），`sa_cumulative_cub_seed1_gauge.json` 就绪（commit `9c2ca2f`），待 GPU 空闲后运行；ImageNet-A/DomainNet 待评估 |
-| 强基线 | SD-LoRA（有）、EXP-009 Shared-A+prototype（有）、SA-LoRA r10/r20（有）、generic affine LRPT（有）；InfLoRA/CL-LoRA/LoRA-DRS/DGS 未实现，待评估可复现性 |
+| 额外数据集（ImageNet-A/CUB/DomainNet） | CUB-200 完成：主方法 79.79/87.69/14.20 vs EXP-009 71.75/84.93/23.31（Final +8.04）；ImageNet-A/DomainNet 待评估 |
+| 强基线 | SD-LoRA（有）、EXP-009（有，含多 seed）、SA-LoRA r10/r20（有）、generic affine LRPT（有）；InfLoRA/CL-LoRA/LoRA-DRS/DGS 未实现，列入 limitations |
 | 消融 | cumulative-only（有单 seed）、gauge+LRPT（有单 seed）、无 prototype（待定）、EXP-009（有） |
-| 测量（FLOPs/吞吐/峰值显存） | `scripts/measure_sa_flops.py` 就绪；CPU 预测量已出（C100 batch8=2.707e11 FLOPs、29.4 img/s），GPU 实测待任务长度队列后 |
-| 恢复/merged 一致性 | `verify_sa_consistency.py` 已在多个产物 PASS；主方法多 seed 产物逐一复验 |
+| 测量（FLOPs/吞吐/峰值显存） | GPU 实测完成：主方法 INR/C100 与 EXP-009 均为 1.129e12 FLOPs、~413 img/s、~579 MiB（batch32） |
+| 恢复/merged 一致性 | `verify_sa_consistency.py` 已在 INR（seed1995/seed3）、C100（seed1993）、CUB 主方法产物 PASS（diff=0） |
 | 相关性分析 | 初算完成（`scripts/drift_forgetting_correlation.py`）：operator drift 弱相关（r=0.26）、控制组负相关（r=-0.73，塑性混杂）、gauge 诊断零方差、LRPT drift 弱相关；论文按此如实报告 |
 | 参数量随 T 曲线 | v2 恒定 371,040（LoRA）；v1 线性增长可解析计算，论文阶段制图 |
 | 论文初稿 | 待多 seed 与测量完成后起草（`论文/` 目前只有 CL-LoRA/k-merge 参考 PDF） |

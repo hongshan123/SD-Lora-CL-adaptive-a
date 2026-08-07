@@ -436,6 +436,27 @@
 - 分析：两个数据集均在 T=10 附近最优（INR Final 79.06、C100 AvgAcc 91.83）；T 增大时 Forgetting 单调恶化（INR 6.82→12.34、C100 8.53→10.72），T=40 时 Final 下降 3.75（INR）。每任务 LoRA 状态始终 371,040（O(1)），这是与 v1 的关键差异点。
 - 下一步：CUB-200 主方法运行中；随后 GPU 测量与论文回填。
 
+## EXP-019 CUB-200 额外数据集（主方法 vs EXP-009）+ 效率测量
+
+- 日期：2026-08-07
+- 状态：完成（CUB 主方法与 EXP-009 对照均 exit=0；GPU 测量与一致性审计通过）
+- 配置：`sa_cumulative_cub_seed1_gauge.json`（主方法，cumulative+gauge）；`sa_sdlora_proto_cub_seed1.json`（EXP-009 对照）。CUB-200 官方 split 5994/5794，10 任务（init 20/inc 20），seed1。
+- 结果（CUB-200 seed1）：
+  | 方法 | Final Top1 | AvgAcc | Forgetting | LoRA 参数 |
+  | --- | ---: | ---: | ---: | ---: |
+  | EXP-009（v1 bank） | 71.75 | 84.93 | 23.31 | 2,027,530 |
+  | **cumulative+gauge** | **79.79** | **87.69** | **14.20** | **371,040** |
+- 分析：额外数据集上主方法大幅优于 EXP-009（Final +8.04、AvgAcc +2.76、Forgetting -9.11），与 INR/C100 上"统计等价"的结论互补——v1 的逐任务重归一化在细粒度 CUB 上损害更大，gauge-aligned 累计状态更稳健。单 seed 结果，论文中作为支持性证据。
+- 效率测量（GPU, batch32, 20 iters）：
+  | 产物 | FLOPs/forward | 吞吐 | 峰值显存 |
+  | --- | ---: | ---: | ---: |
+  | 主方法 INR | 1.129e12 | 411.9 img/s | 579.1 MiB |
+  | EXP-009 INR | 1.129e12 | 414.9 img/s | 577.7 MiB |
+  | 主方法 C100 | 1.129e12 | 413.3 img/s | 579.1 MiB |
+- 一致性审计：`verify_sa_consistency.py` 在 INR seed3 与 CUB 主方法产物 PASS（feature 与 prototype logits 差 0）。
+- 结论：推理期算子与 v1 merged 等价（FLOPs/吞吐/显存一致），差异在持久状态（-82% LoRA）与训练期复杂度（v1 bank 随 T 增长，v2 恒定）。
+- 下一步：论文初稿（含参数量 vs T 曲线、多 seed/任务长度/CUB/测量/相关性全部数据已齐）。
+
 ## EXP-017 C100 cumulative+gauge（主方法第二数据集验证）
 
 - 日期：2026-08-06

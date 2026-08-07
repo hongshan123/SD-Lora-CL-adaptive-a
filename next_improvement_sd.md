@@ -356,3 +356,7 @@ lambda * ||DeltaW_l U_l||_F^2
   gauge r8 78.24/81.98/6.88。Union 在两种秩下一致优于同秩 gauge，但 union r8 未达 C100
   进入门槛 Final ≥79.10（差 0.41）。union r10（与 gauge r10 容量匹配）运行中；若仍未过，
   停止 rank 扩展并转入 P1 诊断 + P3 条件评估。
+- **Stage A 关闭（2026-08-07 14:05）**：union_svd_r10 = 78.61/81.91/7.05（gauge r10
+  79.06/81.77/6.82），Final 仍低于门槛且低于 gauge_r10。Union-SVD 在 r4/r8/r10 均改善
+  AvgAcc/旧类保持但未解决 final 缺口；停止 rank 扩展，不再运行 C100。P1 公平任务长度
+  基线队列已自动开始；离线原型漂移诊断运行中，据其结果决定 P3 activation sketch 是否实现。

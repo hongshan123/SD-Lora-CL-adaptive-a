@@ -526,3 +526,14 @@
 - 初步分析：T=5/20 上 EXP-009（v1 bank）Final 分别高 2.79/1.10（INR）、0.97（C100 T5）个点；主方法在 T 变化时的相对退化更明显，论文 scalability 主张必须按“相对基线的差值”表述，不能只看绝对曲线。
 - ⚠️ EXP-009 INR T40 在 task23 触发 CUDA OOM（v1 bank 逐任务 B 占满 24GB 显存），仅完成 22 个任务；SD-LoRA T40 预计同样受限。方案：队列结束后用 batch16 重跑 T40 两档并明确记录 batch 偏差，或报告资源不可行并只对比 T5/T10/T20。
 - 下一步：C100 T5/T20、SD-LoRA T20/T40 完成后回填完整表并做差值分析。
+
+## EXP-023 Live-A Aggregate-B（INR seed1995）
+
+- 日期：2026-08-07
+- 状态：运行中（freeze-old-scale 已完成；live-a-aggregate-b 运行中）
+- 目标：验证“O(1) 状态保留 EXP-009 live shared-A 训练路径”能否恢复旧类性能（live_a 任务书 §4）。
+- 实现：v4 state（commit `f36b933`）、`_LiveAAggregateQKV`、`sa_freeze_old_scales`；79→80 单测通过；4 卡 DDP smoke exit=0，consistency PASS，LoRA 368,640。
+- 结果（EXP-009-freeze-old-scale，INR seed1995）：Final=**79.38**、AvgAcc=**82.16**、Forgetting=**7.11**；曲线 `[91.42,85.54,83.77,82.15,81.33,81.53,78.59,79.12,78.75,79.38]`。
+  - 对照完整 EXP-009（79.34/82.47/7.26）：Final +0.04、AvgAcc -0.31、F -0.15。
+  - 分析：冻结历史 scale 对 Final 几乎无影响，AvgAcc 略降 0.31（处于任务书“若 ≤0.3 则 scale 不是主因”的临界点附近）；说明历史 scale 继续适配不是主要收益来源，Live-A 折叠进 G 的近似可接受。
+- 下一步：等待 live-a-aggregate-b 结果；若与 freeze-old-scale 差异 ≤0.1 且 INR Final ≥79.10 / AvgAcc ≥82.30 / F ≤7.50，进入 C100 seed1993。

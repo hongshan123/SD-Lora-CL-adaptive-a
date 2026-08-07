@@ -541,4 +541,7 @@
   - 产物：LoRA 368,640（基线 10.00%）+ 原型 153,600 = 522,240（14.17%，减 85.83%）；无逐任务 B；`verify_sa_consistency` PASS（feature 7.2e-6 / logit 2.4e-7）。
 - 门槛判定：INR 三项中 Final 79.64 ≥79.10 ✓、Forgetting 6.67 ≤7.50 ✓、AvgAcc 82.10 <82.30 ✗（差 0.20），**未达任务书 INR 门槛，不启动 C100**。
 - 实现等价性：freeze-old-scale 与 live-a 的 AvgAcc 差 0.06（≤0.1 ✓）、Final 差 0.26（>0.1，单 seed 方差范围内，但按任务书先补实现诊断再复跑）；K-group 幅度增强不触发（freeze 相对完整 EXP-009 的 Final 未下降，AvgAcc 仅 -0.31）。
-- 下一步：补 §8 训练期诊断（历史/当前分支 dL/dA、G/A/B/scale 范数、保存前后 probe 误差）并复跑 INR live-a；若复跑稳定通过 AvgAcc ≥82.30 再进入 C100。
+- 复跑（`live_a_aggregate_b_inr_seed1995_diag2`，含 §8 训练期诊断）：Final=**79.43**、AvgAcc=**81.99**、Forgetting=**7.08**；两次均值 79.54 / 82.05 / 6.87，AvgAcc 仍低于门槛 82.30（差约 0.25）。
+  - 训练期诊断：task1 首 epoch 历史分支 dL/dA≈5.3e3–5.6e3、当前分支≈3.0e3–3.6e3（ratio≈1.5–1.9），确认 live A 收到历史 bank 梯度；每任务保存日志含 G/A/B/scale 范数。
+  - 产物：LoRA 368,640 + 原型 153,600 = 522,240（14.17%）；一致性 PASS（feature 8.3e-6 / logit 3.3e-7）。
+- 结论：**Live-A 机制验证成功**（Final 两次均超过 EXP-009/gauge，Forgetting 为变体中最优，状态 O(1)），但单 seed INR AvgAcc 未达任务书门槛（82.0–82.1 vs 82.30），严格按任务书不进入 C100；需与用户确认是否继续（如放宽门槛、增加 seed、或实现 K-group）。

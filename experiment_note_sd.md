@@ -582,6 +582,12 @@
 - **复跑**：`live_a_aggregate_b_inr_seed1995_diag2` 完整运行中（每 epoch 首 batch 日志为早期版本，已限制为首 epoch）。
 - **下一步**：复跑结果出来后再判定 AvgAcc 门槛（单 seed 方差）与 C100。
 
+## 2026-08-07 Live-A INR 复跑（diag2）完成
+
+- 结果：**79.43 / 81.99 / 7.08**；两次运行（79.64/82.10/6.67、79.43/81.99/7.08）均值 79.54 / 82.05 / 6.87。Final 两次均 > EXP-009（79.34）与 gauge（79.06），Forgetting 6.7–7.1 为变体最优；**AvgAcc 82.0–82.1 仍低于任务书门槛 82.30**。
+- 一致性/参数：`verify_sa_consistency` PASS；LoRA 368,640 + 原型 = 522,240（14.17%），无逐任务 B。
+- 判定：严格按 `live_a_aggregate_b_modification_sd.md` §10，INR 未达 AvgAcc 门槛 → 不启动 C100；Live-A 机制本身已验证（历史分支梯度恢复、Final/F 优势、O(1) 状态）。下一步选项交给用户：放宽门槛 / 补 seed / 实现 K-group 幅度组。
+
 ## 2026-08-07 修正后的原型漂移诊断（true frozen base）
 
 - 修复 base-model 原地修改 bug 后重跑（INR seed1995，gauge 产物）：

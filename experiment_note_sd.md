@@ -596,3 +596,11 @@
   - **true frozen base ViT + base 原型：63.35**（旧结论 79.43 作废）
   - base-vs-final 原型余弦：mean=0.831（0.678–0.945）
 - 判断：merged backbone 明显优于冻结 base（+16 分），说明 LoRA 适应有效；原型坐标过期只贡献 +0.37，不是主瓶颈；旧“base=final、cosine=1.0”结论因脚本 bug 无效。
+
+## 2026-08-07 Live-A Stage A：CIFAR-100 seed1993 通过
+
+- 用户新目标 `goal_live_a_sd.md` 将 Stage A 改为直接运行 CIFAR-100 seed1993（不再被 INR AvgAcc 门槛阻塞）。
+- 20:05 启动 4 卡 DDP（`exps/live_a_aggregate_b_c100_seed1993.json`，20:50 exit=0），全量测试 81 passed。
+- 结果：**88.32 / 91.99 / 8.19**（Final ≥88.10 ✓、AvgAcc ≥91.70 ✓、Forgetting ≤8.70 ✓）。产物 LoRA 368,640 + 原型 76,800 = 445,440；无逐任务 B；`verify_sa_consistency` PASS（feature 7.9e-6 / logit 2.7e-7）。
+- 对照：EXP-009 88.42/92.07/8.08；SD-LoRA 86.89/91.44/5.58。Live-A C100 单 seed 全面达到 Stage A 门槛。
+- 下一步：Stage B 多 seed 配对。已有 EXP-009 INR/C100 × 4 seeds；Live-A 需补 seed1/2/3（INR+C100）；SD-LoRA 需补 seed1/2/3（INR+C100）。

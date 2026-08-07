@@ -545,3 +545,20 @@
   - 训练期诊断：task1 首 epoch 历史分支 dL/dA≈5.3e3–5.6e3、当前分支≈3.0e3–3.6e3（ratio≈1.5–1.9），确认 live A 收到历史 bank 梯度；每任务保存日志含 G/A/B/scale 范数。
   - 产物：LoRA 368,640 + 原型 153,600 = 522,240（14.17%）；一致性 PASS（feature 8.3e-6 / logit 3.3e-7）。
 - 结论：**Live-A 机制验证成功**（Final 两次均超过 EXP-009/gauge，Forgetting 为变体中最优，状态 O(1)），但单 seed INR AvgAcc 未达任务书门槛（82.0–82.1 vs 82.30），严格按任务书不进入 C100；需与用户确认是否继续（如放宽门槛、增加 seed、或实现 K-group）。
+
+## EXP-024 Live-A Aggregate-B Stage A（CIFAR-100 seed1993）
+
+- 日期：2026-08-07
+- 状态：完成
+- 背景：用户 2026-08-07 新目标（`goal_live_a_sd.md`）调整顺序——不再以 INR AvgAcc 门槛阻塞 C100，Stage A 直接运行 Live-A Aggregate-B 的 CIFAR-100 seed1993，不新增模块、不调超参。
+- 配置：`exps/live_a_aggregate_b_c100_seed1993.json`（与 INR 相同的 v4 聚合，T=10，rank10，prototype 分类器，4 卡 DDP，20 epochs）。日志 `live_a_aggregate_b_c100_seed1993.log`，产物 `CF100_LIVE_A_AGGREGATE_B_SEED1993/`。
+- 结果（CIFAR-100 seed1993）：Final Top1=**88.32**、AvgAcc=**91.99**、Forgetting=**8.19**；曲线 `[98.30, 96.20, 94.53, 93.82, 92.10, 90.62, 90.70, 87.98, 87.28, 88.32]`。
+- 门槛判定（Stage A）：
+  - Final `88.32 >= 88.10` ✓
+  - AvgAcc `91.99 >= 91.70` ✓
+  - Forgetting `8.19 <= 8.70` ✓
+  - consistency audit PASS（feature 7.9e-6、logit 2.7e-7）✓
+  - LoRA 参数 `368,640`（10.00%，与任务数无关）✓；含原型 `445,440`（12.08%）✓
+  - 无逐任务 B、无旧数据、无 task-id 推理 ✓
+- 对照：EXP-009（sa_sdlora_proto seed1993）88.42 / 92.07 / 8.08；原始 SD-LoRA（proto baseline seed1993）86.89 / 91.44 / 5.58。Live-A Final 高于 SD-LoRA +1.43，相对 EXP-009 -0.10；AvgAcc 相对 EXP-009 -0.08，Forgetting +0.11。
+- 结论：**Stage A 通过**。Live-A 在第二数据集上满足全部单 seed 门槛，进入 Stage B 多 seed 配对验证（ImageNet-R/CIFAR-100 × 至少 4 个相同 seed 的 Live-A、EXP-009、原始 SD-LoRA）。

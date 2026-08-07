@@ -541,3 +541,18 @@
 
 - v2 cumulative+gauge = **3,415.9 MiB**；v1 EXP-009（5 个历史 B）= **7,850.7 MiB**。
 - T10 与 T5 对比：v2 恒定 ~3.4 GiB，v1 随 T 增长（5→7.9 GiB，10→12.3 GiB），与 O(T) bank 设计一致。
+
+## 2026-08-07 训练步峰值显存（T=20，INR seed1995）
+
+- v2 cumulative+gauge = **3,415.9 MiB**（与 T5/T10 相同，O(1) 验证）；v1 EXP-009 T20 的测量因 GPU 被 P1 队列占用触发 OOM，待队列结束后补测（预计 ~16.5–17 GiB）。
+
+## 2026-08-07 Live-A Aggregate-B 启动（用户新任务书）
+
+- **优先级**：`live_a_aggregate_b_modification_sd.md` 高于 `protected_union_modification_sd.md`。核心判断：cumulative+gauge 相对 EXP-009 的损失主要来自在线折叠删除了历史分支梯度、共享 A 协同更新和历史 scale 调整，而不是 SVD 没保护新方向。
+- **方案**：Live-A Aggregate-B——历史 bank 精确聚合为 `G = sum_i s_i B_i/||B_i||`，训练期历史分支 `G A_t x / ||A_t||` 使用**可训练**的共享 A（与 EXP-009 对 A 的梯度严格等价）；保存时 `G_t = G_{t-1} + s_t B_t/||B_t||`；不保存逐任务 B，状态 O(1)。
+- **已完成（队列运行期间，未触碰训练代码）**：
+  - 修复 `scripts/diagnose_prototype_drift.py` 的 base-model 原地修改 bug（commit `7d15db6`）；真实 base 诊断待队列结束、GPU 空闲后重跑。
+  - 新增 `scripts/migrate_sa_v1_to_live_a_aggregate.py`（commit `549cd71`）：离线把 EXP-009 v1 转为 aggregate G。INR feature diff 8.6e-6 / logit 2.4e-7、C100 feature diff 8.0e-6 / logit 2.6e-7，**离线无损聚合验证 PASS**（≤1e-5）。
+  - 新增 freeze-old-scale / live-a-aggregate-b 的 INR/C100 配置与 INR 队列脚本（commit `661c19f`）。
+- **约束**：`run_p1_tasklen_baselines.sh` 未结束，未修改 `backbone/`、`models/`、`utils/`；代码实现须等队列完全结束后开始。
+- **下一步**：等待队列 → 实现 `live_a_aggregate_b` 模式（v4 artifact）+ `sa_freeze_old_scales` 消融 → bank-to-aggregate 梯度等价测试 → INR seed1995 两档实验。

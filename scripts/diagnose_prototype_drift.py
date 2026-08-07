@@ -19,6 +19,7 @@ Decision rule (from next_improvement_sd.md):
 """
 
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
@@ -32,7 +33,7 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backbone.linears import PrototypeCosineHead
-from scripts.evaluate_sa_sdlora import build_merged_backbone
+from scripts.evaluate_sa_sdlora import _MergedQKV, build_merged_backbone
 from utils.data_manager import DataManager
 
 
@@ -120,10 +121,22 @@ def main():
         "vit_base_patch16_224", pretrained=True, num_classes=0
     ).to(device)
     base_model.eval()
+    # build_merged_backbone mutates its input in place; use a separate copy so
+    # the "frozen base" backbone is a true unmodified ViT (P0 diagnostic fix).
+    merged_base = copy.deepcopy(base_model).to(device)
+    assert merged_base is not base_model
 
     merged_path = Path(cli.artifact) / "sa_merged_lora.pt"
     merged_state = torch.load(merged_path, map_location=device, weights_only=True)
-    backbone = build_merged_backbone(base_model, merged_state).to(device)
+    backbone = build_merged_backbone(merged_base, merged_state).to(device)
+    for blk in base_model.blocks:
+        assert not isinstance(blk.attn.qkv, _MergedQKV), (
+            "base_model must remain a true frozen base (no merged LoRA)"
+        )
+    for blk in backbone.blocks:
+        assert isinstance(blk.attn.qkv, _MergedQKV), (
+            "merged backbone must contain _MergedQKV wrappers"
+        )
 
     stored_path = Path(cli.artifact) / "sa_prototypes.pt"
     stored = torch.load(stored_path, map_location="cpu", weights_only=True)

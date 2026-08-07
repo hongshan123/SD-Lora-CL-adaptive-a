@@ -6,7 +6,7 @@ Online Gauge-Aligned Cumulative Shared-A LoRA for Rehearsal-Free Class-Increment
 
 ## Abstract
 
-Spine 压缩：问题（无回放 CIL 中 LoRA 状态线性增长 + 共享 A 漂移）→ 方法（累计折叠 + canonical QR + 闭式 gauge alignment + 单模型）→ 结果（状态减 85.8%/87.9%、与 EXP-009 无显著差异、CUB +8.04、诊断 ~1e-8）→ 边界（外部基线未复现）。
+Spine 压缩：问题（无回放 CIL 中 LoRA 状态线性增长 + 共享 A 漂移）→ 方法（累计折叠 + canonical QR + 闭式 gauge alignment + 单模型）→ 结果（状态减 85.8%/87.9%、INR 小幅显著代价 / C100 无显著差异、CUB +8.04、诊断待 pre-save 重跑）→ 边界（外部基线未复现）。
 
 ## Introduction
 
@@ -35,7 +35,7 @@ Spine 压缩：问题（无回放 CIL 中 LoRA 状态线性增长 + 共享 A 漂
 ## Discussion
 
 - 机制解释：A 保持行空间（诊断 ~1e-8）→ gauge 精确保持历史算子；CUB 上 v1 重归一化损害更大。
-- 与 EXP-009 的关系：统计等价 + 压缩；不是精度超越（除 CUB 单 seed）。
+- 与 EXP-009 的关系：INR Final/AvgAcc 小幅显著下降（-0.65/-0.52），C100 无显著差异，Forgetting 不变；贡献是压缩而非精度提升（除 CUB 单 seed）。
 - 与相关工作的边界（CIT 表）：不主张"首个 prototype 补偿"或"全面优于 SD-LoRA"。
 
 ## Limitations
@@ -44,4 +44,4 @@ Spine 压缩：问题（无回放 CIL 中 LoRA 状态线性增长 + 共享 A 漂
 
 ## Conclusion
 
-O(1) 状态 + 统计等价的精度；主张以状态效率为核心。
+O(1) 状态 + 量化到 0.5 个点以内的小幅精度代价（INR）；主张以状态效率为核心，不宣称统计等价。

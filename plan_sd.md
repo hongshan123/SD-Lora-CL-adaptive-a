@@ -141,7 +141,7 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - **Phase C（gauge alignment）**：完整 INR 已跑两档——cumulative-only 78.78/81.69/7.28（触发停止线，口径检查确认为无 gauge 的固有失真）；cumulative+gauge 79.06/81.77/6.82（Final ≥78.76 ✓、Forgetting 较 EXP-009 -0.44、AvgAcc 仍低 0.70）。保存时 QR canonicalization + `H_old_aligned = H_old Q_old^T Q_new` + 每任务残差/基底旋转/算子保持日志已落地；`cumulative_gauge=false` 消融可用。
 - **Phase D（residual LRPT）**：rank-10/bias/λ=1 默认值，不继续扫 rank/damping。
 - **单 seed 筛选**：已完成——INR cumulative-only（78.78，停止线已查）、INR cumulative+gauge（79.06）、gauge+LRPT INR（78.49，LRPT 降为消融）、C100 cumulative+gauge（87.70）。**双数据集最低验收线达成**（INR 79.06 ≥78.76、C100 87.70 ≥86.89、状态减 ≥85%、单模型推理）。
-- **多 seed**：全部完成——主方法 INR 78.46±0.51 / 82.28±0.47 / 7.86±1.35、C100 87.83±0.13 / 91.52±0.30 / 8.68±0.20；EXP-009 配对检验无显著差异（Final p≥0.117、AvgAcc p≥0.158、F p≥0.862/0.968），LoRA 参数 -81.7%。下一步：任务长度/CUB/GPU 测量 → 论文回填。
+- **多 seed**：全部完成——主方法 INR 78.46±0.51 / 82.28±0.47 / 7.86±1.35、C100 87.83±0.13 / 91.52±0.30 / 8.68±0.20；EXP-009 seed 正确配对后：INR Final/AvgAcc 显著小幅下降（p=0.026/0.009），C100 不显著，Forgetting 不变；LoRA 参数 -81.7%。下一步：任务长度/CUB/GPU 测量 → 论文回填（已完成，论文主张按“小幅代价 + O(1) 状态”表述）。
 
 ## 8. 论文准备清单（对应 method_revision_sd.md §11）
 

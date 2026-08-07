@@ -12,7 +12,7 @@
 
 ## Core claim
 
-在 Shared-A 持续训练设定下，历史 LoRA 分支可精确折叠为单一累计上投影（Phase A 等价误差 <1e-5），任务结束时用闭式 gauge alignment（`H_aligned = H_old Q_old^T Q_new`）保持历史有效算子；最终持久 LoRA 状态与任务数无关（371,040 = SD-LoRA 的 10.07%），且与上一代方法（EXP-009，2,027,530 参数）在多 seed 下无统计显著差异（p≥0.117），在细粒度 CUB-200 上显著更优（Final +8.04）。
+在 Shared-A 持续训练设定下，历史 LoRA 分支可精确折叠为单一累计上投影（Phase A 等价误差 <1e-5），任务结束时用闭式 gauge alignment（`H_aligned = H_old Q_old^T Q_new`）保持历史有效算子；最终持久 LoRA 状态与任务数无关（371,040 = SD-LoRA 的 10.07%）。相对上一代方法（EXP-009，2,027,530 参数），seed 正确配对后 ImageNet-R Final/AvgAcc 有小幅显著下降（-0.65/-0.52），CIFAR-100 无显著差异，Forgetting 无显著变化；在细粒度 CUB-200 上显著更优（Final +8.04，单 seed）。
 
 ## Method summary
 
@@ -24,7 +24,7 @@
 ## Acceptance / verification (from method_revision_sd.md)
 
 - 最低线：INR Final ≥78.76、C100 Final ≥86.89、含 prototype 状态相对 SD-LoRA 减 ≥80%、单模型推理、恢复训练无需历史 B bank。
-- 实测：INR seed1995 79.06、C100 seed1993 87.70、状态减 85.77%/87.85%；多 seed 与 EXP-009 无显著差异。
+- 实测：INR seed1995 79.06、C100 seed1993 87.70、状态减 85.77%/87.85%；多 seed 相对 EXP-009：INR 小幅显著下降，C100 无显著差异，Forgetting 无显著变化。
 - 论文 §11 数据齐备度：多 seed（4×2）、任务长度（T=5/10/20/40）、额外数据集（CUB-200）、效率测量（FLOPs/吞吐/显存）、一致性审计、相关性分析。
 
 ## Status

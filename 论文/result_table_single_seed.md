@@ -52,7 +52,14 @@
 | cumulative+gauge（4 seeds） | CIFAR-100 | 87.83±0.13 | 91.52±0.30 | 8.68±0.20 |
 | EXP-009（4 seeds） | CIFAR-100 | 88.05±0.27 | 91.63±0.36 | 8.67±0.47 |
 
-配对 t 检验（main − EXP-009，n=4）：INR Final -0.65（p=0.117）、AvgAcc -0.52（p=0.158）、Forgetting -0.04（p=0.862）；C100 Final -0.22（p=0.182）、AvgAcc -0.12（p=0.296）、Forgetting +0.01（p=0.968）。无显著差异；LoRA 371,040 vs 2,027,530（-81.7%）。
+配对 t 检验（main − EXP-009，n=4，按 seed 内连接配对；脚本 `scripts/multiseed_stats.py`）：
+
+| 数据集 | ΔFinal (p) | ΔAvgAcc (p) | ΔForgetting (p) |
+| --- | ---: | ---: | ---: |
+| ImageNet-R | -0.65（0.0256） | -0.52（0.0086） | -0.04（0.8521） |
+| CIFAR-100 | -0.22（0.2815） | -0.12（0.1469） | +0.01（0.9375） |
+
+TOST（±0.5）：INR Final/AvgAcc 不等价，Forgetting 等价；C100 Final 不等价，AvgAcc/Forgetting 等价。结论：不能写“统计等价”；INR 存在约 0.5–0.65 个点的显著精度代价。LoRA 371,040 vs 2,027,530（-81.7%）。
 
 ## 额外数据集（2026-08-07 补）
 

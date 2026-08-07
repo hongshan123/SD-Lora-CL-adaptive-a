@@ -2,7 +2,7 @@
 
 | Row ID | Manuscript Unit | Planned Function | Research-Spine Link | Literature/Exemplar Pattern | Evidence/Citation Anchor | Planned Text Move | Claim Boundary | Final Check |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| R01 | Abstract | 压缩全文主张 | 问题→方法→结果 | CIT-01-05 的摘要句式 | C1-C5 | 先给问题与数字，再给方法一句话 | 仅声称状态效率与统计等价 | 与正文数字一致 |
+| R01 | Abstract | 压缩全文主张 | 问题→方法→结果 | CIT-01-05 的摘要句式 | C1-C5 | 先给问题与数字，再给方法一句话 | 仅声称状态效率与量化的精度代价，不声称统计等价 | 与正文数字一致 |
 | R02 | Intro ¶1 | 建立问题 | 无回放 CIL + LoRA | CIT-01 | E-INR-BASE | 基线数字 | 不泛化到所有 CIL | 数字准确 |
 | R03 | Intro ¶2 | 综述分类 | 三类现有方法 | CIT-03-14 | — | 分组叙述 | 不穷举 | 引文库复核 |
 | R04 | Intro ¶3 | Gap | 累计代数结构未用 | CIT-02,05,10 | C1-C2 | 直接指出 | 只在 Shared-A 设定 | — |

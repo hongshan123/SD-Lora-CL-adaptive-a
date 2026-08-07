@@ -33,8 +33,10 @@
 | E-MULTI-INR-BASE | EXP-009 | 79.11±0.40 | 82.80±0.49 | 7.90±1.16 |
 | E-MULTI-C100-MAIN | cumulative+gauge | 87.83±0.13 | 91.52±0.30 | 8.68±0.20 |
 | E-MULTI-C100-BASE | EXP-009 | 88.05±0.27 | 91.63±0.36 | 8.67±0.47 |
-| E-PAIR-INR | paired Δ（main−base, n=4） | -0.65（p=0.117） | -0.52（p=0.158） | -0.04（p=0.862） |
-| E-PAIR-C100 | paired Δ | -0.22（p=0.182） | -0.12（p=0.296） | +0.01（p=0.968） |
+| E-PAIR-INR | paired Δ（main−base, n=4，seed 内连接） | -0.65（p=0.0256；95%CI [-1.15,-0.15]；dz=-2.07） | -0.52（p=0.0086；95%CI [-0.79,-0.25]；dz=-3.09） | -0.04（p=0.8521；95%CI [-0.63,0.55]；dz=-0.10） |
+| E-PAIR-C100 | paired Δ（n=4，seed 内连接） | -0.22（p=0.2815；95%CI [-0.75,0.31]；dz=-0.66） | -0.12（p=0.1469；95%CI [-0.31,0.08]；dz=-0.97） | +0.01（p=0.9375；95%CI [-0.51,0.53]；dz=+0.04） |
+
+TOST（±0.5 margin, α=0.05）：INR Final/AvgAcc 不等价（p_upper=0.0026/0.0006，p_lower=0.7976/0.5952）；INR Forgetting 等价（p_upper=0.0315，p_lower=0.0445）；C100 Final 不等价（p_upper=0.0117，p_lower=0.0970）；C100 AvgAcc/Forgetting 等价。
 
 ## E-TL（任务长度，seed1995/1993，cumulative+gauge）
 

@@ -4,7 +4,7 @@
 
 ## Abstract
 
-Rehearsal-free class-incremental learning (CIL) with low-rank adapters faces two coupled problems: the persistent adapter state grows linearly with the number of tasks, and a continuously updated shared down-projection $A$ drifts the historical LoRA operators that old prototypes depend on. We show that, in a shared-$A$ SD-LoRA setup, the entire historical bank of up-projections can be folded into a single cumulative matrix $H$ with an exactness below $10^{-5}$ (C1). When $A$ is re-canonicalized after each task with a thin QR decomposition $A^T = QR$, the historical effective operator $H_{\mathrm{old}} Q_{\mathrm{old}}^T$ is preserved in closed form by gauge alignment $H_{\mathrm{aligned}} = H_{\mathrm{old}}(Q_{\mathrm{old}}^T Q_{\mathrm{new}})$ (C2). The resulting persistent LoRA state is independent of the number of tasks: 371,040 parameters ($10.1\%$ of SD-LoRA's 3.69M) measured identically at $T=5,10,20,40$ (C3), with single-model inference, no task id/router, and no need to restore historical $B$ banks (C4). Across four seeds on ImageNet-R and CIFAR-100, the method is statistically indistinguishable from our prior Shared-A + prototype system (all paired $p \ge 0.117$) while removing $81.7\%$ of LoRA parameters (C5). On the fine-grained CUB-200-2011 benchmark it outperforms that system by $+8.04$ Final Top-1 (single seed; C6). Inference FLOPs/throughput/peak memory are identical to the merged legacy model (C7). Per-task gauge diagnostics show projection residual, basis rotation, and operator-preservation errors at the $10^{-8}$ scale, indicating the historical operator is preserved almost exactly (C2).
+Rehearsal-free class-incremental learning (CIL) with low-rank adapters faces two coupled problems: the persistent adapter state grows linearly with the number of tasks, and a continuously updated shared down-projection $A$ drifts the historical LoRA operators that old prototypes depend on. We show that, in a shared-$A$ SD-LoRA setup, the entire historical bank of up-projections can be folded into a single cumulative matrix $H$ with an exactness below $10^{-5}$ (C1). When $A$ is re-canonicalized after each task with a thin QR decomposition $A^T = QR$, the historical effective operator $H_{\mathrm{old}} Q_{\mathrm{old}}^T$ is preserved in closed form by gauge alignment $H_{\mathrm{aligned}} = H_{\mathrm{old}}(Q_{\mathrm{old}}^T Q_{\mathrm{new}})$ (C2). The resulting persistent LoRA state is independent of the number of tasks: 371,040 parameters ($10.1\%$ of SD-LoRA's 3.69M) measured identically at $T=5,10,20,40$ (C3), with single-model inference, no task id/router, and no need to restore historical $B$ banks (C4). Across four seeds, removing $81.7\%$ of LoRA parameters costs $-0.65$ Final Top-1 ($p=0.026$) and $-0.52$ AvgAcc ($p=0.009$) on ImageNet-R relative to our prior Shared-A + prototype system, while CIFAR-100 differences are not significant (Final $p=0.28$, AvgAcc $p=0.15$) and Forgetting is unchanged on both datasets (C5). On the fine-grained CUB-200-2011 benchmark it outperforms that system by $+8.04$ Final Top-1 (single seed; C6). Inference FLOPs/throughput/peak memory are identical to the merged legacy model (C7). Per-task gauge diagnostics of the historical operator require a pre-save diagnostic rerun (`TODO_VERIFY`, P0-2); the algebra in C1--C2 is exact under the repository's normalization convention (C2).
 
 ## 1 Introduction
 
@@ -74,10 +74,10 @@ Single-seed main protocol:
 Four-seed paired comparison (same seeds, paired t-test, $n=4$):
 | Dataset | ΔFinal (p) | ΔAvgAcc (p) | ΔForgetting (p) |
 | --- | ---: | ---: | ---: |
-| ImageNet-R | -0.65 (0.117) | -0.52 (0.158) | -0.04 (0.862) |
-| CIFAR-100 | -0.22 (0.182) | -0.12 (0.296) | +0.01 (0.968) |
+| ImageNet-R | -0.65 (0.026) | -0.52 (0.009) | -0.04 (0.852) |
+| CIFAR-100 | -0.22 (0.282) | -0.12 (0.147) | +0.01 (0.938) |
 
-Conclusion (C5): the method is statistically indistinguishable from EXP-009 on all metrics while removing $81.7\%$ of LoRA parameters (E-PARAMS).
+Conclusion (C5): seed-joined pairing shows a statistically significant small deficit on ImageNet-R Final/AvgAcc; CIFAR-100 is not significant, but TOST with a $\pm 0.5$ margin is not met for ImageNet-R Final/AvgAcc or CIFAR-100 Final. The honest claim is a large state reduction ($-81.7\%$ LoRA) at a small, quantified accuracy cost, not statistical equivalence (E-PARAMS).
 
 ### 4.3 Efficiency
 - Persistent state vs $T$: v1 bank = $184,320 + T\times184,320 + T$ scales; v2 = constant 371,040 (measured at $T=5,10,20,40$, E-PARAMS-T/E-TL).
@@ -118,24 +118,24 @@ Interpretation. The shared $A$ remains essentially inside its initial row space 
 
 Relation to our prior system. On ImageNet-R/CIFAR-100 the method is statistically equivalent to EXP-009 (C5); its contribution is the 86% state reduction and O(1) memory, not an accuracy gain. We do not claim universal superiority over SD-LoRA or prior drift-compensation methods; CUB is single-seed and external baselines (InfLoRA/CL-LoRA/LoRA-DRS/DGS) were not re-implemented (CIT-06/03/13/14).
 
-Speculation (clearly separated). If $A$ ever leaves its row space substantially (e.g., larger ranks or different optimizers), the projection residual would grow and gauge alignment alone would no longer preserve the historical operator; the recorded diagnostics would flag this. We did not observe this regime.
+Speculation (clearly separated). If $A$ ever leaves its row space substantially (e.g., larger ranks or different optimizers), the projection residual would grow and gauge alignment alone would no longer preserve the historical operator; correctly computed pre-save diagnostics would flag this. The logs written before the P0-2 fix compared the new state with itself and are therefore not valid evidence about this regime (`TODO_VERIFY`).
 
 ## 6 Limitations
 
 - External strong baselines are not reproduced; all comparisons are internal (SD-LoRA and our previous systems).
 - CUB-200 result is single-seed; multi-seed CUB and ImageNet-A/DomainNet are not included.
 - At $T=40$ forgetting reaches 12.34 (INR); the method does not solve long-horizon forgetting by itself.
-- Per-task gauge diagnostics have near-zero variance and are therefore not useful as forgetting predictors; the correlation analysis is descriptive, not causal.
+- Per-task gauge diagnostics have near-zero variance and are therefore not useful as forgetting predictors; the correlation analysis is descriptive, not causal. Note: diagnostic logs before P0-2 were computed after the state was overwritten and must not be cited as mechanism evidence.
 - Training-time peak memory includes the temporary current $B$ and QR factors; these are reported separately from the persistent budget (not fully tabulated yet: `TODO_EVIDENCE` training peak memory).
 - The exactness claims (C1) hold under the repository's normalization convention; they are not claims about arbitrary LoRA implementations.
 
 ## 7 Conclusion
 
-We presented an online gauge-aligned cumulative Shared-A LoRA framework for rehearsal-free CIL. It folds all historical up-projections into one cumulative matrix, preserves the historical effective operator in closed form as the shared down-projection evolves, and reduces persistent LoRA state to 10.1% of SD-LoRA independent of task count, with no statistically significant accuracy or forgetting difference from our previous system across four seeds, and a large gain on fine-grained CUB-200 (single seed). The framework provides a principled, measurable path from task-dependent adapter banks to O(1) state in continual low-rank adaptation.
+We presented an online gauge-aligned cumulative Shared-A LoRA framework for rehearsal-free CIL. It folds all historical up-projections into one cumulative matrix, preserves the historical effective operator in closed form as the shared down-projection evolves, and reduces persistent LoRA state to 10.1% of SD-LoRA independent of task count. Across four seeds the price relative to our previous system is a statistically significant but small deficit on ImageNet-R Final/AvgAcc ($-0.65$/$-0.52$) and no significant difference on CIFAR-100 or Forgetting, with a large single-seed gain on fine-grained CUB-200. The framework provides a principled, measurable path from task-dependent adapter banks to O(1) state in continual low-rank adaptation.
 
 ## References
 
-- CIT-01 SD-LoRA (ICLR 2025). `TODO_CITATION` exact proceedings/arXiv.
+- CIT-01 SD-LoRA (ICLR 2025), "Scalable Decoupled Low-Rank Adaptation for Class Incremental Learning", OpenReview 5u1rlpx68a.
 - CIT-02 SA-LoRA, J. King Saud Univ. Comput. Inf. Sci. 2026, s44443-026-00925-x.
 - CIT-03 CL-LoRA, CVPR 2025, arXiv:2505.24816.
 - CIT-04 RanPAC, NeurIPS 2023, arXiv:2307.02251.
@@ -143,12 +143,12 @@ We presented an online gauge-aligned cumulative Shared-A LoRA framework for rehe
 - CIT-06 InfLoRA, CVPR 2024, arXiv:2404.00228.
 - CIT-07 FM-LoRA, CVPR 2025 Workshop DG-EBF, arXiv:2504.08823.
 - CIT-08 C-LoRA, arXiv:2502.17920.
-- CIT-09 EASE, CVPR 2024. `TODO_CITATION`
-- CIT-10 E2-LoRA. `TODO_CITATION`
-- CIT-11 Janus-LoRA. `TODO_CITATION`
-- CIT-12 Balanced LoRA. `TODO_CITATION`
-- CIT-13 LoRA-DRS, CVPR 2025. `TODO_CITATION`
-- CIT-14 DGS. `TODO_CITATION`
-- CIT-15 ICLR 2026 Two-Way Alignment. `TODO_CITATION`
+- CIT-09 EASE, CVPR 2024, arXiv:2403.12030.
+- CIT-10 E2-LoRA, ICML 2026, arXiv:2605.27482.
+- CIT-11 Janus-LoRA, ICML 2026, arXiv:2605.28495.
+- CIT-12 Balanced LoRA (BaLoRA), ICML 2026. `TODO_CITATION` arXiv ID.
+- CIT-13 LoRA-DRS, CVPR 2025, arXiv:2503.18985.
+- CIT-14 DGS, CVPR 2026. `TODO_CITATION` arXiv ID.
+- CIT-15 ICLR 2026 Two-Way Alignment (BiCyc), arXiv:2606.05675.
 - CIT-16 CT-Merging, arXiv:2607.20561. `TODO_VERIFY`
 - CIT-17 Subspace-Boosted Model Merging, arXiv:2506.16506. `TODO_VERIFY`

@@ -444,9 +444,9 @@
 ## 2026-08-07 07:17 EXP-009 对照队列完成，配对显著性结论
 
 - **EXP-009 多 seed**：INR 1/2/3 = 78.98/79.51/78.61（1995=79.34）；C100 1/2/3 = 87.82/87.90/88.07（1993=88.42）。
-- **配对检验**（main − EXP-009，n=4）：INR Final -0.65（p=0.117）、AvgAcc -0.52（p=0.158）、Forgetting -0.04（p=0.862）；C100 Final -0.22（p=0.182）、AvgAcc -0.12（p=0.296）、Forgetting +0.01（p=0.968）。**全部无显著差异**。
+- **配对检验（2026-08-07 修订）**：早期按文件名字典序 zip 的错误配对已废弃。`scripts/multiseed_stats.py` 改为按 seed 内连接后重算（n=4）：INR Final -0.65（p=0.026）、AvgAcc -0.52（p=0.009）、Forgetting -0.04（p=0.852）；C100 Final -0.22（p=0.282）、AvgAcc -0.12（p=0.147）、Forgetting +0.01（p=0.938）。**INR Final/AvgAcc 显著，其余不显著**。
 - **参数**：LoRA 371,040 vs 2,027,530（-81.7%）；含原型相对 SD-LoRA 减 85.8%（INR）/87.9%（C100）。
-- **判断**：主方法与上一代 EXP-009 统计等价（精度/遗忘不变），换取 O(1) 持久状态与 ~82% LoRA 压缩；这是论文的诚实主张。seed1995 单点最低线仍满足（79.06）。
+- **判断**：主方法相对 EXP-009 在 INR 上有约 0.5–0.65 个点的显著精度代价，C100 与 Forgetting 无显著变化；论文主张改为“O(1) 持久状态 + ~82% LoRA 压缩 + 量化的小幅精度代价”，不再宣称统计等价。seed1995 单点最低线仍满足（79.06）。
 - **下一步**：GPU 空闲——跑任务长度 T=5/20/40 与 CUB；随后 GPU FLOPs/吞吐/显存测量；回填论文。
 
 ## 2026-08-07 10:42 任务长度消融完成，CUB 启动
@@ -466,7 +466,7 @@
 ## 2026-08-07 12:00 论文首稿完成
 
 - **产出**：按 research-architect-draft 规范建立 `paper_output/` 全套构件（spine/evidence/claim/citation/blueprints/rationale），并完成 `first_draft/main.md` 首稿（摘要、引言、相关工作、方法、实验、讨论、局限、结论、参考文献）；commit `3b9b4d6`。
-- **主张边界**：主主张是 O(1) 状态 + 与 EXP-009 统计等价（p≥0.117）+ CUB 单 seed +8.04；不主张全面超越 SD-LoRA 或外部方法。
+- **主张边界（2026-08-07 修订）**：主主张是 O(1) 状态 + ~82% LoRA 压缩 + 小幅、量化的精度代价（INR Final/AvgAcc 显著，C100 与 Forgetting 不显著）+ CUB 单 seed +8.04；不主张统计等价，也不主张全面超越 SD-LoRA 或外部方法。
 - **TODO**：引用核实（5+ 条）、训练峰值显存表、图与 LaTeX、可选 CUB 多 seed / ImageNet-A / 外部基线。
 
 ## 2026-08-06 23:00 诊断-遗忘相关性初算与诊断精度修正
@@ -480,3 +480,13 @@
 - **产物核对**：cumulative-only 与 gauge 两档最终状态 Q/H/R 明显不同（operator 相对差 0.95），确认无 gauge 的 H 失真导致参数轨迹分叉，gauge 的改善是真实机制而非日志口径差异。
 - **修正**：gauge 诊断日志从 `%.6f` 改为 `%.6e`（避免 0.000000 掩盖小值），后续运行生效（commit 后）；汇总/相关脚本的数值正则兼容科学计数法。
 - **判断**：operator/gauge 类诊断与每任务遗忘的相关性弱或零方差；论文相关分析章节应如实报告，并保留"历史算子保持"作为机制证据而非遗忘预测器。
+
+## 2026-08-07 P0-1 完成：seed-keyed 配对统计修复
+
+- **问题**：`scripts/multiseed_stats.py` 旧版按文件名字典序 zip 配对，主方法文件顺序（1995,1,2,3）与 EXP-009（1,1995,2,3）不同，前两个 seed 被错配，旧文档 `p=0.117/0.158` 无效。
+- **修复**：脚本重写为从日志 `=> seed:` 显式解析 seed，按 `{seed: metric}` 内连接配对；对缺失/重复/seed 集不一致直接报错；输出逐 pair 明细、paired t、95% CI、Cohen's dz；新增 `--margin` 的 TOST 等价检验（默认 α=0.05）。新增 `tests/test_multiseed_stats.py` 7 个用例（含 1/2/3/1995 词典序陷阱、缺 seed、重复 seed、TOST 边界）；全量 52 passed。
+- **重算结果**（n=4，seed 内连接）：INR Final -0.65（p=0.0256，95%CI [-1.15,-0.15]）、AvgAcc -0.52（p=0.0086，95%CI [-0.79,-0.25]）、Forgetting -0.04（p=0.8521）；C100 Final -0.22（p=0.2815）、AvgAcc -0.12（p=0.1469）、Forgetting +0.01（p=0.9375）。
+- **TOST（±0.5）**：INR Final/AvgAcc 与 C100 Final 不等价；INR Forgetting、C100 AvgAcc/Forgetting 等价。
+- **判断**：INR Final/AvgAcc 是显著小幅下降，论文/实验文档中的“统计等价”“无显著差异（p≥0.117）”全部作废；后续论文主张必须用“O(1) 状态 + 约 0.5–0.65 个点的小幅显著代价（INR）/不显著（C100）+ Forgetting 不变”。
+- **同步文档**：`paper_output/`（abstract、4.2 表、结论、claim C5、evidence E-PAIR、spine、blueprints、rationale）、`论文/result_table_single_seed.md`、`论文/paper_skeleton.md`、`experiment_sd.md`、`plan_sd.md`、`method_revision_sd.md`、本文档均已更新。
+- **下一步**：P0-2 修复 gauge 诊断生命周期（保存前缓存），加单元测试并重跑一个完整 INR seed。

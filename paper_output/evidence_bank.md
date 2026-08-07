@@ -65,6 +65,10 @@ TOST（±0.5 margin, α=0.05）：INR Final/AvgAcc 不等价（p_upper=0.0026/0.
 - 存储训练期原型：79.06；当前骨干重算原型：79.43（+0.37）；冻结 base ViT + base 原型：79.43；base-vs-final 原型余弦均值 1.0000。
 - 判断：原型坐标过期与 backbone 干扰均不主导；不触发 P3 activation sketch。
 
+## E-TRAIN-MEM（训练步峰值显存，INR seed1995，T=10，batch32，合成 forward/backward）
+
+- v2 cumulative+gauge：3,415.9 MiB；v1 EXP-009（10 个历史 B）：12,286.9 MiB（约 3.6× 差距；不含优化器状态与数据加载）。
+
 ## E-TL（任务长度，seed1995/1993，cumulative+gauge）
 
 | ID | 数据集 | T | Final | AvgAcc | Forgetting |

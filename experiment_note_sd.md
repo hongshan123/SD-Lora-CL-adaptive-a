@@ -529,3 +529,10 @@
 - **P1 离线诊断**（`scripts/diagnose_prototype_drift.py`，旧训练数据，仅诊断）：stored prototypes 79.06 → 最终空间重算原型 79.43（+0.37）；冻结 base ViT + base 原型 79.43；base-vs-final 原型余弦 1.0000（归一化原型方向几乎不动）。**结论：原型坐标过期不是主要瓶颈（重算仅 +0.37），backbone 干扰也不主导（base 与 final 同分）**；按 plan 不实现 P3 activation sketch，保留 gauge_r10 作为主方法诚实结果，转入公平任务长度基线与论文收尾。
 - **一致性审计**：union r4/r8/r10 产物 `verify_sa_consistency.py` 全部 PASS（feature/prototype logits diff=0）；参数量 147,840 / 296,448 / 371,040（含原型 301,440 / 450,048 / 524,640）。
 - **下一步**：P1 公平任务长度基线队列运行中（EXP-009 INR T5/T20/T40、C100 T5/T20；SD-LoRA INR T20/T40）；完成后回填任务长度对比表并更新论文。
+
+## 2026-08-07 训练步峰值显存测量（T=10，INR seed1995）
+
+- `scripts/measure_train_peak_memory.py`：合成 batch32 forward/backward（不含优化器/数据加载）。
+- 结果：v2 cumulative+gauge = **3,415.9 MiB**；v1 EXP-009（10 个历史 B bank）= **12,286.9 MiB**（约 3.6× 更低）。
+- 产物大小：gauge 8.3 MB vs EXP-009 14 MB（v1 含 10 个 B 文件）。
+- 判断：v2 的训练期显存/存储优势可量化；T5/T20/T40 的对应测量待 P1 产物完成后补。

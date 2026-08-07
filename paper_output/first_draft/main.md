@@ -82,6 +82,7 @@ Conclusion (C5): seed-joined pairing shows a statistically significant small def
 ### 4.3 Efficiency
 - Persistent state vs $T$: v1 bank = $184,320 + T\times184,320 + T$ scales; v2 = constant 371,040 (measured at $T=5,10,20,40$, E-PARAMS-T/E-TL).
 - Inference (GPU, batch 32): ours and EXP-009 merged both 1.129e12 FLOPs/forward, $\sim413$ img/s, $\sim579$ MiB peak (E-EFF). The training-time forward of v1 iterates all historical branches and slows with $T$; the v2 forward is constant-complexity.
+- Training-step peak GPU memory at $T=10$ (synthetic forward/backward, batch 32, optimizer state excluded): v2 gauge 3,416 MiB vs v1 EXP-009 12,287 MiB (E-TRAIN-MEM).
 
 ### 4.4 Task length
 | Dataset | T=5 | T=10 | T=20 | T=40 |

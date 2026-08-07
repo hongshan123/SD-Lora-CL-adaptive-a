@@ -60,10 +60,10 @@ TOST（±0.5 margin, α=0.05）：INR Final/AvgAcc 不等价（p_upper=0.0026/0.
 
 一致性审计：union r4/r8/r10 `verify_sa_consistency.py` 全部 PASS（diff=0）。
 
-## E-DIAG-PROTO（离线原型漂移诊断，INR seed1995，仅诊断）
+## E-DIAG-PROTO（离线原型漂移诊断，INR seed1995，仅诊断；2026-08-07 修正）
 
-- 存储训练期原型：79.06；当前骨干重算原型：79.43（+0.37）；冻结 base ViT + base 原型：79.43；base-vs-final 原型余弦均值 1.0000。
-- 判断：原型坐标过期与 backbone 干扰均不主导；不触发 P3 activation sketch。
+- 存储训练期原型：79.06；当前骨干重算原型：79.43（+0.37）；**true frozen base ViT + base 原型：63.35**；base-vs-final 原型余弦均值 0.831（0.678–0.945）。
+- 判断：LoRA 适应显著提升特征可分性（+16 分）；原型坐标过期只贡献 +0.37，不是主瓶颈；旧“base=final、cosine=1.0”结论因脚本 base-model 原地修改 bug 无效。
 
 ## E-TRAIN-MEM（训练步峰值显存，INR seed1995，T=10，batch32，合成 forward/backward）
 

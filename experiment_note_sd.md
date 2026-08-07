@@ -572,3 +572,12 @@
 - 结果：exit=0，10 任务完成（Final 64.7 仅管线验证）；产物仅 v4 `sa_state.pt` + merged + CLs，无逐任务 B；LoRA 参数 368,640 = 基线 10.00%。
 - 一致性：`verify_sa_consistency.py` PASS（feature diff 7.2e-6）。
 - 下一步：完整 INR seed1995 两档（freeze-old-scale → live-a-aggregate-b）已启动。
+
+## 2026-08-07 修正后的原型漂移诊断（true frozen base）
+
+- 修复 base-model 原地修改 bug 后重跑（INR seed1995，gauge 产物）：
+  - stored 训练期原型：**79.06**
+  - 最终空间重算原型：**79.43**（+0.37）
+  - **true frozen base ViT + base 原型：63.35**（旧结论 79.43 作废）
+  - base-vs-final 原型余弦：mean=0.831（0.678–0.945）
+- 判断：merged backbone 明显优于冻结 base（+16 分），说明 LoRA 适应有效；原型坐标过期只贡献 +0.37，不是主瓶颈；旧“base=final、cosine=1.0”结论因脚本 bug 无效。

@@ -337,7 +337,7 @@ class Learner(BaseLearner):
             num_batches = 0
             for i, (_, inputs, targets) in enumerate(train_loader):
                 inputs, targets = inputs.to(self._device), targets.to(self._device)
-                if i == 0:
+                if i == 0 and epoch == 0:
                     raw_network = self._raw_network()
                     backbone = raw_network.backbone
                     tokens = backbone.lora_vit.patch_embed(inputs)

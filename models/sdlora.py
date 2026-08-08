@@ -101,18 +101,20 @@ class Learner(BaseLearner):
             else None
         )
         train_generator = None
+        loader_workers = num_workers
         if self.args.get("sa_deterministic_training", False):
             train_generator = torch.Generator()
             train_generator.manual_seed(
                 int(self.args["seed"]) + self._cur_task * 1000 + 1
             )
+            loader_workers = 0
         self.train_loader = DataLoader(
             train_dataset,
             batch_size=self.args["batch_size"],
             shuffle=train_sampler is None,
             sampler=train_sampler,
             generator=train_generator,
-            num_workers=num_workers,
+            num_workers=loader_workers,
             pin_memory=True,
         )
         test_dataset = data_manager.get_dataset(
@@ -125,12 +127,13 @@ class Learner(BaseLearner):
             test_generator.manual_seed(
                 int(self.args["seed"]) + self._cur_task * 1000 + 2
             )
+            loader_workers = 0
         self.test_loader = DataLoader(
             test_dataset,
             batch_size=self.args["batch_size"],
             shuffle=False,
             generator=test_generator,
-            num_workers=num_workers,
+            num_workers=loader_workers,
             pin_memory=True,
         )
 

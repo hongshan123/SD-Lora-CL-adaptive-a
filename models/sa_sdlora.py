@@ -373,7 +373,7 @@ class Learner(SDLoraLearner):
                 self._eval_test_dataset,
                 batch_size=self.args["batch_size"],
                 shuffle=False,
-                num_workers=num_workers,
+                num_workers=self._loader_workers(),
                 seed=0,
             )
             for _, inputs, targets in loader:
@@ -413,6 +413,11 @@ class Learner(SDLoraLearner):
         width = 4.0 / 9.0
         start = 0.0 if self._dual_schedule == "A" else 1.0 / 9.0
         return min(1.0, max(0.0, (progress - start) / width))
+
+    def _loader_workers(self):
+        if self.args.get("sa_deterministic_training", False):
+            return 0
+        return num_workers
 
     @staticmethod
     def _fit_dual_temperature(logits, targets, lo=0.05, hi=5.0, steps=60):
@@ -561,7 +566,7 @@ class Learner(SDLoraLearner):
                 dataset,
                 batch_size=64,
                 shuffle=False,
-                num_workers=num_workers,
+                num_workers=self._loader_workers(),
                 seed=0,
             )
             for _, inputs, batch_targets in loader:
@@ -942,7 +947,7 @@ class Learner(SDLoraLearner):
                 dataset,
                 batch_size=64,
                 shuffle=False,
-                num_workers=num_workers,
+                num_workers=self._loader_workers(),
                 seed=0,
             )
             for _, inputs, targets in loader:

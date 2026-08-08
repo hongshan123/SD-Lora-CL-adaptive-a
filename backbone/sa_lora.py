@@ -625,6 +625,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         cumulative_rank=None,
         freeze_old_scales=False,
         live_a_history_groups=1,
+        resume=False,
     ):
         super().__init__()
         assert r > 0
@@ -661,6 +662,21 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.freeze_old_scales = bool(freeze_old_scales)
         self.live_a_history_groups = int(live_a_history_groups)
         self.save_file = filepath
+        if cur_task_index is not None and cur_task_index == 0:
+            state_path = _join_path(filepath, SA_STATE_FILENAME)
+            manifest_path = _join_path(filepath, "run_manifest.json")
+            if os.path.exists(state_path) and not resume:
+                raise FileExistsError(
+                    "task0 fresh-run guard: {} already exists. "
+                    "Refusing to silently continue from an old Aggregate-B "
+                    "state; pass sa_resume=true together with a run manifest "
+                    "to explicitly recover.".format(state_path)
+                )
+            if resume and not os.path.exists(manifest_path):
+                raise RuntimeError(
+                    "sa_resume=true requires a run_manifest.json in {}; "
+                    "cannot infer the original run metadata".format(filepath)
+                )
         self.increment = increment
         self.shared_a_orthogonal = bool(shared_a_orthogonal)
         self.train_a_all_tasks = bool(train_a_all_tasks)

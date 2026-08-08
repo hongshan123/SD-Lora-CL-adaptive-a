@@ -1,4 +1,5 @@
 import logging
+import hashlib
 import math
 import os
 
@@ -322,8 +323,41 @@ class Learner(SDLoraLearner):
                     raw_network.backbone.cleanup_per_task_files(
                         self.args["filepath"]
                     )
+                    self._log_training_artifact_hash(self._cur_task)
         if self._dual_head:
             self._prepare_dual_head(data_manager, self._raw_network())
+
+    def _log_training_artifact_hash(self, task_id):
+        """Log a deterministic hash of the persisted training-state artifacts.
+
+        This is a diagnostic for the P0 RNG-neutral audit: control and Dual-B
+        runs with the same seed/config must produce identical per-task hashes,
+        proving that dual-head evaluation/calibration does not perturb the
+        next-task training trajectory.
+        """
+        paths = [
+            os.path.join(self.args["filepath"], name)
+            for name in (
+                "sa_state.pt",
+                "sa_merged_lora.pt",
+                "sa_prototypes.pt",
+                "CLs_weight{}.pt".format(task_id),
+                "CLs_bias{}.pt".format(task_id),
+            )
+        ]
+        digest = hashlib.sha256()
+        for path in paths:
+            if not os.path.exists(path):
+                continue
+            digest.update(os.path.basename(path).encode("utf-8"))
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(chunk)
+        logging.info(
+            "[TrajectoryHash] task %d hash=%s",
+            task_id,
+            digest.hexdigest(),
+        )
 
     def eval_task(self):
         if not self._dual_head:

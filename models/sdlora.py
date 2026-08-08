@@ -45,13 +45,19 @@ class Learner(BaseLearner):
     def _wrap_ddp(self):
         if self._is_distributed():
             local_rank = self.args["local_rank"]
+            find_unused_parameters = not self.args.get(
+                "sa_deterministic_training", False
+            )
+            if self.args.get("model_name", "").lower() == "sdlora":
+                # SD-LoRA has LoRA parameters that are genuinely unused on
+                # some DDP ranks; strict DDP reduction cannot succeed without
+                # unused-parameter detection for this baseline.
+                find_unused_parameters = True
             self._network = DDP(
                 self._network,
                 device_ids=[local_rank],
                 output_device=local_rank,
-                find_unused_parameters=not self.args.get(
-                    "sa_deterministic_training", False
-                ),
+                find_unused_parameters=find_unused_parameters,
                 broadcast_buffers=False,
             )
 

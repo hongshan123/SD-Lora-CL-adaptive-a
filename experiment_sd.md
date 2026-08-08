@@ -562,3 +562,31 @@
   - 无逐任务 B、无旧数据、无 task-id 推理 ✓
 - 对照：EXP-009（sa_sdlora_proto seed1993）88.42 / 92.07 / 8.08；原始 SD-LoRA（proto baseline seed1993）86.89 / 91.44 / 5.58。Live-A Final 高于 SD-LoRA +1.43，相对 EXP-009 -0.10；AvgAcc 相对 EXP-009 -0.08，Forgetting +0.11。
 - 结论：**Stage A 通过**。Live-A 在第二数据集上满足全部单 seed 门槛，进入 Stage B 多 seed 配对验证（ImageNet-R/CIFAR-100 × 至少 4 个相同 seed 的 Live-A、EXP-009、原始 SD-LoRA）。
+
+## EXP-025 Stage B 多 seed 配对（Live-A / EXP-009 / SD-LoRA，n=4）
+
+- 日期：2026-08-07/08
+- 状态：完成
+- 配置：`run_stage_b_paired_queue.sh` + `run_stage_b_sdlora_queue.sh`；Live-A 补 seed1/2/3（INR+C100），EXP-009 与 SD-LoRA 均在当前 HEAD 用独立 `*_PAIRED_RERUN*` 目录重跑 4 seeds（INR+C100）。Live-A seed1995/1993 使用当前 HEAD 的现有运行（seed1995 取 diag2 作为规范运行）。统计脚本 `scripts/stage_b_stats.sh`（seed 内连接，paired t-test、95% CI、Cohen's dz、TOST ±0.5），原始输出 `stage_b_stats_output.txt`。
+- 结果（mean±std）：
+  | 数据集 | 方法 | Final | AvgAcc | Forgetting |
+  | --- | --- | ---: | ---: | ---: |
+  | INR | Live-A | 78.94±0.47 | 82.45±0.48 | 7.95±1.10 |
+  | INR | EXP-009 | 79.22±0.57 | 82.82±0.47 | 7.80±1.02 |
+  | INR | SD-LoRA | 78.75±0.50 | 83.42±1.09 | 7.79±1.57 |
+  | C100 | Live-A | 87.95±0.34 | 91.55±0.33 | 8.75±0.58 |
+  | C100 | EXP-009 | 88.04±0.28 | 91.62±0.37 | 8.63±0.53 |
+  | C100 | SD-LoRA | 86.75±0.39 | 91.62±0.24 | 6.27±1.20 |
+- 配对差异（Live-A 减对照）：
+  | 数据集 | 对照 | Final | AvgAcc | Forgetting |
+  | --- | --- | ---: | ---: | ---: |
+  | INR | EXP-009 | -0.285（p=0.194） | **-0.374（p=0.007）** | +0.158（p=0.286） |
+  | INR | SD-LoRA | +0.187（p=0.698） | **-0.973（p=0.070）** | +0.166（p=0.827） |
+  | C100 | EXP-009 | -0.088（p=0.392） | -0.074（p=0.126） | +0.117（p=0.372） |
+  | C100 | SD-LoRA | **+1.202（p=0.003）** | -0.074（p=0.755） | **+2.472（p=0.006）** |
+- TOST（±0.5）：C100 vs EXP-009 三项均等价；INR vs EXP-009 仅 Forgetting 等价；INR/C100 vs SD-LoRA 均不等价（C100 Final 是“显著优于”，INR AvgAcc 与 C100 Forgetting 是“显著劣化”方向）。
+- 门槛判定：
+  - Live-A vs EXP-009：C100 三项通过；INR Final -0.285 擦线通过（≥-0.30），**INR AvgAcc -0.374 < -0.30 未通过**，且 INR Final/AvgAcc 均未高于 EXP-009；“Final 或 AvgAcc 至少一项不低于 EXP-009”未满足。
+  - Live-A vs SD-LoRA：两数据集 Final 平均均不低于 SD-LoRA（INR +0.19、C100 +1.20）；但 **INR AvgAcc 平均下降 0.97（超过 0.5）**，C100 Forgetting 显著恶化 +2.47（必须作为代价报告）。按目标文件不得宣称全面优越。
+  - 参数：Live-A LoRA 368,640（10.00%），含原型 C100 445,440 / INR 522,240，相对 SD-LoRA 3,686,400 减少约 85.8–87.9%；状态与任务数无关。
+- 结论：**Stage B 未完全通过**。Live-A 的固定小状态 Final 优势主要体现于 C100，INR AvgAcc 相对 EXP-009/SD-LoRA 的损失是稳定、结构性的；该结果作为负结果记录，不因单 seed 最优结果调整门槛。按目标文件 §6，若 Final 相对 SD-LoRA 保持优势但 AvgAcc/AAA 低于 SD-LoRA，应进入 Stage B2 evaluation-only 双头诊断。

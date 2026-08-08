@@ -617,3 +617,9 @@
 - 修复：`models/sdlora.py` 增加 `hasattr(backbone, "live_a_gradient_diagnostics")` 保护；全量测试 81 passed。该修复仅影响非 Live-A 模型，Live-A/EXP-009 路径不变。
 - 为避免复用含 task0 部分产物的 rerun1 目录，SD-LoRA 8 个基线配置改为 `*_PAIRED_RERUN2` 独立输出目录；新增 `run_stage_b_sdlora_queue.sh` 只跑这 8 个基线。
 - 下一步：重新启动 SD-LoRA 队列并监控；完成后汇总 Stage B 全部 22+8（实际 14 正常 + 8 重跑）配对结果。
+
+## 2026-08-08 Stage B 配对完成：INR AvgAcc 门槛未过
+
+- SD-LoRA 8 个配对基线（rerun2）全部 exit=0；Live-A/EXP-009 14 个运行此前已完成。`scripts/stage_b_stats.sh` 输出 `stage_b_stats_output.txt`。
+- 汇总：C100 相对 EXP-009 三项通过（TOST ±0.5 等价）；INR 相对 EXP-009 的 AvgAcc 平均差 **-0.374**（p=0.007，未过 -0.30 门槛），Final 平均差 -0.285（擦线）。相对 SD-LoRA：INR Final +0.187、AvgAcc **-0.973**；C100 Final **+1.202**、AvgAcc -0.074、Forgetting **+2.472**。
+- 判定：Stage B 未完全通过；C100 Final 显著优于 SD-LoRA，但 INR AvgAcc 的结构性损失不允许宣称全面优越。按目标文件进入 Stage B2 的 evaluation-only 双头诊断路径（暂不训练，不引入回放/测试集选择）。

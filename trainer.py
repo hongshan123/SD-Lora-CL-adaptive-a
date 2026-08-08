@@ -1,6 +1,7 @@
 import sys
 import logging
 import copy
+import random
 import torch
 import torch.distributed as dist
 from utils import factory
@@ -23,6 +24,7 @@ def train(args):
 def _train(args):
 
     _init_distributed(args)
+    _acquire_p0_run_guard(args)
     init_cls = 0 if args ["init_cls"] == args["increment"] else args["init_cls"]
     logs_name = "logs/{}/{}/{}/{}".format(args["model_name"],args["dataset"], init_cls, args['increment'])
     
@@ -52,7 +54,8 @@ def _train(args):
     else:
         logging.basicConfig(handlers=[logging.NullHandler()], force=True)
 
-    _set_random(args["seed"])
+    _set_random(args["seed"], args)
+    _set_deterministic_backend(args)
     _set_device(args)
     if _is_main_process(args):
         print_args(args)
@@ -216,12 +219,57 @@ def _set_device(args):
     args["device"] = gpus
 
 
-def _set_random(seed=1):
+def _set_random(seed=1, args=None):
+    random.seed(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        # In DDP each rank owns exactly one CUDA device; seeding another rank's
+        # device would create/perturb RNG contexts outside this process's rank.
+        torch.cuda.manual_seed(seed)
+        if args is None or not args.get("distributed", False):
+            torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def _set_deterministic_backend(args):
+    if not args.get("sa_deterministic_training", False):
+        return
+    torch.use_deterministic_algorithms(True, warn_only=False)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.enable_flash_sdp(False)
+    torch.backends.cuda.enable_mem_efficient_sdp(False)
+    torch.backends.cuda.enable_math_sdp(True)
+    torch.set_num_threads(1)
+
+
+def _acquire_p0_run_guard(args):
+    if not args.get("sa_deterministic_training", False):
+        return
+    if not _is_main_process(args):
+        _distributed_barrier(args)
+        return
+    from utils.run_guard import acquire_run_guard
+
+    config_path = args.get("config")
+    config_bytes = None
+    if config_path and os.path.exists(config_path):
+        with open(config_path, "rb") as handle:
+            config_bytes = handle.read()
+    lock_file = acquire_run_guard(
+        args["filepath"],
+        config_bytes=config_bytes,
+        command=sys.argv,
+        resume=bool(args.get("sa_resume", False)),
+        project_root=os.getcwd(),
+    )
+    # Keep the lock alive for the lifetime of this process.
+    args["_p0_run_guard_lock"] = lock_file
+    _distributed_barrier(args)
 
 
 def print_args(args):

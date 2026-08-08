@@ -1,5 +1,5 @@
 import logging
-import hashlib
+import json
 import math
 import os
 
@@ -26,17 +26,23 @@ from backbone.lrpt import (
     transport_prediction_error,
 )
 from backbone.sa_lora import SharedALoRA_ViT_timm
+from utils.canonical_hash import (
+    compare_named_tensors,
+    hash_named_tensors,
+    model_tensor_map,
+)
 from utils.inc_net import SimpleCosineIncrementalNet, SharedAPrototypeNet
 from utils.rng_utils import (
     deterministic_loader,
-    max_abs_diff,
     rng_preserving,
+    rng_state_hash,
 )
 from models.sdlora import Learner as SDLoraLearner
 
 
 num_workers = 8
 PROTOTYPES_FILENAME = "sa_prototypes.pt"
+P0_HASHES_FILENAME = "p0_hashes.json"
 
 
 def dual_head_logits(network, features):
@@ -50,6 +56,156 @@ def dual_head_logits(network, features):
         + network.dual_lambda * proto_logits
     )
     return fc_logits, proto_logits, fused_logits
+
+
+def serialize_prototypes(prototypes):
+    """Flatten a prototype dict into a broadcastable tensor + metadata."""
+    if not prototypes:
+        return [0], torch.zeros(1, 1, 1), torch.zeros(1, dtype=torch.long)
+    keys = sorted(int(key) for key in prototypes)
+    first = prototypes[keys[0]]
+    if isinstance(first, (list, tuple)):
+        max_k = max(len(prototypes[key]) for key in keys)
+        dim = first[0].shape[0]
+        stacked = torch.full(
+            (len(keys), max_k, dim),
+            float("nan"),
+            dtype=first[0].dtype,
+        )
+        counts = torch.zeros(len(keys), dtype=torch.long)
+        for index, key in enumerate(keys):
+            vectors = prototypes[key]
+            counts[index] = len(vectors)
+            for vector_index, vector in enumerate(vectors):
+                stacked[index, vector_index] = vector
+    else:
+        stacked = torch.stack([prototypes[key] for key in keys]).unsqueeze(1)
+        counts = torch.ones(len(keys), dtype=torch.long)
+    return keys, stacked, counts
+
+
+def deserialize_prototypes(keys, stacked, counts):
+    """Rebuild a prototype dict from broadcasted metadata."""
+    prototypes = {}
+    for index, key in enumerate(keys):
+        key = int(key)
+        num = int(counts[index].item()) if counts.numel() else 1
+        if num > 1:
+            prototypes[key] = [
+                stacked[index, vector_index].detach().clone()
+                for vector_index in range(num)
+            ]
+        else:
+            prototypes[key] = stacked[index, 0].detach().clone()
+    return prototypes
+
+
+def broadcast_prototypes(prototypes, src=0):
+    """Broadcast prototype tensors from ``src`` to every DDP rank."""
+    if not (dist.is_initialized() and dist.get_world_size() > 1):
+        return prototypes
+    keys, stacked, counts = serialize_prototypes(prototypes)
+    rank = dist.get_rank()
+    size_tensor = torch.zeros(4, dtype=torch.long)
+    if rank == src:
+        size_tensor = torch.tensor(
+            [len(keys), stacked.shape[0], stacked.shape[1], stacked.shape[2]],
+            dtype=torch.long,
+        )
+    dist.broadcast(size_tensor, src=src)
+    flat = torch.zeros(
+        int(size_tensor[1] * size_tensor[2] * size_tensor[3]),
+        dtype=torch.float32,
+    )
+    if rank == src:
+        flat = stacked.reshape(-1).to(torch.float32)
+    dist.broadcast(flat, src=src)
+    stacked = flat.reshape(
+        int(size_tensor[1]),
+        int(size_tensor[2]),
+        int(size_tensor[3]),
+    )
+    keys_tensor = torch.zeros(int(size_tensor[0]), dtype=torch.long)
+    if rank == src:
+        keys_tensor = torch.tensor(keys, dtype=torch.long)
+    dist.broadcast(keys_tensor, src=src)
+    broadcast_counts = torch.zeros(int(size_tensor[0]), dtype=torch.long)
+    if rank == src:
+        broadcast_counts = counts
+    dist.broadcast(broadcast_counts, src=src)
+    return deserialize_prototypes(
+        keys_tensor.tolist(), stacked, broadcast_counts
+    )
+
+
+def broadcast_dual_head_values(lambda_val, tau_fc, tau_proto, src=0):
+    """Broadcast calibration scalars from ``src`` to every DDP rank."""
+    values = torch.tensor([lambda_val, tau_fc, tau_proto], dtype=torch.float64)
+    if dist.is_initialized() and dist.get_world_size() > 1:
+        dist.broadcast(values, src=src)
+    return float(values[0]), float(values[1]), float(values[2])
+
+
+def all_ranks_equal(value):
+    """True when ``value`` is bit-identical on every DDP rank."""
+    if not (dist.is_initialized() and dist.get_world_size() > 1):
+        return True
+    flat = value.detach().cpu().to(torch.float64).reshape(-1)
+    gathered = [
+        torch.zeros_like(flat) for _ in range(dist.get_world_size())
+    ]
+    dist.all_gather(gathered, flat)
+    return all(torch.equal(item, flat) for item in gathered)
+
+
+def evaluate_dual_head_once(network, loader, device=None, topk=5):
+    """One DataLoader traversal computing fc/proto/fused logits and top-k preds.
+
+    Returns ``(preds, y_true, max_fused_proto_diff)``.  When ``lambda==1`` the
+    fused logits must equal prototype logits up to 1e-6; a violation raises
+    ``RuntimeError`` with the concrete diff.
+    """
+    network.eval()
+    preds = {"fc": [], "proto": [], "fused": []}
+    y_true = []
+    max_fused_proto_diff = 0.0
+    with torch.no_grad():
+        for _, inputs, targets in loader:
+            if device is not None:
+                inputs = inputs.to(device, non_blocking=True)
+            features = network.backbone(inputs)
+            fc_logits, proto_logits, fused_logits = dual_head_logits(
+                network, features
+            )
+            if float(network.dual_lambda) >= 1.0:
+                fused_proto_diff = (
+                    (fused_logits - proto_logits).abs().max().item()
+                )
+                max_fused_proto_diff = max(
+                    max_fused_proto_diff, fused_proto_diff
+                )
+                if fused_proto_diff > 1e-6:
+                    raise RuntimeError(
+                        "lambda=1 fused/prototype logits differ by "
+                        "{:.3e} (max allowed 1e-6)".format(
+                            fused_proto_diff
+                        )
+                    )
+            for mode, logits in (
+                ("fc", fc_logits),
+                ("proto", proto_logits),
+                ("fused", fused_logits),
+            ):
+                topk_indices = torch.topk(
+                    logits,
+                    k=topk,
+                    dim=1,
+                    largest=True,
+                    sorted=True,
+                ).indices.cpu().numpy()
+                preds[mode].append(topk_indices)
+            y_true.append(targets.cpu().numpy())
+    return preds, y_true, max_fused_proto_diff
 
 
 class SharedACosineNet(SimpleCosineIncrementalNet):
@@ -176,6 +332,7 @@ class Learner(SDLoraLearner):
             cumulative_rank=self.args.get("sa_cumulative_rank", None),
             freeze_old_scales=self.args.get("sa_freeze_old_scales", False),
             live_a_history_groups=self.args.get("sa_live_a_history_groups", 1),
+            resume=self.args.get("sa_resume", False),
         )
         model.out_dim = 768
         return model
@@ -183,7 +340,14 @@ class Learner(SDLoraLearner):
     def incremental_train(self, data_manager):
         self._dual_num_tasks = data_manager.nb_tasks
         if self._dual_head:
-            self._raw_network().set_head_mode("fc")
+            raw_network = self._raw_network()
+            raw_network.set_head_mode("fc")
+            # Calibration/eval scalars are eval-only; do not let them persist
+            # into the next task's training-state hash.
+            raw_network.dual_head = False
+            raw_network.dual_lambda = 0.0
+            raw_network.tau_fc = 1.0
+            raw_network.tau_proto = 1.0
         # Capture the current task's features in the *previous* model state
         # before Shared-A is updated. Only current-task data is touched.
         if (
@@ -209,6 +373,8 @@ class Learner(SDLoraLearner):
                 self._lrpt_pre_features.shape[0],
             )
         super().incremental_train(data_manager)
+        if self._is_main_process():
+            self._log_post_train_hash(self._cur_task)
         if self._is_main_process():
             if self._cur_task > 0:
                 with torch.no_grad():
@@ -304,94 +470,167 @@ class Learner(SDLoraLearner):
                         epochs=tune_epochs,
                         lr=float(self.args.get("sa_final_head_lr", 1e-3)),
                     )
-            if self.args.get("sa_use_prototype_classifier", False):
-                if self._is_main_process():
-                    if (
-                        self._lrpt_enabled
-                        and self._lrpt_pre_features is not None
-                    ):
-                        self._apply_lrpt_to_old_prototypes(data_manager)
-                    prototypes = self._compute_prototypes(
-                        data_manager, raw_network
+        if self.args.get("sa_use_prototype_classifier", False):
+            if self._is_main_process():
+                if (
+                    self._lrpt_enabled
+                    and self._lrpt_pre_features is not None
+                ):
+                    self._apply_lrpt_to_old_prototypes(data_manager)
+                prototypes = self._compute_prototypes(
+                    data_manager, raw_network
+                )
+            else:
+                prototypes = {}
+            prototypes = broadcast_prototypes(prototypes, src=0)
+            raw_network = self._raw_network()
+            raw_network.set_prototypes(prototypes)
+            prototype_head = raw_network.prototype_head
+            if prototype_head is not None and hasattr(
+                prototype_head, "weight"
+            ):
+                if not all_ranks_equal(prototype_head.weight):
+                    raise RuntimeError(
+                        "prototype head differs across ranks after broadcast"
                     )
-                    raw_network.set_prototypes(prototypes)
-                    logging.info(
-                        "[SharedA-SDLoRA] prototype classifier active for %d classes",
-                        len(prototypes),
-                    )
-                if self._is_main_process():
-                    raw_network.backbone.cleanup_per_task_files(
-                        self.args["filepath"]
-                    )
-                    self._log_training_artifact_hash(self._cur_task)
+            if self._is_main_process():
+                logging.info(
+                    "[SharedA-SDLoRA] prototype classifier active for %d classes",
+                    len(prototypes),
+                )
+                logging.info("[PrototypeSync] rank consistency PASS")
+                raw_network.backbone.cleanup_per_task_files(
+                    self.args["filepath"]
+                )
         if self._dual_head:
             self._prepare_dual_head(data_manager, self._raw_network())
 
-    def _log_training_artifact_hash(self, task_id):
-        """Log a deterministic hash of the persisted training-state artifacts.
+    def _p0_hash_store(self):
+        """JSON file holding per-task tensor/RNG hashes for cross-run audits."""
+        return os.path.join(self.args["filepath"], P0_HASHES_FILENAME)
 
-        This is a diagnostic for the P0 RNG-neutral audit: control and Dual-B
-        runs with the same seed/config must produce identical per-task hashes,
-        proving that dual-head evaluation/calibration does not perturb the
-        next-task training trajectory.
-        """
-        paths = [
-            os.path.join(self.args["filepath"], name)
-            for name in (
-                "sa_state.pt",
-                "sa_merged_lora.pt",
-                "sa_prototypes.pt",
-                "CLs_weight{}.pt".format(task_id),
-                "CLs_bias{}.pt".format(task_id),
-            )
-        ]
-        digest = hashlib.sha256()
-        for path in paths:
-            if not os.path.exists(path):
-                continue
-            digest.update(os.path.basename(path).encode("utf-8"))
-            with open(path, "rb") as handle:
-                for chunk in iter(lambda: handle.read(1 << 20), b""):
-                    digest.update(chunk)
+    def _store_p0_hash(self, task_id, kind, model_hash, rng_hash):
+        path = self._p0_hash_store()
+        data = {}
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        data.setdefault(str(task_id), {})[kind + "_model_hash"] = model_hash
+        data[str(task_id)][kind + "_rng_hash"] = rng_hash
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+
+    def _log_post_train_hash(self, task_id):
+        """Canonical tensor/RNG hash immediately after training, before eval."""
+        raw_network = self._raw_network()
+        tensors = model_tensor_map(raw_network, include_eval_scalars=False)
+        model_hash = hash_named_tensors(tensors)
+        rng_hash = rng_state_hash()
+        self._store_p0_hash(task_id, "post_train", model_hash, rng_hash)
         logging.info(
-            "[TrajectoryHash] task %d hash=%s",
+            "[PostTrainHash] task %d hash=%s rng=%s",
             task_id,
-            digest.hexdigest(),
+            model_hash,
+            rng_hash,
+        )
+
+    def _log_post_eval_hash(self, task_id):
+        """Canonical tensor/RNG hash after calibration and evaluation."""
+        raw_network = self._raw_network()
+        tensors = model_tensor_map(raw_network, include_eval_scalars=False)
+        model_hash = hash_named_tensors(tensors)
+        rng_hash = rng_state_hash()
+        self._store_p0_hash(task_id, "post_eval", model_hash, rng_hash)
+        logging.info(
+            "[PostEvalHash] task %d hash=%s rng=%s",
+            task_id,
+            model_hash,
+            rng_hash,
+        )
+
+    def _assert_eval_tensor_invariance(self, before_map, task_id):
+        after_map = model_tensor_map(self._raw_network())
+        mismatch = compare_named_tensors(before_map, after_map)
+        if mismatch is not None:
+            raise RuntimeError(
+                "eval mutated model tensors: first mismatch {} "
+                "(max_abs_diff={})".format(
+                    mismatch["key"], mismatch["max_abs_diff"]
+                )
+            )
+        logging.info(
+            "[EvalTensorHash] task %d before=%s after=%s PASS",
+            task_id,
+            hash_named_tensors(before_map),
+            hash_named_tensors(after_map),
         )
 
     def eval_task(self):
-        if not self._dual_head:
-            return super().eval_task()
         if not self._is_main_process():
             return None, None
-        raw_network = self._raw_network()
-        raw_network.eval()
-        preds = {"fc": [], "proto": [], "fused": []}
-        y_true = []
-        with rng_preserving(), torch.no_grad():
-            loader = deterministic_loader(
-                self._eval_test_dataset,
-                batch_size=self.args["batch_size"],
-                shuffle=False,
-                num_workers=self._loader_workers(),
-                seed=0,
-            )
-            for _, inputs, targets in loader:
-                inputs = inputs.to(self._device, non_blocking=True)
-                feats = raw_network.backbone(inputs)
-                fc_logits, proto_logits, fused_logits = dual_head_logits(
-                    raw_network, feats
+        if not self._dual_head:
+            before_map = model_tensor_map(self._raw_network())
+            rng_before = rng_state_hash()
+            result = super().eval_task()
+            rng_after = rng_state_hash()
+            if rng_before != rng_after:
+                raise RuntimeError(
+                    "control eval perturbed RNG state: {} -> {}".format(
+                        rng_before, rng_after
+                    )
                 )
-                for mode, logits in (
-                    ("fc", fc_logits),
-                    ("proto", proto_logits),
-                    ("fused", fused_logits),
-                ):
-                    topk = torch.topk(
-                        logits, k=self.topk, dim=1, largest=True, sorted=True
-                    ).indices.cpu().numpy()
-                    preds[mode].append(topk)
-                y_true.append(targets.cpu().numpy())
+            logging.info(
+                "[RNGHash] task %d eval before=%s after=%s PASS",
+                self._cur_task,
+                rng_before,
+                rng_after,
+            )
+            self._assert_eval_tensor_invariance(before_map, self._cur_task)
+            self._log_post_eval_hash(self._cur_task)
+            return result
+
+        before_map = model_tensor_map(self._raw_network())
+        rng_before = rng_state_hash()
+        loader = deterministic_loader(
+            self._eval_test_dataset,
+            batch_size=self.args["batch_size"],
+            shuffle=False,
+            num_workers=self._loader_workers(),
+            seed=0,
+        )
+        preds, y_true, fused_proto_diff = evaluate_dual_head_once(
+            self._raw_network(),
+            loader,
+            device=self._device,
+            topk=self.topk,
+        )
+        if float(self._raw_network().dual_lambda) >= 1.0:
+            logging.info(
+                "[DualHead] task %d fused_proto_max_diff=%.3e PASS",
+                self._cur_task,
+                fused_proto_diff,
+            )
+        rng_after = rng_state_hash()
+        if rng_before != rng_after:
+            raise RuntimeError(
+                "dual eval perturbed RNG state: {} -> {}".format(
+                    rng_before, rng_after
+                )
+            )
+        logging.info(
+            "[RNGHash] task %d eval before=%s after=%s PASS",
+            self._cur_task,
+            rng_before,
+            rng_after,
+        )
+        self._assert_eval_tensor_invariance(before_map, self._cur_task)
+        if fused_proto_diff > 0.0:
+            logging.info(
+                "[DualHead] task %d fused_proto_max_diff=%.3e PASS",
+                self._cur_task,
+                fused_proto_diff,
+            )
         accuracies = {}
         for mode in preds:
             accuracies[mode] = self._evaluate(
@@ -404,6 +643,7 @@ class Learner(SDLoraLearner):
                 accuracies[mode]["top1"],
                 accuracies[mode]["top5"],
             )
+        self._log_post_eval_hash(self._cur_task)
         return accuracies["fused"], None
 
     def _dual_lambda(self, task_id, num_tasks):
@@ -432,11 +672,8 @@ class Learner(SDLoraLearner):
         lambda_val, tau_fc, tau_proto = 0.0, 1.0, 1.0
         if self._is_main_process():
             raw_network.eval()
-            params_before = [
-                tensor.detach().cpu().clone()
-                for tensor in list(raw_network.parameters())
-                + list(raw_network.buffers())
-            ]
+            before_map = model_tensor_map(raw_network)
+            rng_before = rng_state_hash()
             with rng_preserving(), torch.no_grad():
                 if (
                     getattr(self, "_last_proto_task", None) == self._cur_task
@@ -457,30 +694,65 @@ class Learner(SDLoraLearner):
             lambda_val = self._dual_lambda(
                 self._cur_task, self._dual_num_tasks
             )
-            params_after = [
-                tensor.detach().cpu().clone()
-                for tensor in list(raw_network.parameters())
-                + list(raw_network.buffers())
-            ]
-            param_diff = max_abs_diff(params_before, params_after)
-            if param_diff != 0.0:
+            mismatch = compare_named_tensors(
+                before_map, model_tensor_map(raw_network)
+            )
+            if mismatch is not None:
                 raise RuntimeError(
-                    "Dual-head calibration mutated model parameters "
-                    "(max_abs_diff={:.3e})".format(param_diff)
+                    "Dual-head calibration mutated model tensors: first "
+                    "mismatch {} (max_abs_diff={})".format(
+                        mismatch["key"], mismatch["max_abs_diff"]
+                    )
                 )
+            rng_after = rng_state_hash()
+            if rng_before != rng_after:
+                raise RuntimeError(
+                    "Dual-head calibration perturbed RNG state: {} -> {}".format(
+                        rng_before, rng_after
+                    )
+                )
+            logging.info(
+                "[RNGHash] task %d calibration before=%s after=%s PASS",
+                self._cur_task,
+                rng_before,
+                rng_after,
+            )
             logging.info(
                 "[DualHead] calibration parameter invariance PASS "
                 "(max_abs_diff=0.000e+00)"
             )
-        if self._is_distributed():
-            values = torch.tensor(
-                [lambda_val, tau_fc, tau_proto], device=self._device
-            )
-            dist.broadcast(values, src=0)
-            lambda_val, tau_fc, tau_proto = [
-                float(value) for value in values.tolist()
-            ]
+        lambda_val, tau_fc, tau_proto = broadcast_dual_head_values(
+            lambda_val, tau_fc, tau_proto, src=0
+        )
         raw_network.set_dual_head(lambda_val, tau_fc, tau_proto)
+        if not all_ranks_equal(
+            torch.tensor(
+                [lambda_val, tau_fc, tau_proto], dtype=torch.float64
+            )
+        ):
+            raise RuntimeError(
+                "dual-head calibration scalars differ across ranks"
+            )
+        print(
+            "[DualHead] rank {} task {} lambda={:.6f} tau_fc={:.6f} "
+            "tau_proto={:.6f}".format(
+                self.args.get("rank", 0),
+                self._cur_task,
+                lambda_val,
+                tau_fc,
+                tau_proto,
+            ),
+            flush=True,
+        )
+        logging.info(
+            "[DualHead] rank %d task %d lambda=%.6f tau_fc=%.6f "
+            "tau_proto=%.6f",
+            self.args.get("rank", 0),
+            self._cur_task,
+            lambda_val,
+            tau_fc,
+            tau_proto,
+        )
         if self._is_main_process():
             state = {
                 "schedule": self._dual_schedule,

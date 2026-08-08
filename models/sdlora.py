@@ -1,4 +1,5 @@
 import logging
+import random
 import numpy as np
 import torch
 from torch import nn
@@ -48,7 +49,9 @@ class Learner(BaseLearner):
                 self._network,
                 device_ids=[local_rank],
                 output_device=local_rank,
-                find_unused_parameters=True,
+                find_unused_parameters=not self.args.get(
+                    "sa_deterministic_training", False
+                ),
                 broadcast_buffers=False,
             )
 
@@ -148,9 +151,22 @@ class Learner(BaseLearner):
     def _configure_deterministic_training(self):
         if not self.args.get("sa_deterministic_training", False):
             return
-        torch.use_deterministic_algorithms(True, warn_only=True)
+        base_seed = int(self.args["seed"]) + self._cur_task * 1000
+        random.seed(base_seed + 3)
+        np.random.seed(base_seed + 4)
+        torch.manual_seed(base_seed + 5)
+        if torch.cuda.is_available():
+            # Current device only: a DDP rank must not seed another rank's GPU.
+            torch.cuda.manual_seed(base_seed + 6)
+        torch.use_deterministic_algorithms(True, warn_only=False)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        torch.set_num_threads(1)
+        torch.backends.cuda.enable_flash_sdp(False)
+        torch.backends.cuda.enable_mem_efficient_sdp(False)
+        torch.backends.cuda.enable_math_sdp(True)
 
     def update_network(self, index=True):
         # if use VIT-B-16

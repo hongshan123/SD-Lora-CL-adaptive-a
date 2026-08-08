@@ -60,6 +60,7 @@ def get_backbone(args, pretrained=False):
                 cumulative_rank=args.get("sa_cumulative_rank", None),
                 freeze_old_scales=args.get("sa_freeze_old_scales", False),
                 live_a_history_groups=args.get("sa_live_a_history_groups", 1),
+                resume=args.get("sa_resume", False),
             )
         else:
             model = LoRA_ViT_timm(

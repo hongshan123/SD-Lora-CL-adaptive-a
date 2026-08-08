@@ -696,3 +696,15 @@
   - 日志中无 `non-deterministic` / memory-efficient attention / `warn_only=True` warning。
   - 脚本输出：`SMOKE PASS`。
 - 旧 `D2` 及所有诊断/中间 clean 运行已登记到 `INVALID_RUNS.md`，不进入实验表。
+
+## 2026-08-09 P0.5：NCCL 正式后端门槛通过
+
+- 按 `post_p0_validation_experiments_sd.md` §2 完成：
+  - `models/sa_sdlora.py` 的 prototype/`lambda`/`tau` broadcast 与 `all_ranks_equal` 根据 backend 选择 device：NCCL 用 CUDA tensor，Gloo 用 CPU tensor。
+  - `model_tensor_map` 的 eval/calibration snapshot 改为 `detach().cpu().clone()`，不再保存引用；新增 snapshot mutation 单元测试。
+  - 新增 NCCL 四卡同步测试 `tests/ddp_p0_nccl_rank_sync.py`（prototype、`lambda/tau`、`all_ranks_equal`）。
+  - 新增 `run_p0_5_nccl_smoke.sh` 与 `exps/live_a_rng_smoke_dual_b_nccl_c100_seed1.json`。
+- 测试：`python -m pytest -q` → **98 passed**（含 NCCL 四卡同步）。
+- NCCL 两任务 Dual-B smoke：`P0.5 SMOKE PASS`；无报错、无非确定性 warning、四 rank 同步 PASS、`lambda=1` fused/prototype logits 检查 PASS、eval 前后 RNG/tensor hash PASS。
+- 提交：`14ab833`；run manifest 在启动时记录真实 commit `14ab8332917f4f76340243a9422e020499dc60aa`，未训练后回填。
+- 结论：P0.5 通过，进入 P1 ImageNet-R 正式配对。

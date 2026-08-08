@@ -646,3 +646,4 @@
   | SD-LoRA 参照 | 78.79 | 83.07 | 5.85 |
 - 判定：两种聚合的 Final 与 AvgAcc 均低于 K=1 prototype 和 SD-LoRA（logsumexp Final 低 1.92 / AvgAcc 低 1.99），未达到“重新验证 Final”的准入；按目标文件 §6.4 不再继续 K 扩展，也**不启动 C100/多 seed**。
 - 停止判定（§11）：双头调度（一轮）与 K=2 prototype（第二轮）连续两轮新增组件未达到预注册门槛；Live-A 不再围绕同一机制继续扫参，保留为“固定 O(1) 状态、Final 优先”的消融/负结果记录。
+- 一致性审计：Dual-B（INR/C100）与 K=2（max/logsumexp）产物 `verify_sa_consistency.py` 全部 PASS（feature 6.9–9.5e-6，logit 1.9–3.0e-7），确认负结果不是 artifact 不一致导致。

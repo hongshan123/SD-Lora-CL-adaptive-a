@@ -154,6 +154,6 @@ TOST（±0.5 margin, α=0.05）：INR Final/AvgAcc 不等价（p_upper=0.0026/0.
 | E-LIVE-K2-MAX | K=2 per-class prototype，max（INR seed1995） | 78.56 / 81.34 / 7.55 | EXP-027 |
 | E-LIVE-K2-LSE | K=2 per-class prototype，logsumexp（INR seed1995） | 77.51 / 81.08 / 7.67 | EXP-027 |
 | E-LIVE-PARAMS | 持久参数 | LoRA 368,640（10.00%）；K1 INR 522,240 / C100 445,440；dual INR 675,840 / C100 599,040（相对 SD-LoRA 减 81.7% / 83.8%） | EXP-023/024/026 |
-| E-LIVE-AUDIT | K1 artifact consistency / 无回放审计 | PASS（feature 7.9e-6、logit 2.7e-7）；memory_size=0、无逐任务 B、无 task-id/router | EXP-024 |
+| E-LIVE-AUDIT | K1 / Dual-B / K2 artifact consistency / 无回放审计 | 全部 PASS：K1 feature 7.9e-6/logit 2.7e-7；Dual-B INR/C100 feature 8.6-9.1e-6/logit 1.9-2.1e-7；K2 max/logsumexp feature 6.9-9.5e-6/logit 2.4-3.0e-7；memory_size=0、无逐任务 B、无 task-id/router | EXP-024/026/027 |
 
 停止判定：Stage B INR AvgAcc 门槛未过；Stage B2 Schedule B 修复 AvgAcc 但 Final/Forgetting 严格门槛未过；K=2 后备 Final/AvgAcc 均低于 K1 与 SD-LoRA。按目标文件 §11 停止，Live-A 作为“固定 O(1) 状态、Final 优先”的负结果/消融，不升级为论文主方法。

@@ -667,3 +667,13 @@
 
 - Live-A 未通过多 seed 门槛，Stage C（N=5/10/20）与 Stage D（真实训练显存/时间/存储）在目标文件中明确以“多 seed 主结果通过”和“方法定型”为前提，当前不可合法触发。
 - 论文证据/负结果/一致性审计已全部同步并提交（最新 `f56b4d9`）。剩余工作只有两种可能：用户授权把 Stage C/D 作为负结果消融补跑，或调整/收口目标。等待用户指示。
+
+## 2026-08-08 P0 RNG-neutral Dual-head audit（新任务书）
+
+- 依据：`stage_b2_results_next_steps_sd.md`。先修复 Dual-head 评估/校准对随机数状态与后续训练轨迹的干扰，不新增方法组件。
+- 实现（commit `64cca67`）：
+  - `utils/rng_utils.py`：Python/NumPy/Torch CPU/全部 CUDA RNG 快照恢复；固定 seed `torch.Generator` DataLoader。
+  - `models/sa_sdlora.py`：fused/FC/prototype 三头 logits 在同一次测试遍历中计算；`_compute_prototypes` 缓存当前任务特征供温度拟合复用；校准前后参数 `max_abs_diff==0` 断言；rank0 拟合 lambda/tau 后 DDP broadcast，所有 rank 一致；eval/calibration 全程 `rng_preserving`。
+  - `models/sdlora.py`：保存 `_eval_test_dataset` 供单遍评估使用。
+- 测试：新增 `tests/test_rng_neutral_dual_head.py`（RNG 恢复、固定 Generator loader、三头 logits 公式、参数 diff）；命令 `python -m pytest -q`，结果 **85 passed**。
+- 下一步：4 卡两任务 smoke（纯 Live control vs Dual-B），确认任务训练结束时的参数 hash/RNG 状态一致；随后 P1 受控重跑。

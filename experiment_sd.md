@@ -604,3 +604,29 @@
   | Schedule B | **79.21** | **82.937** | **6.851** | 通过 INR Stage B2 验收（Final=纯 prototype 最终值，AvgAcc ≥82.83，F 不劣于纯 prototype） |
 - 每任务纯 FC/纯 prototype 结果已写入日志（`[DualHead] task ... mode=...`）；主表使用 fused 曲线，不挑选每阶段最好值。
 - 决策：按预注册调度函数（与测试集无关）选择 **Schedule B** 继续 C100 seed1993 与 paired multi-seed；A 保留为负结果记录。
+
+### EXP-026 补充：Schedule B C100 与 paired multi-seed（n=4）
+
+- C100 seed1993：Final **88.08**、AvgAcc **91.94**、Forgetting **8.94**；主表使用 fused 曲线，纯 FC/纯 prototype 逐任务结果在日志中。
+- 多 seed（Schedule B）：
+  | 数据集 | 方法 | Final | AvgAcc | Forgetting |
+  | --- | --- | ---: | ---: | ---: |
+  | INR | Dual-B | 78.69±0.42 | 83.26±0.81 | 8.02±1.07 |
+  | INR | EXP-009 | 79.22±0.57 | 82.82±0.47 | 7.80±1.02 |
+  | INR | SD-LoRA | 78.75±0.50 | 83.42±1.09 | 7.79±1.57 |
+  | C100 | Dual-B | 87.82±0.18 | 91.80±0.30 | 9.11±0.42 |
+  | C100 | EXP-009 | 88.04±0.28 | 91.62±0.37 | 8.63±0.53 |
+  | C100 | SD-LoRA | 86.75±0.39 | 91.62±0.24 | 6.27±1.20 |
+- 配对差异（Dual-B 减对照）：
+  | 数据集 | 对照 | Final | AvgAcc | Forgetting |
+  | --- | --- | ---: | ---: | ---: |
+  | INR | EXP-009 | **-0.530（p=0.074）** | **+0.444（p=0.110）** | +0.229（p=0.073） |
+  | INR | SD-LoRA | -0.058（p=0.856） | -0.155（p=0.470） | +0.236（p=0.748） |
+  | C100 | EXP-009 | -0.220（p=0.108，TOST 等价） | +0.175（p=0.233，TOST 等价） | +0.478（p=0.148） |
+  | C100 | SD-LoRA | **+1.070（p=0.011）** | +0.175（p=0.436） | **+2.833（p=0.007）** |
+- 参数：LoRA 368,640 + FC 153,600 + prototype（INR 153,600 / C100 76,800）= INR 675,840 / C100 599,040，相对 SD-LoRA 3,686,400 减少 81.7% / 83.8%；`sa_dual_head.pt` 记录调度、lambda、温度。
+- 门槛判定：
+  - Schedule B 修复了核心 AvgAcc 问题（INR 相对 EXP-009 +0.44，相对 SD-LoRA -0.16；C100 相对两者均 +0.18）。
+  - 但严格多 seed 门槛未完全通过：INR Final 相对 EXP-009 -0.53（< -0.30）；INR Final 相对 SD-LoRA -0.058（略低于 0）；C100 Forgetting 相对 SD-LoRA +2.83（显著代价，必须报告）。
+  - 最终任务 lambda=1，Final 与同次运行的纯 prototype 一致（满足“不靠测试选择切换点/最终 lambda<1”的禁止项）。
+- 结论：双头融合作为“AAA 修复”机制有效（AvgAcc 恢复），但未达到“保持 Final 优势 + 不显著牺牲 Forgetting”的完整验收。按目标文件 §6.4，进入唯一后备方向：每类 K=2 prototype + max/logsumexp 聚合诊断（不再扫描调度）。

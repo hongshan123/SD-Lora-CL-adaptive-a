@@ -643,3 +643,11 @@
 - Schedule B（INR seed1995）：Final **79.21**、AvgAcc **82.937**、Forgetting **6.851**；Final 与纯 prototype 最终值一致（lambda_final=1），AvgAcc 高于下限，通过。
 - 两个调度均按归一化任务进度固定函数生成（T=10 时精确等于预注册数组），温度仅用当前任务训练类拟合。
 - 决策：采用 Schedule B 跑 C100 seed1993 与 paired multi-seed（INR/C100 seeds 1/2/3）；Schedule A 作为负结果保留。
+
+## 2026-08-08 Stage B2 Schedule B C100 与多 seed 完成
+
+- C100 seed1993：88.08 / 91.94 / 8.94；多 seed 配对（`stage_b_dual_stats_output.txt`）：INR Dual-B = 78.69±0.42 / 83.26±0.81 / 8.02±1.07，C100 Dual-B = 87.82±0.18 / 91.80±0.30 / 9.11±0.42。
+- 改善：INR AvgAcc 相对 EXP-009 **+0.44**、相对 SD-LoRA **-0.16**；C100 AvgAcc 相对两者 **+0.18**，C100 Final 相对 SD-LoRA **+1.07**。
+- 未过项：INR Final 相对 EXP-009 -0.53；INR Final 相对 SD-LoRA -0.06；C100 Forgetting 相对 SD-LoRA +2.83。按目标文件严格门槛未通过。
+- 参数：INR 675,840 / C100 599,040（相对 SD-LoRA 减 81.7% / 83.8%）；最终 lambda=1，无测试集选择切换点。
+- 下一步：按 §6.4 转 K=2 每类双 prototype（max/logsumexp 聚合）后备方向；双头调度不再扫描。

@@ -1,0 +1,720 @@
+########## INR final: Live-A vs EXP-009 ##########
+live_inr         n=4 mean=   78.94 std=    0.47
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                    78.83
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                    79.14
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                    78.34
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                 79.43
+exp009_inr       n=4 mean=   79.22 std=    0.57
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                  78.68
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                  79.78
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                  78.79
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                               79.63
+sdlora_inr       n=4 mean=   78.75 std=    0.50
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                  78.48
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                  78.29
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                  79.43
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                               78.79
+dual_inr         n=4 mean=   78.69 std=    0.42
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                    78.18
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                    78.71
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                    78.66
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                 79.21
+
+Paired live_inr - exp009_inr (seed-joined, n=4):
+    seed=1      A=   78.83 B=   78.68 diff=   +0.15
+    seed=2      A=   79.14 B=   79.78 diff=   -0.64
+    seed=3      A=   78.34 B=   78.79 diff=   -0.45
+    seed=1995   A=   79.43 B=   79.63 diff=   -0.20
+    mean_diff=-0.285 sd_diff=0.341 t=-1.670 p=0.1936 95%CI=[-0.828, 0.258] cohen_dz=-0.835
+    TOST margin=0.5 equivalent=False p_upper=0.0097 p_lower=0.1485
+
+########## INR final: Live-A vs SD-LoRA ##########
+live_inr         n=4 mean=   78.94 std=    0.47
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                    78.83
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                    79.14
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                    78.34
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                 79.43
+exp009_inr       n=4 mean=   79.22 std=    0.57
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                  78.68
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                  79.78
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                  78.79
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                               79.63
+sdlora_inr       n=4 mean=   78.75 std=    0.50
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                  78.48
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                  78.29
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                  79.43
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                               78.79
+dual_inr         n=4 mean=   78.69 std=    0.42
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                    78.18
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                    78.71
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                    78.66
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                 79.21
+
+Paired live_inr - sdlora_inr (seed-joined, n=4):
+    seed=1      A=   78.83 B=   78.48 diff=   +0.35
+    seed=2      A=   79.14 B=   78.29 diff=   +0.85
+    seed=3      A=   78.34 B=   79.43 diff=   -1.09
+    seed=1995   A=   79.43 B=   78.79 diff=   +0.64
+    mean_diff=+0.187 sd_diff=0.876 t=+0.428 p=0.6975 95%CI=[-1.206, 1.581] cohen_dz=+0.214
+    TOST margin=0.5 equivalent=False p_upper=0.2635 p_lower=0.1073
+
+########## C100 final: Live-A vs EXP-009 ##########
+live_c100        n=4 mean=   87.95 std=    0.34
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                   87.55
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                   87.80
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                   88.14
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                88.32
+exp009_c100      n=4 mean=   88.04 std=    0.28
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                 87.88
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                 87.78
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                 88.08
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                              88.42
+sdlora_c100      n=4 mean=   86.75 std=    0.39
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                 86.16
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                 86.97
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                 86.93
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                              86.94
+dual_c100        n=4 mean=   87.82 std=    0.18
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                   87.73
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                   87.80
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                   87.67
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                88.08
+
+Paired live_c100 - exp009_c100 (seed-joined, n=4):
+    seed=1      A=   87.55 B=   87.88 diff=   -0.33
+    seed=2      A=   87.80 B=   87.78 diff=   +0.02
+    seed=3      A=   88.14 B=   88.08 diff=   +0.06
+    seed=1993   A=   88.32 B=   88.42 diff=   -0.10
+    mean_diff=-0.088 sd_diff=0.175 t=-0.998 p=0.3919 95%CI=[-0.367, 0.192] cohen_dz=-0.499
+    TOST margin=0.5 equivalent=True p_upper=0.0034 p_lower=0.0091
+
+########## C100 final: Live-A vs SD-LoRA ##########
+live_c100        n=4 mean=   87.95 std=    0.34
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                   87.55
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                   87.80
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                   88.14
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                88.32
+exp009_c100      n=4 mean=   88.04 std=    0.28
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                 87.88
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                 87.78
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                 88.08
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                              88.42
+sdlora_c100      n=4 mean=   86.75 std=    0.39
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                 86.16
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                 86.97
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                 86.93
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                              86.94
+dual_c100        n=4 mean=   87.82 std=    0.18
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                   87.73
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                   87.80
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                   87.67
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                88.08
+
+Paired live_c100 - sdlora_c100 (seed-joined, n=4):
+    seed=1      A=   87.55 B=   86.16 diff=   +1.39
+    seed=2      A=   87.80 B=   86.97 diff=   +0.83
+    seed=3      A=   88.14 B=   86.93 diff=   +1.21
+    seed=1993   A=   88.32 B=   86.94 diff=   +1.38
+    mean_diff=+1.202 sd_diff=0.262 t=+9.190 p=0.0027 95%CI=[0.786, 1.619] cohen_dz=+4.595
+    TOST margin=0.5 equivalent=False p_upper=0.9937 p_lower=0.0005
+
+########## INR final: Dual-B vs EXP-009 ##########
+live_inr         n=4 mean=   78.94 std=    0.47
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                    78.83
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                    79.14
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                    78.34
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                 79.43
+exp009_inr       n=4 mean=   79.22 std=    0.57
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                  78.68
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                  79.78
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                  78.79
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                               79.63
+sdlora_inr       n=4 mean=   78.75 std=    0.50
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                  78.48
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                  78.29
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                  79.43
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                               78.79
+dual_inr         n=4 mean=   78.69 std=    0.42
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                    78.18
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                    78.71
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                    78.66
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                 79.21
+
+Paired dual_inr - exp009_inr (seed-joined, n=4):
+    seed=1      A=   78.18 B=   78.68 diff=   -0.50
+    seed=2      A=   78.71 B=   79.78 diff=   -1.07
+    seed=3      A=   78.66 B=   78.79 diff=   -0.13
+    seed=1995   A=   79.21 B=   79.63 diff=   -0.42
+    mean_diff=-0.530 sd_diff=0.394 t=-2.694 p=0.0742 95%CI=[-1.156, 0.096] cohen_dz=-1.347
+    TOST margin=0.5 equivalent=False p_upper=0.0068 p_lower=0.5558
+
+########## INR final: Dual-B vs SD-LoRA ##########
+live_inr         n=4 mean=   78.94 std=    0.47
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                    78.83
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                    79.14
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                    78.34
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                 79.43
+exp009_inr       n=4 mean=   79.22 std=    0.57
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                  78.68
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                  79.78
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                  78.79
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                               79.63
+sdlora_inr       n=4 mean=   78.75 std=    0.50
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                  78.48
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                  78.29
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                  79.43
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                               78.79
+dual_inr         n=4 mean=   78.69 std=    0.42
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                    78.18
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                    78.71
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                    78.66
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                 79.21
+
+Paired dual_inr - sdlora_inr (seed-joined, n=4):
+    seed=1      A=   78.18 B=   78.48 diff=   -0.30
+    seed=2      A=   78.71 B=   78.29 diff=   +0.42
+    seed=3      A=   78.66 B=   79.43 diff=   -0.77
+    seed=1995   A=   79.21 B=   78.79 diff=   +0.42
+    mean_diff=-0.058 sd_diff=0.584 t=-0.197 p=0.8564 95%CI=[-0.986, 0.871] cohen_dz=-0.098
+    TOST margin=0.5 equivalent=False p_upper=0.0761 p_lower=0.1134
+
+########## C100 final: Dual-B vs EXP-009 ##########
+live_c100        n=4 mean=   87.95 std=    0.34
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                   87.55
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                   87.80
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                   88.14
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                88.32
+exp009_c100      n=4 mean=   88.04 std=    0.28
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                 87.88
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                 87.78
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                 88.08
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                              88.42
+sdlora_c100      n=4 mean=   86.75 std=    0.39
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                 86.16
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                 86.97
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                 86.93
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                              86.94
+dual_c100        n=4 mean=   87.82 std=    0.18
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                   87.73
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                   87.80
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                   87.67
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                88.08
+
+Paired dual_c100 - exp009_c100 (seed-joined, n=4):
+    seed=1      A=   87.73 B=   87.88 diff=   -0.15
+    seed=2      A=   87.80 B=   87.78 diff=   +0.02
+    seed=3      A=   87.67 B=   88.08 diff=   -0.41
+    seed=1993   A=   88.08 B=   88.42 diff=   -0.34
+    mean_diff=-0.220 sd_diff=0.194 t=-2.267 p=0.1082 95%CI=[-0.529, 0.089] cohen_dz=-1.134
+    TOST margin=0.5 equivalent=True p_upper=0.0025 p_lower=0.0316
+
+########## C100 final: Dual-B vs SD-LoRA ##########
+live_c100        n=4 mean=   87.95 std=    0.34
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                   87.55
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                   87.80
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                   88.14
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                88.32
+exp009_c100      n=4 mean=   88.04 std=    0.28
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                 87.88
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                 87.78
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                 88.08
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                              88.42
+sdlora_c100      n=4 mean=   86.75 std=    0.39
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                 86.16
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                 86.97
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                 86.93
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                              86.94
+dual_c100        n=4 mean=   87.82 std=    0.18
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                   87.73
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                   87.80
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                   87.67
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                88.08
+
+Paired dual_c100 - sdlora_c100 (seed-joined, n=4):
+    seed=1      A=   87.73 B=   86.16 diff=   +1.57
+    seed=2      A=   87.80 B=   86.97 diff=   +0.83
+    seed=3      A=   87.67 B=   86.93 diff=   +0.74
+    seed=1993   A=   88.08 B=   86.94 diff=   +1.14
+    mean_diff=+1.070 sd_diff=0.375 t=+5.710 p=0.0107 95%CI=[0.474, 1.666] cohen_dz=+2.855
+    TOST margin=0.5 equivalent=False p_upper=0.9721 p_lower=0.0018
+
+########## INR avg: Live-A vs EXP-009 ##########
+live_inr         n=4 mean=   82.45 std=    0.48
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                    82.80
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                    82.08
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                    82.93
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                 81.99
+exp009_inr       n=4 mean=   82.82 std=    0.47
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                  83.04
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                  82.39
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                  83.37
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                               82.48
+sdlora_inr       n=4 mean=   83.42 std=    1.09
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                  83.81
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                  82.12
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                  84.68
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                               83.07
+dual_inr         n=4 mean=   83.26 std=    0.81
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                    83.85
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                    82.28
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                    83.99
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                 82.94
+
+Paired live_inr - exp009_inr (seed-joined, n=4):
+    seed=1      A=   82.80 B=   83.04 diff=   -0.25
+    seed=2      A=   82.08 B=   82.39 diff=   -0.31
+    seed=3      A=   82.93 B=   83.37 diff=   -0.45
+    seed=1995   A=   81.99 B=   82.48 diff=   -0.49
+    mean_diff=-0.374 sd_diff=0.114 t=-6.585 p=0.0071 95%CI=[-0.554, -0.193] cohen_dz=-3.292
+    TOST margin=0.5 equivalent=False p_upper=0.0003 p_lower=0.0563
+
+########## INR avg: Live-A vs SD-LoRA ##########
+live_inr         n=4 mean=   82.45 std=    0.48
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                    82.80
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                    82.08
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                    82.93
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                 81.99
+exp009_inr       n=4 mean=   82.82 std=    0.47
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                  83.04
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                  82.39
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                  83.37
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                               82.48
+sdlora_inr       n=4 mean=   83.42 std=    1.09
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                  83.81
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                  82.12
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                  84.68
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                               83.07
+dual_inr         n=4 mean=   83.26 std=    0.81
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                    83.85
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                    82.28
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                    83.99
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                 82.94
+
+Paired live_inr - sdlora_inr (seed-joined, n=4):
+    seed=1      A=   82.80 B=   83.81 diff=   -1.02
+    seed=2      A=   82.08 B=   82.12 diff=   -0.04
+    seed=3      A=   82.93 B=   84.68 diff=   -1.75
+    seed=1995   A=   81.99 B=   83.07 diff=   -1.09
+    mean_diff=-0.973 sd_diff=0.705 t=-2.761 p=0.0701 95%CI=[-2.095, 0.148] cohen_dz=-1.381
+    TOST margin=0.5 equivalent=False p_upper=0.0125 p_lower=0.8641
+
+########## C100 avg: Live-A vs EXP-009 ##########
+live_c100        n=4 mean=   91.55 std=    0.33
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                   91.63
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                   91.33
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                   91.25
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                91.98
+exp009_c100      n=4 mean=   91.62 std=    0.37
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                 91.80
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                 91.40
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                 91.24
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                              92.05
+sdlora_c100      n=4 mean=   91.62 std=    0.24
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                 91.91
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                 91.38
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                 91.72
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                              91.47
+dual_c100        n=4 mean=   91.80 std=    0.30
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                   92.05
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                   91.84
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                   91.36
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                91.94
+
+Paired live_c100 - exp009_c100 (seed-joined, n=4):
+    seed=1      A=   91.63 B=   91.80 diff=   -0.17
+    seed=2      A=   91.33 B=   91.40 diff=   -0.06
+    seed=3      A=   91.25 B=   91.24 diff=   +0.00
+    seed=1993   A=   91.98 B=   92.05 diff=   -0.07
+    mean_diff=-0.074 sd_diff=0.070 t=-2.104 p=0.1261 95%CI=[-0.185, 0.038] cohen_dz=-1.052
+    TOST margin=0.5 equivalent=True p_upper=0.0002 p_lower=0.0006
+
+########## C100 avg: Live-A vs SD-LoRA ##########
+live_c100        n=4 mean=   91.55 std=    0.33
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                   91.63
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                   91.33
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                   91.25
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                91.98
+exp009_c100      n=4 mean=   91.62 std=    0.37
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                 91.80
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                 91.40
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                 91.24
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                              92.05
+sdlora_c100      n=4 mean=   91.62 std=    0.24
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                 91.91
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                 91.38
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                 91.72
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                              91.47
+dual_c100        n=4 mean=   91.80 std=    0.30
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                   92.05
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                   91.84
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                   91.36
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                91.94
+
+Paired live_c100 - sdlora_c100 (seed-joined, n=4):
+    seed=1      A=   91.63 B=   91.91 diff=   -0.29
+    seed=2      A=   91.33 B=   91.38 diff=   -0.05
+    seed=3      A=   91.25 B=   91.72 diff=   -0.48
+    seed=1993   A=   91.98 B=   91.47 diff=   +0.52
+    mean_diff=-0.074 sd_diff=0.431 t=-0.342 p=0.7549 95%CI=[-0.760, 0.613] cohen_dz=-0.171
+    TOST margin=0.5 equivalent=False p_upper=0.0382 p_lower=0.0713
+
+########## INR avg: Dual-B vs EXP-009 ##########
+live_inr         n=4 mean=   82.45 std=    0.48
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                    82.80
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                    82.08
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                    82.93
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                 81.99
+exp009_inr       n=4 mean=   82.82 std=    0.47
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                  83.04
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                  82.39
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                  83.37
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                               82.48
+sdlora_inr       n=4 mean=   83.42 std=    1.09
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                  83.81
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                  82.12
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                  84.68
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                               83.07
+dual_inr         n=4 mean=   83.26 std=    0.81
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                    83.85
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                    82.28
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                    83.99
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                 82.94
+
+Paired dual_inr - exp009_inr (seed-joined, n=4):
+    seed=1      A=   83.85 B=   83.04 diff=   +0.81
+    seed=2      A=   82.28 B=   82.39 diff=   -0.11
+    seed=3      A=   83.99 B=   83.37 diff=   +0.62
+    seed=1995   A=   82.94 B=   82.48 diff=   +0.46
+    mean_diff=+0.444 sd_diff=0.396 t=+2.246 p=0.1104 95%CI=[-0.185, 1.074] cohen_dz=+1.123
+    TOST margin=0.5 equivalent=False p_upper=0.3982 p_lower=0.0087
+
+########## INR avg: Dual-B vs SD-LoRA ##########
+live_inr         n=4 mean=   82.45 std=    0.48
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                    82.80
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                    82.08
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                    82.93
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                 81.99
+exp009_inr       n=4 mean=   82.82 std=    0.47
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                  83.04
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                  82.39
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                  83.37
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                               82.48
+sdlora_inr       n=4 mean=   83.42 std=    1.09
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                  83.81
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                  82.12
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                  84.68
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                               83.07
+dual_inr         n=4 mean=   83.26 std=    0.81
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                    83.85
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                    82.28
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                    83.99
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                 82.94
+
+Paired dual_inr - sdlora_inr (seed-joined, n=4):
+    seed=1      A=   83.85 B=   83.81 diff=   +0.04
+    seed=2      A=   82.28 B=   82.12 diff=   +0.16
+    seed=3      A=   83.99 B=   84.68 diff=   -0.69
+    seed=1995   A=   82.94 B=   83.07 diff=   -0.14
+    mean_diff=-0.155 sd_diff=0.376 t=-0.825 p=0.4697 95%CI=[-0.754, 0.443] cohen_dz=-0.413
+    TOST margin=0.5 equivalent=False p_upper=0.0200 p_lower=0.0821
+
+########## C100 avg: Dual-B vs EXP-009 ##########
+live_c100        n=4 mean=   91.55 std=    0.33
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                   91.63
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                   91.33
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                   91.25
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                91.98
+exp009_c100      n=4 mean=   91.62 std=    0.37
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                 91.80
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                 91.40
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                 91.24
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                              92.05
+sdlora_c100      n=4 mean=   91.62 std=    0.24
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                 91.91
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                 91.38
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                 91.72
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                              91.47
+dual_c100        n=4 mean=   91.80 std=    0.30
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                   92.05
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                   91.84
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                   91.36
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                91.94
+
+Paired dual_c100 - exp009_c100 (seed-joined, n=4):
+    seed=1      A=   92.05 B=   91.80 diff=   +0.26
+    seed=2      A=   91.84 B=   91.40 diff=   +0.44
+    seed=3      A=   91.36 B=   91.24 diff=   +0.12
+    seed=1993   A=   91.94 B=   92.05 diff=   -0.12
+    mean_diff=+0.175 sd_diff=0.235 t=+1.489 p=0.2333 95%CI=[-0.199, 0.550] cohen_dz=+0.744
+    TOST margin=0.5 equivalent=True p_upper=0.0351 p_lower=0.0053
+
+########## C100 avg: Dual-B vs SD-LoRA ##########
+live_c100        n=4 mean=   91.55 std=    0.33
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                   91.63
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                   91.33
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                   91.25
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                91.98
+exp009_c100      n=4 mean=   91.62 std=    0.37
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                 91.80
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                 91.40
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                 91.24
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                              92.05
+sdlora_c100      n=4 mean=   91.62 std=    0.24
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                 91.91
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                 91.38
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                 91.72
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                              91.47
+dual_c100        n=4 mean=   91.80 std=    0.30
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                   92.05
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                   91.84
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                   91.36
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                91.94
+
+Paired dual_c100 - sdlora_c100 (seed-joined, n=4):
+    seed=1      A=   92.05 B=   91.91 diff=   +0.14
+    seed=2      A=   91.84 B=   91.38 diff=   +0.46
+    seed=3      A=   91.36 B=   91.72 diff=   -0.36
+    seed=1993   A=   91.94 B=   91.47 diff=   +0.47
+    mean_diff=+0.175 sd_diff=0.390 t=+0.898 p=0.4355 95%CI=[-0.446, 0.797] cohen_dz=+0.449
+    TOST margin=0.5 equivalent=False p_upper=0.0974 p_lower=0.0203
+
+########## INR forgetting: Live-A vs EXP-009 ##########
+live_inr         n=4 mean=    7.95 std=    1.10
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                     6.96
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                     8.65
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                     9.13
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                  7.08
+exp009_inr       n=4 mean=    7.80 std=    1.02
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                   7.10
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                   8.21
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                   9.03
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                                6.84
+sdlora_inr       n=4 mean=    7.79 std=    1.57
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                   8.00
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                   9.68
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                   7.62
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                                5.85
+dual_inr         n=4 mean=    8.02 std=    1.07
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                     7.52
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                     8.42
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                     9.30
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                  6.85
+
+Paired live_inr - exp009_inr (seed-joined, n=4):
+    seed=1      A=    6.96 B=    7.10 diff=   -0.14
+    seed=2      A=    8.65 B=    8.21 diff=   +0.44
+    seed=3      A=    9.13 B=    9.03 diff=   +0.10
+    seed=1995   A=    7.08 B=    6.84 diff=   +0.24
+    mean_diff=+0.158 sd_diff=0.245 t=+1.294 p=0.2863 95%CI=[-0.231, 0.548] cohen_dz=+0.647
+    TOST margin=0.5 equivalent=True p_upper=0.0341 p_lower=0.0063
+
+########## INR forgetting: Live-A vs SD-LoRA ##########
+live_inr         n=4 mean=    7.95 std=    1.10
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                     6.96
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                     8.65
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                     9.13
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                  7.08
+exp009_inr       n=4 mean=    7.80 std=    1.02
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                   7.10
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                   8.21
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                   9.03
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                                6.84
+sdlora_inr       n=4 mean=    7.79 std=    1.57
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                   8.00
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                   9.68
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                   7.62
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                                5.85
+dual_inr         n=4 mean=    8.02 std=    1.07
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                     7.52
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                     8.42
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                     9.30
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                  6.85
+
+Paired live_inr - sdlora_inr (seed-joined, n=4):
+    seed=1      A=    6.96 B=    8.00 diff=   -1.04
+    seed=2      A=    8.65 B=    9.68 diff=   -1.03
+    seed=3      A=    9.13 B=    7.62 diff=   +1.51
+    seed=1995   A=    7.08 B=    5.85 diff=   +1.23
+    mean_diff=+0.166 sd_diff=1.393 t=+0.238 p=0.8271 95%CI=[-2.050, 2.382] cohen_dz=+0.119
+    TOST margin=0.5 equivalent=False p_upper=0.3321 p_lower=0.2048
+
+########## C100 forgetting: Live-A vs EXP-009 ##########
+live_c100        n=4 mean=    8.75 std=    0.58
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                    9.54
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                    8.76
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                    8.50
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                 8.19
+exp009_c100      n=4 mean=    8.63 std=    0.53
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                  9.19
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                  8.86
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                  8.54
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                               7.93
+sdlora_c100      n=4 mean=    6.27 std=    1.20
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                  8.08
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                  5.73
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                  5.68
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                               5.61
+dual_c100        n=4 mean=    9.11 std=    0.42
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                    9.68
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                    8.68
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                    9.13
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                 8.94
+
+Paired live_c100 - exp009_c100 (seed-joined, n=4):
+    seed=1      A=    9.54 B=    9.19 diff=   +0.36
+    seed=2      A=    8.76 B=    8.86 diff=   -0.10
+    seed=3      A=    8.50 B=    8.54 diff=   -0.04
+    seed=1993   A=    8.19 B=    7.93 diff=   +0.26
+    mean_diff=+0.117 sd_diff=0.223 t=+1.046 p=0.3724 95%CI=[-0.238, 0.472] cohen_dz=+0.523
+    TOST margin=0.5 equivalent=True p_upper=0.0207 p_lower=0.0058
+
+########## C100 forgetting: Live-A vs SD-LoRA ##########
+live_c100        n=4 mean=    8.75 std=    0.58
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                    9.54
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                    8.76
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                    8.50
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                 8.19
+exp009_c100      n=4 mean=    8.63 std=    0.53
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                  9.19
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                  8.86
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                  8.54
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                               7.93
+sdlora_c100      n=4 mean=    6.27 std=    1.20
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                  8.08
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                  5.73
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                  5.68
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                               5.61
+dual_c100        n=4 mean=    9.11 std=    0.42
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                    9.68
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                    8.68
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                    9.13
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                 8.94
+
+Paired live_c100 - sdlora_c100 (seed-joined, n=4):
+    seed=1      A=    9.54 B=    8.08 diff=   +1.47
+    seed=2      A=    8.76 B=    5.73 diff=   +3.02
+    seed=3      A=    8.50 B=    5.68 diff=   +2.82
+    seed=1993   A=    8.19 B=    5.61 diff=   +2.58
+    mean_diff=+2.472 sd_diff=0.695 t=+7.119 p=0.0057 95%CI=[1.367, 3.577] cohen_dz=+3.559
+    TOST margin=0.5 equivalent=False p_upper=0.9946 p_lower=0.0017
+
+########## INR forgetting: Dual-B vs EXP-009 ##########
+live_inr         n=4 mean=    7.95 std=    1.10
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                     6.96
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                     8.65
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                     9.13
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                  7.08
+exp009_inr       n=4 mean=    7.80 std=    1.02
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                   7.10
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                   8.21
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                   9.03
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                                6.84
+sdlora_inr       n=4 mean=    7.79 std=    1.57
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                   8.00
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                   9.68
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                   7.62
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                                5.85
+dual_inr         n=4 mean=    8.02 std=    1.07
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                     7.52
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                     8.42
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                     9.30
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                  6.85
+
+Paired dual_inr - exp009_inr (seed-joined, n=4):
+    seed=1      A=    7.52 B=    7.10 diff=   +0.42
+    seed=2      A=    8.42 B=    8.21 diff=   +0.21
+    seed=3      A=    9.30 B=    9.03 diff=   +0.27
+    seed=1995   A=    6.85 B=    6.84 diff=   +0.01
+    mean_diff=+0.229 sd_diff=0.168 t=+2.717 p=0.0727 95%CI=[-0.039, 0.497] cohen_dz=+1.358
+    TOST margin=0.5 equivalent=True p_upper=0.0243 p_lower=0.0016
+
+########## INR forgetting: Dual-B vs SD-LoRA ##########
+live_inr         n=4 mean=    7.95 std=    1.10
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_inr_seed1.log                                     6.96
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_inr_seed2.log                                     8.65
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_inr_seed3.log                                     9.13
+    seed=1995   /tmp/tmp.BjRHo2ACEi/live_inr_seed1995.log                                  7.08
+exp009_inr       n=4 mean=    7.80 std=    1.02
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1.log                                   7.10
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed2.log                                   8.21
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_inr_seed3.log                                   9.03
+    seed=1995   /tmp/tmp.BjRHo2ACEi/exp009_inr_seed1995.log                                6.84
+sdlora_inr       n=4 mean=    7.79 std=    1.57
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1.log                                   8.00
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed2.log                                   9.68
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed3.log                                   7.62
+    seed=1995   /tmp/tmp.BjRHo2ACEi/sdlora_inr_seed1995.log                                5.85
+dual_inr         n=4 mean=    8.02 std=    1.07
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_inr_seed1.log                                     7.52
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_inr_seed2.log                                     8.42
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_inr_seed3.log                                     9.30
+    seed=1995   /tmp/tmp.BjRHo2ACEi/dual_inr_seed1995.log                                  6.85
+
+Paired dual_inr - sdlora_inr (seed-joined, n=4):
+    seed=1      A=    7.52 B=    8.00 diff=   -0.48
+    seed=2      A=    8.42 B=    9.68 diff=   -1.25
+    seed=3      A=    9.30 B=    7.62 diff=   +1.68
+    seed=1995   A=    6.85 B=    5.85 diff=   +1.00
+    mean_diff=+0.236 sd_diff=1.342 t=+0.352 p=0.7480 95%CI=[-1.900, 2.372] cohen_dz=+0.176
+    TOST margin=0.5 equivalent=False p_upper=0.3604 p_lower=0.1764
+
+########## C100 forgetting: Dual-B vs EXP-009 ##########
+live_c100        n=4 mean=    8.75 std=    0.58
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                    9.54
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                    8.76
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                    8.50
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                 8.19
+exp009_c100      n=4 mean=    8.63 std=    0.53
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                  9.19
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                  8.86
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                  8.54
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                               7.93
+sdlora_c100      n=4 mean=    6.27 std=    1.20
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                  8.08
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                  5.73
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                  5.68
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                               5.61
+dual_c100        n=4 mean=    9.11 std=    0.42
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                    9.68
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                    8.68
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                    9.13
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                 8.94
+
+Paired dual_c100 - exp009_c100 (seed-joined, n=4):
+    seed=1      A=    9.68 B=    9.19 diff=   +0.49
+    seed=2      A=    8.68 B=    8.86 diff=   -0.18
+    seed=3      A=    9.13 B=    8.54 diff=   +0.59
+    seed=1993   A=    8.94 B=    7.93 diff=   +1.01
+    mean_diff=+0.478 sd_diff=0.492 t=+1.942 p=0.1475 95%CI=[-0.305, 1.261] cohen_dz=+0.971
+    TOST margin=0.5 equivalent=False p_upper=0.4669 p_lower=0.0143
+
+########## C100 forgetting: Dual-B vs SD-LoRA ##########
+live_c100        n=4 mean=    8.75 std=    0.58
+    seed=1      /tmp/tmp.BjRHo2ACEi/live_c100_seed1.log                                    9.54
+    seed=2      /tmp/tmp.BjRHo2ACEi/live_c100_seed2.log                                    8.76
+    seed=3      /tmp/tmp.BjRHo2ACEi/live_c100_seed3.log                                    8.50
+    seed=1993   /tmp/tmp.BjRHo2ACEi/live_c100_seed1993.log                                 8.19
+exp009_c100      n=4 mean=    8.63 std=    0.53
+    seed=1      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1.log                                  9.19
+    seed=2      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed2.log                                  8.86
+    seed=3      /tmp/tmp.BjRHo2ACEi/exp009_c100_seed3.log                                  8.54
+    seed=1993   /tmp/tmp.BjRHo2ACEi/exp009_c100_seed1993.log                               7.93
+sdlora_c100      n=4 mean=    6.27 std=    1.20
+    seed=1      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1.log                                  8.08
+    seed=2      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed2.log                                  5.73
+    seed=3      /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed3.log                                  5.68
+    seed=1993   /tmp/tmp.BjRHo2ACEi/sdlora_c100_seed1993.log                               5.61
+dual_c100        n=4 mean=    9.11 std=    0.42
+    seed=1      /tmp/tmp.BjRHo2ACEi/dual_c100_seed1.log                                    9.68
+    seed=2      /tmp/tmp.BjRHo2ACEi/dual_c100_seed2.log                                    8.68
+    seed=3      /tmp/tmp.BjRHo2ACEi/dual_c100_seed3.log                                    9.13
+    seed=1993   /tmp/tmp.BjRHo2ACEi/dual_c100_seed1993.log                                 8.94
+
+Paired dual_c100 - sdlora_c100 (seed-joined, n=4):
+    seed=1      A=    9.68 B=    8.08 diff=   +1.60
+    seed=2      A=    8.68 B=    5.73 diff=   +2.94
+    seed=3      A=    9.13 B=    5.68 diff=   +3.46
+    seed=1993   A=    8.94 B=    5.61 diff=   +3.33
+    mean_diff=+2.833 sd_diff=0.851 t=+6.662 p=0.0069 95%CI=[1.480, 4.187] cohen_dz=+3.331
+    TOST margin=0.5 equivalent=False p_upper=0.9940 p_lower=0.0022
+

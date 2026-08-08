@@ -39,6 +39,16 @@ link sdlora_c100_seed1_proto_baseline_paired_rerun.log sdlora_c100_seed1.log
 link sdlora_c100_seed2_proto_baseline_paired_rerun.log sdlora_c100_seed2.log
 link sdlora_c100_seed3_proto_baseline_paired_rerun.log sdlora_c100_seed3.log
 
+# Stage B2 Schedule B dual-head runs.
+link live_a_dual_head_inr_seed1995_b.log dual_inr_seed1995.log
+link live_a_dual_head_inr_seed1_b.log dual_inr_seed1.log
+link live_a_dual_head_inr_seed2_b.log dual_inr_seed2.log
+link live_a_dual_head_inr_seed3_b.log dual_inr_seed3.log
+link live_a_dual_head_c100_seed1993_b.log dual_c100_seed1993.log
+link live_a_dual_head_c100_seed1_b.log dual_c100_seed1.log
+link live_a_dual_head_c100_seed2_b.log dual_c100_seed2.log
+link live_a_dual_head_c100_seed3_b.log dual_c100_seed3.log
+
 cd "$ROOT"
 run_pair() {
   local metric="$1"
@@ -49,6 +59,7 @@ run_pair() {
     --group "live_${ds}" "$TMP/live_${ds}_seed*.log" \
     --group "exp009_${ds}" "$TMP/exp009_${ds}_seed*.log" \
     --group "sdlora_${ds}" "$TMP/sdlora_${ds}_seed*.log" \
+    --group "dual_${ds}" "$TMP/dual_${ds}_seed*.log" \
     --metric "$metric" \
     --paired "$a" "$b" --margin 0.5
 }
@@ -65,5 +76,17 @@ for metric in final avg forgetting; do
   echo
   echo "########## C100 ${metric}: Live-A vs SD-LoRA ##########"
   run_pair "$metric" c100 live_c100 sdlora_c100
+  echo
+  echo "########## INR ${metric}: Dual-B vs EXP-009 ##########"
+  run_pair "$metric" inr dual_inr exp009_inr
+  echo
+  echo "########## INR ${metric}: Dual-B vs SD-LoRA ##########"
+  run_pair "$metric" inr dual_inr sdlora_inr
+  echo
+  echo "########## C100 ${metric}: Dual-B vs EXP-009 ##########"
+  run_pair "$metric" c100 dual_c100 exp009_c100
+  echo
+  echo "########## C100 ${metric}: Dual-B vs SD-LoRA ##########"
+  run_pair "$metric" c100 dual_c100 sdlora_c100
   echo
 done

@@ -1,5 +1,5 @@
 {
-    "prefix": "live_a_rng_smoke_control_c100_seed1",
+    "prefix": "live_a_rng_smoke_control_r1_c100_seed1",
     "dataset": "cifar224",
     "memory_size": 0,
     "memory_per_class": 0,
@@ -11,8 +11,9 @@
     "backbone_type": "vit_base_patch16_224",
     "device": ["0"],
     "seed": [1],
+    "dist_backend": "gloo",
     "scheduler": "constant",
-    "filepath": "./CF100_LIVE_A_RNG_SMOKE_CONTROL/",
+    "filepath": "./CF100_P0_CONTROL_CLEAN_R1/",
     "init_epoch": 2,
     "init_lr": 0.008,
     "init_milestones": [10000],

@@ -677,3 +677,22 @@
   - `models/sdlora.py`：保存 `_eval_test_dataset` 供单遍评估使用。
 - 测试：新增 `tests/test_rng_neutral_dual_head.py`（RNG 恢复、固定 Generator loader、三头 logits 公式、参数 diff）；命令 `python -m pytest -q`，结果 **85 passed**。
 - 下一步：4 卡两任务 smoke（纯 Live control vs Dual-B），确认任务训练结束时的参数 hash/RNG 状态一致；随后 P1 受控重跑。
+
+## 2026-08-09 P0 RNG audit 修复与 clean smoke 完成（SMOKE PASS）
+
+- 依据 `p0_rng_audit_fix_guide_sd.md` 完成实现：
+  - `trainer.py`：Python/NumPy/Torch CPU/当前 CUDA device 统一 seed，strict deterministic backend 在 `DataManager`、模型、DataLoader 之前设置；`CUBLAS_WORKSPACE_CONFIG` 由启动脚本导出。
+  - fresh-run guard：task0 遇到旧 `sa_state.pt` 抛 `FileExistsError`；显式 `sa_resume=true` + `run_manifest.json` 才能恢复。
+  - 运行锁：`utils/run_guard.py` 对 `<filepath>.lock` 使用非阻塞 `flock`，目标目录已存在即失败，并写 Git commit / config SHA-256 / 启动命令 / run ID 到 `run_manifest.json`。
+  - RNG：`utils/rng_utils.py` 只保存/恢复当前 rank 的 CUDA device RNG，不再触碰其他 rank GPU；新增 `rng_state_hash()`，calibration/eval 前后断言完全一致。
+  - canonical hash：`utils/canonical_hash.py` 按 key、shape、dtype、contiguous CPU 原始数据计算 tensor hash；不一致时输出第一个 tensor key、shape、`max_abs_diff`。
+  - DDP 同步：prototype tensor、`lambda/tau` 由 rank0 broadcast 到所有 rank；新增 `all_ranks_equal` all-gather 断言，四 rank prototype/校准参数不一致即失败。
+  - 单遍评估：fused/FC/prototype 三头同一次测试 DataLoader 遍历；`lambda=1` 时 fused/prototype logits 最大差 ≤1e-6。
+  - 记录 `post_train_hash`（训练结束、任何校准/评估前）与 `post_eval_hash`，同时写入各运行目录的 `p0_hashes.json`。
+- 测试：`python -m pytest -q`，结果 **96 passed**（新增 fresh-dir、task1 同 run 加载、并发锁、strict backend、RNG hash、canonical hash、四 rank DDP sync、单遍三头评估等测试）。
+- Clean smoke（4 卡、2 tasks、2 epochs，串行）：
+  - `CF100_P0_CONTROL_CLEAN_R1/R2`：每个 task 的 `post_train_hash`、`post_eval_hash`、RNG hash 完全一致；指标 `92.96 / 90.51499999999999` 完全一致。
+  - `CF100_P0_DUAL_B_CLEAN_R1`：task0/task1 `post_train_hash` 与 control 完全一致（task0 `5f8c5298519f541600d4452f85f3f776bad0df0c9b1d4abeed943f1fe3e0f37f`，task1 `e031dad1060a5fd0cba4707024581d3538df961f3772e4e4f4796fa55da001be`）；eval 前后 RNG hash 与 control 一致；四 rank `lambda/tau` 一致；最终 `lambda=1` fused/proto logits 检查 PASS。
+  - 日志中无 `non-deterministic` / memory-efficient attention / `warn_only=True` warning。
+  - 脚本输出：`SMOKE PASS`。
+- 旧 `D2` 及所有诊断/中间 clean 运行已登记到 `INVALID_RUNS.md`，不进入实验表。

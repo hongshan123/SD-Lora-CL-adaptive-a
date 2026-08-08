@@ -1,5 +1,5 @@
 {
-    "prefix": "live_a_rng_smoke_dual_b_r1_c100_seed1",
+    "prefix": "live_a_rng_smoke_control_r2_c100_seed1",
     "dataset": "cifar224",
     "memory_size": 0,
     "memory_per_class": 0,
@@ -13,7 +13,7 @@
     "seed": [1],
     "dist_backend": "gloo",
     "scheduler": "constant",
-    "filepath": "./CF100_P0_DUAL_B_CLEAN_R1/",
+    "filepath": "./CF100_P0_CONTROL_CLEAN_R2/",
     "init_epoch": 2,
     "init_lr": 0.008,
     "init_milestones": [10000],
@@ -33,7 +33,5 @@
     "sa_cumulative_state": true,
     "sa_cumulative_merge": "live_a_aggregate_b",
     "sa_live_a_history_groups": 1,
-    "sa_deterministic_training": true,
-    "sa_dual_head": true,
-    "sa_dual_head_schedule": "B"
+    "sa_deterministic_training": true
 }

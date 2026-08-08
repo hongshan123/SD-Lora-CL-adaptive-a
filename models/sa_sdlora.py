@@ -61,6 +61,15 @@ class Learner(SDLoraLearner):
             self._network = SharedACosineNet(args, True)
         elif use_prototypes:
             self._network = SharedAPrototypeNet(args, True)
+        self._dual_head = bool(args.get("sa_dual_head", False))
+        self._dual_schedule = args.get("sa_dual_head_schedule", "A")
+        if self._dual_head and not use_prototypes:
+            raise ValueError(
+                "sa_dual_head requires sa_use_prototype_classifier=True"
+            )
+        if self._dual_schedule not in ("A", "B"):
+            raise ValueError("sa_dual_head_schedule must be A or B")
+        self._dual_num_tasks = 0
         self._lrpt_enabled = bool(args.get("lrpt_enabled", False))
         if self._lrpt_enabled and not use_prototypes:
             raise ValueError(
@@ -148,6 +157,7 @@ class Learner(SDLoraLearner):
         return model
 
     def incremental_train(self, data_manager):
+        self._dual_num_tasks = data_manager.nb_tasks
         # Capture the current task's features in the *previous* model state
         # before Shared-A is updated. Only current-task data is touched.
         if (
@@ -277,7 +287,75 @@ class Learner(SDLoraLearner):
                     "[SharedA-SDLoRA] prototype classifier active for %d classes",
                     len(prototypes),
                 )
+                if self._dual_head:
+                    self._prepare_dual_head(data_manager, raw_network)
                 raw_network.backbone.cleanup_per_task_files(self.args["filepath"])
+
+    def eval_task(self):
+        cnn_accy, nme_accy = super().eval_task()
+        if self._dual_head and self._is_main_process():
+            raw_network = self._raw_network()
+            for mode in ("fc", "proto"):
+                raw_network.set_head_mode(mode)
+                mode_accy, _ = super().eval_task()
+                logging.info(
+                    "[DualHead] task %d mode=%s top1=%.2f top5=%.2f",
+                    self._cur_task,
+                    mode,
+                    mode_accy["top1"],
+                    mode_accy["top5"],
+                )
+            raw_network.set_head_mode("fused")
+        return cnn_accy, nme_accy
+
+    def _dual_lambda(self, task_id, num_tasks):
+        if num_tasks <= 1:
+            return 1.0
+        progress = task_id / (num_tasks - 1)
+        width = 4.0 / 9.0
+        start = 0.0 if self._dual_schedule == "A" else 1.0 / 9.0
+        return min(1.0, max(0.0, (progress - start) / width))
+
+    @staticmethod
+    def _fit_dual_temperature(logits, targets, lo=0.05, hi=5.0, steps=60):
+        best_tau, best_loss = 1.0, float("inf")
+        for tau in torch.linspace(lo, hi, steps).tolist():
+            loss = F.cross_entropy(logits / tau, targets).item()
+            if loss < best_loss:
+                best_loss, best_tau = loss, tau
+        return best_tau
+
+    def _prepare_dual_head(self, data_manager, raw_network):
+        features, targets = self._extract_current_task_features(
+            data_manager, return_targets=True
+        )
+        features = features.to(self._device)
+        targets = targets.to(self._device)
+        raw_network.eval()
+        with torch.no_grad():
+            fc_logits = raw_network.fc(features)["logits"]
+            proto_logits = raw_network.prototype_head(features)["logits"]
+        tau_fc = self._fit_dual_temperature(fc_logits, targets)
+        tau_proto = self._fit_dual_temperature(proto_logits, targets)
+        lambda_val = self._dual_lambda(self._cur_task, self._dual_num_tasks)
+        raw_network.set_dual_head(lambda_val, tau_fc, tau_proto)
+        state = {
+            "schedule": self._dual_schedule,
+            "task_id": self._cur_task,
+            "num_tasks": self._dual_num_tasks,
+            "lambda": lambda_val,
+            "tau_fc": tau_fc,
+            "tau_proto": tau_proto,
+        }
+        torch.save(state, os.path.join(self.args["filepath"], "sa_dual_head.pt"))
+        logging.info(
+            "[DualHead] task %d schedule=%s lambda=%.3f tau_fc=%.3f tau_proto=%.3f",
+            self._cur_task,
+            self._dual_schedule,
+            lambda_val,
+            tau_fc,
+            tau_proto,
+        )
 
     def _additional_training_losses(
         self, inputs=None, targets=None, features=None

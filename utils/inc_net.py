@@ -415,9 +415,26 @@ class SharedAPrototypeNet(IncrementalNet):
     def __init__(self, args, pretrained):
         super(SharedAPrototypeNet, self).__init__(args, pretrained)
         self.prototype_head = None
+        self.head_mode = "proto"
+        self.dual_head = False
+        self.dual_lambda = 0.0
+        self.tau_fc = 1.0
+        self.tau_proto = 1.0
 
     def set_prototypes(self, prototypes):
         self.prototype_head = PrototypeCosineHead(prototypes).to(self._device)
+
+    def set_head_mode(self, mode):
+        if mode not in ("fc", "proto", "fused"):
+            raise ValueError("head_mode must be fc/proto/fused")
+        self.head_mode = mode
+
+    def set_dual_head(self, lambda_val, tau_fc, tau_proto):
+        self.dual_head = True
+        self.dual_lambda = float(lambda_val)
+        self.tau_fc = float(tau_fc)
+        self.tau_proto = float(tau_proto)
+        self.head_mode = "fused"
 
     def forward(self, x, ortho_loss=False, eval=False):
         if eval:
@@ -437,6 +454,21 @@ class SharedAPrototypeNet(IncrementalNet):
         x = self.backbone(x)
         if self.training or self.prototype_head is None:
             out = self.fc(x)
+        elif self.head_mode == "fc":
+            out = self.fc(x)
+        elif self.head_mode == "proto":
+            out = self.prototype_head(x)
+        elif self.head_mode == "fused" and self.dual_head:
+            fc_out = self.fc(x)
+            proto_out = self.prototype_head(x)
+            fc_logits = fc_out["logits"] / self.tau_fc
+            proto_logits = proto_out["logits"] / self.tau_proto
+            out = {
+                "logits": (1.0 - self.dual_lambda) * fc_logits
+                + self.dual_lambda * proto_logits,
+                "logits_fc": fc_logits,
+                "logits_proto": proto_logits,
+            }
         else:
             out = self.prototype_head(x)
         out.update({"features": x})

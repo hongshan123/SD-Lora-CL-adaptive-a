@@ -69,6 +69,10 @@ class Learner(SDLoraLearner):
             )
         if self._dual_schedule not in ("A", "B"):
             raise ValueError("sa_dual_head_schedule must be A or B")
+        if self._dual_head and int(args.get("sa_k_prototypes", 1)) > 1:
+            raise ValueError(
+                "sa_dual_head and sa_k_prototypes>1 are mutually exclusive"
+            )
         self._dual_num_tasks = 0
         self._lrpt_enabled = bool(args.get("lrpt_enabled", False))
         if self._lrpt_enabled and not use_prototypes:
@@ -801,8 +805,7 @@ class Learner(SDLoraLearner):
             pin_memory=True,
         )
         raw_network.eval()
-        sums = {c: None for c in cur_classes.tolist()}
-        counts = {c: 0 for c in cur_classes.tolist()}
+        per_class = {c: [] for c in cur_classes.tolist()}
         with torch.no_grad():
             for _, inputs, targets in loader:
                 inputs = inputs.to(self._device, non_blocking=True)
@@ -810,13 +813,18 @@ class Learner(SDLoraLearner):
                 if not self.args.get("sa_raw_prototypes", False):
                     feats = F.normalize(feats, p=2, dim=1)
                 for f, target in zip(feats.cpu(), targets):
-                    c = int(target.item())
-                    if sums[c] is None:
-                        sums[c] = f.clone()
-                    else:
-                        sums[c] = sums[c] + f
-                    counts[c] += 1
-        prototypes = {c: F.normalize(sums[c], p=2, dim=0) for c in cur_classes.tolist()}
+                    per_class[int(target.item())].append(f)
+        k_prototypes = int(self.args.get("sa_k_prototypes", 1))
+        if k_prototypes <= 1:
+            prototypes = {
+                c: F.normalize(torch.stack(per_class[c]).mean(dim=0), p=2, dim=0)
+                for c in cur_classes.tolist()
+            }
+        else:
+            prototypes = {
+                c: self._cluster_prototypes(per_class[c], k_prototypes)
+                for c in cur_classes.tolist()
+            }
         path = os.path.join(self.args["filepath"], PROTOTYPES_FILENAME)
         if os.path.exists(path):
             old = torch.load(path, map_location="cpu", weights_only=True)
@@ -824,6 +832,35 @@ class Learner(SDLoraLearner):
                 prototypes.setdefault(int(class_id), vector)
         torch.save(prototypes, path)
         return prototypes
+
+    @staticmethod
+    def _cluster_prototypes(features, k, iterations=20):
+        feats = torch.stack(features)
+        if len(feats) <= k:
+            mean = F.normalize(feats.mean(dim=0), p=2, dim=0)
+            return [mean.clone() for _ in range(k)]
+        centers = [feats[0].clone()]
+        for _ in range(1, k):
+            dists = (feats - centers[-1]).pow(2).sum(dim=1)
+            centers.append(feats[dists.argmax()].clone())
+        centers = torch.stack(centers)
+        for _ in range(iterations):
+            dists = torch.stack(
+                [(feats - center).pow(2).sum(dim=1) for center in centers]
+            )
+            assignments = dists.argmin(dim=0)
+            new_centers = []
+            for j in range(k):
+                mask = assignments == j
+                if mask.sum() > 0:
+                    new_centers.append(feats[mask].mean(dim=0))
+                else:
+                    new_centers.append(centers[j].clone())
+            centers = torch.stack(new_centers)
+        return [
+            F.normalize(center, p=2, dim=0).detach().clone()
+            for center in centers
+        ]
 
     def _rebuild_eval_backbone(self):
         """Rebuild the backbone from saved artifacts so each task counts once."""

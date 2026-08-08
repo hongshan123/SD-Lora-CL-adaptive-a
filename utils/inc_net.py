@@ -7,6 +7,7 @@ from backbone.linears import (
     SplitCosineLinear,
     CosineLinear,
     PrototypeCosineHead,
+    MultiPrototypeCosineHead,
 )
 from backbone.prompt import CodaPrompt
 import timm
@@ -422,7 +423,14 @@ class SharedAPrototypeNet(IncrementalNet):
         self.tau_proto = 1.0
 
     def set_prototypes(self, prototypes):
-        self.prototype_head = PrototypeCosineHead(prototypes).to(self._device)
+        first = next(iter(prototypes.values()))
+        if isinstance(first, (list, tuple)):
+            self.prototype_head = MultiPrototypeCosineHead(
+                prototypes,
+                aggregate=self.args.get("sa_k_prototype_aggregate", "max"),
+            ).to(self._device)
+        else:
+            self.prototype_head = PrototypeCosineHead(prototypes).to(self._device)
 
     def set_head_mode(self, mode):
         if mode not in ("fc", "proto", "fused"):

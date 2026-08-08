@@ -15,7 +15,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backbone.linears import PrototypeCosineHead
+from backbone.linears import MultiPrototypeCosineHead, PrototypeCosineHead
 from backbone.sa_lora import SharedALoRA_ViT_timm
 from scripts.evaluate_sa_sdlora import build_merged_backbone
 from utils.data_manager import DataManager
@@ -99,7 +99,14 @@ def main():
     proto_path = "{}/sa_prototypes.pt".format(cli.artifact)
     if Path(proto_path).exists():
         prototypes = torch.load(proto_path, map_location="cpu", weights_only=True)
-        head = PrototypeCosineHead(prototypes).to(device)
+        first = next(iter(prototypes.values()))
+        if isinstance(first, (list, tuple)):
+            head = MultiPrototypeCosineHead(
+                prototypes,
+                aggregate=config.get("sa_k_prototype_aggregate", "max"),
+            ).to(device)
+        else:
+            head = PrototypeCosineHead(prototypes).to(device)
         with torch.no_grad():
             logits_a = head(feats_a)["logits"]
             logits_b = head(feats_b)["logits"]

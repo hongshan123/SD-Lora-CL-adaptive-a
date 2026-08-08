@@ -158,6 +158,8 @@ class Learner(SDLoraLearner):
 
     def incremental_train(self, data_manager):
         self._dual_num_tasks = data_manager.nb_tasks
+        if self._dual_head:
+            self._raw_network().set_head_mode("fc")
         # Capture the current task's features in the *previous* model state
         # before Shared-A is updated. Only current-task data is touched.
         if (

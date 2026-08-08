@@ -631,3 +631,8 @@
 - C100 seed1993（训练日志 proto AvgAcc=91.985）：fc AvgAcc=91.417、proto final-space=92.635、fusion A=92.857、fusion B=92.802；相对训练日志 prototype，A/B 提升约 **+0.87/+0.82**。
 - INR seed1995（训练日志 proto AvgAcc=81.99）：fc AvgAcc=83.776、proto final-space=84.475、fusion A=84.375、fusion B=84.398；相对训练日志 prototype，A/B 提升约 **+2.39/+2.41**。
 - 判定：两个预注册调度在双数据集诊断中相对当前训练日志 prototype 的提升均 ≥0.7，触发正式双头训练实现（目标文件 §6.2 第 3 步）。注意：final-space 诊断本身不作为最终验收，正式双头重跑为准。
+
+## 2026-08-08 Stage B2 双头正式实现首次运行修复
+
+- 首次运行 A 在 task1 epoch5 崩溃：新任务训练中 `_compute_accuracy` 仍使用上一任务的 fused 头，40 类 FC logits 与 20 类 prototype logits 拼接 shape 不匹配。
+- 修复：`incremental_train` 每个任务开始前把 `head_mode` 重置为 `fc`，任务结束校准后再切 `fused`；全量测试 81 passed。失败日志保留为 `live_a_dual_head_inr_seed1995_{a,b}.failed.log`，输出目录改用 `*_A2/_B2` 避免复用部分产物。

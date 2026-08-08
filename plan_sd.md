@@ -157,3 +157,11 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 | 相关性分析 | 初算完成（`scripts/drift_forgetting_correlation.py`）：operator drift 弱相关（r=0.26）、控制组负相关（r=-0.73，塑性混杂）、gauge 诊断零方差、LRPT drift 弱相关；论文按此如实报告 |
 | 参数量随 T 曲线 | v2 恒定 371,040（LoRA）；v1 线性增长可解析计算，论文阶段制图 |
 | 论文初稿 | 首稿完成（`paper_output/first_draft/main.md`，含 spine/evidence/claims/citations/blueprints/rationale 全套构件，commit `3b9b4d6`）；待补：引用核实、训练显存表、图与 LaTeX |
+
+## 9. Live-A Aggregate-B 状态（2026-08-08）
+
+- 机制：v4 O(1) 聚合状态，LoRA 368,640（10%），无逐任务 B/旧数据/task-id/router；Live-A INR seed1995 Final 79.43 / AvgAcc 81.99 / F 7.08；C100 seed1993 Final 88.32 / AvgAcc 91.99 / F 8.19（Stage A 通过）。
+- Stage B 多 seed：C100 相对 EXP-009 通过（TOST 等价）；INR AvgAcc 相对 EXP-009 -0.374（p=0.007）未过门槛，相对 SD-LoRA -0.973。
+- Stage B2 双头：Schedule B 修复 INR AvgAcc（83.26±0.81，相对 EXP-009 +0.44），但 INR Final 相对 EXP-009 -0.53、C100 Forgetting 相对 SD-LoRA +2.83，严格门槛未过。
+- K=2 prototype 后备：INR max 78.56/81.34/7.55、logsumexp 77.51/81.08/7.67，均低于 K=1 与 SD-LoRA，停止。
+- 结论：Live-A 不升级为论文主方法；保留为“固定 O(1) 状态、Final 优先”的消融/负结果记录。所有实验日志、统计脚本、文档与 Git 提交已同步。

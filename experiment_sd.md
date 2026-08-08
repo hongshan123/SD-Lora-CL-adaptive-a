@@ -630,3 +630,19 @@
   - 但严格多 seed 门槛未完全通过：INR Final 相对 EXP-009 -0.53（< -0.30）；INR Final 相对 SD-LoRA -0.058（略低于 0）；C100 Forgetting 相对 SD-LoRA +2.83（显著代价，必须报告）。
   - 最终任务 lambda=1，Final 与同次运行的纯 prototype 一致（满足“不靠测试选择切换点/最终 lambda<1”的禁止项）。
 - 结论：双头融合作为“AAA 修复”机制有效（AvgAcc 恢复），但未达到“保持 Final 优势 + 不显著牺牲 Forgetting”的完整验收。按目标文件 §6.4，进入唯一后备方向：每类 K=2 prototype + max/logsumexp 聚合诊断（不再扫描调度）。
+
+## EXP-027 K=2 每类双 prototype 后备方向（INR seed1995）
+
+- 日期：2026-08-08
+- 状态：完成（负结果）
+- 实现：`MultiPrototypeCosineHead`（max / logsumexp 聚合）；`_compute_prototypes` 对每类当前任务训练特征做确定性 k-means（k=2，farthest-first 初始化，20 轮），输出每类 2 个 L2 归一化 prototype；与双头调度互斥；commit `f6e0212`、`25d8995`。
+- 配置：`live_a_k2_inr_seed1995_{max,logsumexp}.json`（T=10，其余超参与 Live-A 一致），输出 `*_R2`。
+- 结果（INR seed1995）：
+  | 聚合 | Final Top1 | AvgAcc | Forgetting |
+  | --- | ---: | ---: | ---: |
+  | max | 78.56 | 81.338 | 7.551 |
+  | logsumexp | 77.51 | 81.082 | 7.674 |
+  | K=1 prototype 参照 | 79.43 | 81.99 | 7.08 |
+  | SD-LoRA 参照 | 78.79 | 83.07 | 5.85 |
+- 判定：两种聚合的 Final 与 AvgAcc 均低于 K=1 prototype 和 SD-LoRA（logsumexp Final 低 1.92 / AvgAcc 低 1.99），未达到“重新验证 Final”的准入；按目标文件 §6.4 不再继续 K 扩展，也**不启动 C100/多 seed**。
+- 停止判定（§11）：双头调度（一轮）与 K=2 prototype（第二轮）连续两轮新增组件未达到预注册门槛；Live-A 不再围绕同一机制继续扫参，保留为“固定 O(1) 状态、Final 优先”的消融/负结果记录。

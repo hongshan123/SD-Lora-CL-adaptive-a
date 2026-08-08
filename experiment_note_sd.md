@@ -656,3 +656,9 @@
 
 - 首次运行在 task0 结束时崩溃：`SharedAPrototypeNet` 未保存 args，`set_prototypes` 无法读取 `sa_k_prototype_aggregate`；已保存 `_inc_args` 修复，全量 81 passed。
 - 输出目录改为 `*_R2`，失败日志保留为 `live_a_k2_inr_seed1995_{max,logsumexp}.failed.log`。
+
+## 2026-08-08 K=2 prototype 负结果与 Live-A 停止判定
+
+- INR seed1995：max = 78.56 / 81.338 / 7.551；logsumexp = 77.51 / 81.082 / 7.674。两者 Final/AvgAcc 均低于 K=1 prototype（79.43/81.99/7.08）和 SD-LoRA（78.79/83.07/5.85）。
+- 按目标文件 §6.4 不启动 C100/多 seed；按 §11 “连续两轮新增组件未达到预注册门槛”停止继续微调 Live-A。保留为固定状态、Final 优先的消融。
+- 下一步留给用户：是否将 Live-A 以“O(1) 状态 + Final 优势 + INR AvgAcc/Forgetting 代价”写入论文负结果/消融，或调整总目标。

@@ -651,3 +651,8 @@
 - 未过项：INR Final 相对 EXP-009 -0.53；INR Final 相对 SD-LoRA -0.06；C100 Forgetting 相对 SD-LoRA +2.83。按目标文件严格门槛未通过。
 - 参数：INR 675,840 / C100 599,040（相对 SD-LoRA 减 81.7% / 83.8%）；最终 lambda=1，无测试集选择切换点。
 - 下一步：按 §6.4 转 K=2 每类双 prototype（max/logsumexp 聚合）后备方向；双头调度不再扫描。
+
+## 2026-08-08 K=2 prototype 首跑修复
+
+- 首次运行在 task0 结束时崩溃：`SharedAPrototypeNet` 未保存 args，`set_prototypes` 无法读取 `sa_k_prototype_aggregate`；已保存 `_inc_args` 修复，全量 81 passed。
+- 输出目录改为 `*_R2`，失败日志保留为 `live_a_k2_inr_seed1995_{max,logsumexp}.failed.log`。

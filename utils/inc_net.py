@@ -415,6 +415,7 @@ class SharedAPrototypeNet(IncrementalNet):
 
     def __init__(self, args, pretrained):
         super(SharedAPrototypeNet, self).__init__(args, pretrained)
+        self._inc_args = args
         self.prototype_head = None
         self.head_mode = "proto"
         self.dual_head = False
@@ -427,7 +428,7 @@ class SharedAPrototypeNet(IncrementalNet):
         if isinstance(first, (list, tuple)):
             self.prototype_head = MultiPrototypeCosineHead(
                 prototypes,
-                aggregate=self.args.get("sa_k_prototype_aggregate", "max"),
+                aggregate=self._inc_args.get("sa_k_prototype_aggregate", "max"),
             ).to(self._device)
         else:
             self.prototype_head = PrototypeCosineHead(prototypes).to(self._device)

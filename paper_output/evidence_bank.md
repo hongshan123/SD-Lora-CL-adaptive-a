@@ -111,7 +111,7 @@ TOST（±0.5 margin, α=0.05）：INR Final/AvgAcc 不等价（p_upper=0.0026/0.
 | ID | 内容 | 结果 |
 | --- | --- | --- |
 | E-AUDIT-VERIFY | verify_sa_consistency（INR seed1995/seed3、C100 seed1993、CUB 主方法） | PASS，feature/prototype logits diff=0 |
-| E-AUDIT-UNIT | 单元测试 | 45 passed（含 Phase A/B/C 代数等价性） |
+| E-AUDIT-UNIT | 单元测试 | 81 passed（含 Phase A/B/C 代数等价性与 Live-A v4/双头/K2 路径） |
 | E-AUDIT-DDP | 4 卡 DDP 1-epoch smoke + 全部完整运行 | exit=0，无逐任务 B 文件 |
 
 ## E-CORR（相关性，任务 1-9）
@@ -136,3 +136,24 @@ TOST（±0.5 margin, α=0.05）：INR Final/AvgAcc 不等价（p_upper=0.0026/0.
 | E-NEG-OPERATOR | operator stability loss | drift 压 10-30 倍但 F 只改善 0.12 |
 | E-NEG-ADAPTIVE | generic adaptive | 79.13/82.86/6.84，弱于普通 affine |
 | E-NEG-CONSIST | EMA prototype consistency | 78.41/81.91/7.45 |
+
+## E-LIVE-A（Live-A Aggregate-B：O(1) 固定状态消融，2026-08-08）
+
+| ID | 内容 | 结果 | 来源 |
+| --- | --- | ---: | --- |
+| E-LIVE-INR | Live-A K1 prototype（INR seed1995） | 79.43 / 81.99 / 7.08 | EXP-023 |
+| E-LIVE-C100 | Live-A K1 prototype（C100 seed1993） | 88.32 / 91.99 / 8.19 | EXP-024 |
+| E-LIVE-MULTI-INR | n=4 mean±std | 78.94±0.47 / 82.45±0.48 / 7.95±1.10 | EXP-025 |
+| E-LIVE-MULTI-C100 | n=4 mean±std | 87.95±0.34 / 91.55±0.33 / 8.75±0.58 | EXP-025 |
+| E-LIVE-PAIR-INR-E9 | Live-A − EXP-009（INR，n=4） | Final -0.285（p=0.194）、AvgAcc -0.374（p=0.007）、F +0.158（p=0.286） | EXP-025 |
+| E-LIVE-PAIR-C100-E9 | Live-A − EXP-009（C100，n=4） | Final -0.088（p=0.392）、AvgAcc -0.074（p=0.126）、F +0.117（p=0.372），TOST 等价 | EXP-025 |
+| E-LIVE-PAIR-INR-SD | Live-A − SD-LoRA（INR，n=4） | Final +0.187（p=0.698）、AvgAcc -0.973（p=0.070）、F +0.166（p=0.827） | EXP-025 |
+| E-LIVE-PAIR-C100-SD | Live-A − SD-LoRA（C100，n=4） | Final +1.202（p=0.003）、AvgAcc -0.074（p=0.755）、F +2.472（p=0.006） | EXP-025 |
+| E-LIVE-DUAL-INR | Stage B2 Schedule B（INR seed1995 / 多 seed） | 79.21 / 82.94 / 6.85；78.69±0.42 / 83.26±0.81 / 8.02±1.07 | EXP-026 |
+| E-LIVE-DUAL-C100 | Stage B2 Schedule B（C100 seed1993 / 多 seed） | 88.08 / 91.94 / 8.94；87.82±0.18 / 91.80±0.30 / 9.11±0.42 | EXP-026 |
+| E-LIVE-K2-MAX | K=2 per-class prototype，max（INR seed1995） | 78.56 / 81.34 / 7.55 | EXP-027 |
+| E-LIVE-K2-LSE | K=2 per-class prototype，logsumexp（INR seed1995） | 77.51 / 81.08 / 7.67 | EXP-027 |
+| E-LIVE-PARAMS | 持久参数 | LoRA 368,640（10.00%）；K1 INR 522,240 / C100 445,440；dual INR 675,840 / C100 599,040（相对 SD-LoRA 减 81.7% / 83.8%） | EXP-023/024/026 |
+| E-LIVE-AUDIT | K1 artifact consistency / 无回放审计 | PASS（feature 7.9e-6、logit 2.7e-7）；memory_size=0、无逐任务 B、无 task-id/router | EXP-024 |
+
+停止判定：Stage B INR AvgAcc 门槛未过；Stage B2 Schedule B 修复 AvgAcc 但 Final/Forgetting 严格门槛未过；K=2 后备 Final/AvgAcc 均低于 K1 与 SD-LoRA。按目标文件 §11 停止，Live-A 作为“固定 O(1) 状态、Final 优先”的负结果/消融，不升级为论文主方法。

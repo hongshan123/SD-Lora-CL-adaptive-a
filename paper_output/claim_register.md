@@ -13,3 +13,7 @@
 | C9 | operator/gauge 类诊断不是遗忘的可靠预测器 | E-CORR | 任务级相关，n=9；诊断方差小 |
 | C10 | LRPT 在 v2 上单 seed 增益不一致（AvgAcc/F 改善、Final 回退），不作为主方法 | E-INR-GLRPT | 单 seed；保留为消融 |
 | C11 | 固定秩 Union-SVD 在 r4/r8/r10 均优于/不劣于同秩 gauge（AvgAcc/Forgetting），但 Final 未达 C100 门槛 | E-STAGE-A | 单 seed INR；作为消融，非主方法 |
+| C12 | Live-A 可用 O(1) 固定状态获得 INR Final 优势（seed1995 79.43 > SD-LoRA 78.76、C100 88.32 > 86.89），但多 seed 下 INR AvgAcc 相对 EXP-009/SD-LoRA 分别 -0.37/-0.97，不能宣称全面优越 | E-LIVE-INR、E-LIVE-C100、E-LIVE-PAIR-* | n=4，seed 内连接；负结果/消融 |
+| C13 | 双头 FC+prototype 融合（预注册 Schedule B）可修复 Live-A 的 INR AvgAcc（相对 EXP-009 +0.44），但 INR Final 相对 EXP-009 -0.53、C100 Forgetting 相对 SD-LoRA +2.83，严格验收未通过 | E-LIVE-DUAL-INR、E-LIVE-DUAL-C100、E-LIVE-PARAMS | 最终 lambda_final=1；温度仅用当前任务训练类；不引入回放/测试集选择 |
+| C14 | 每类 K=2 prototype（max/logsumexp）在 INR seed1995 上均低于 K=1 与 SD-LoRA，后备方向失败 | E-LIVE-K2-MAX、E-LIVE-K2-LSE | 单 seed INR；按目标文件未继续 C100/多 seed |
+| C15 | Live-A 不作为论文主方法；论文应报告为“固定状态、Final 优先”的消融与负结果，主主张仍为 cumulative+gauge 的 O(1) 状态 + 量化小幅代价 | E-LIVE-A 全部 | 以目标文件 §11 停止条件为准 |

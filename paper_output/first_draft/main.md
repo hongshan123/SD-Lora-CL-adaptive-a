@@ -123,14 +123,20 @@ As a structural alternative to projecting the old operator into the new canonica
 
 Union-SVD beats the same-rank gauge at every tested rank and recovers most of the AvgAcc/Forgetting gap, but does not recover the final-task Top-1 required by our internal gate, so it is reported as an ablation rather than the main method.
 
+### 4.6c Live-A Aggregate-B ablation (negative result, 2026-08-08)
+
+We additionally evaluated an even more aggressive O(1) state design, Live-A Aggregate-B, which folds the whole v1 bank into a single aggregate $G=\sum_t s_t B_t/\|B_t\|$ and trains a live shared $A$ through the historical branch (no per-task $B$, no router, no replay). It preserves the final-task advantage in single runs (INR seed1995 79.43 vs SD-LoRA 78.76; C100 seed1993 88.32 vs 86.89), but multi-seed paired results show an INR AvgAcc deficit of $-0.37$ vs EXP-009 and $-0.97$ vs SD-LoRA (E-LIVE-PAIR-*). A pre-registered dual FC/prototype head (Schedule B) recovers INR AvgAcc to 83.26 but leaves INR Final $-0.53$ below EXP-009 and C100 Forgetting $+2.83$ above SD-LoRA; a K=2 per-class prototype fallback is worse still (E-LIVE-K2-*). Per the project gate, Live-A is therefore reported as a fixed-state, final-priority ablation/negative result and is **not** the paper's main method.
+
 ### 4.7 Engineering audit
-- Unit tests: 61 passed, including Phase A/B/C algebraic equivalence, union-SVD algebra, seed-keyed paired statistics, and pre-save gauge diagnostics (E-AUDIT-UNIT).
+- Unit tests: 81 passed, including Phase A/B/C algebraic equivalence, union-SVD algebra, Live-A v4/dual-head/K2 paths, seed-keyed paired statistics, and pre-save gauge diagnostics (E-AUDIT-UNIT).
 - 4-GPU DDP smoke and all full runs: exit 0; artifacts contain no per-task $B$ files; `verify_sa_consistency.py` PASS on INR/C100/CUB main artifacts with feature and prototype-logit differences of 0 (E-AUDIT-VERIFY/E-AUDIT-DDP).
 - Reproducibility: every experiment records config, commit, log, and artifact; the v1→v2 migration script is explicit with a backup.
 
 ## 5 Discussion
 
 Interpretation. The shared $A$ moves moderately outside its previous row space (pre-save projection residual $\approx 2\times10^{-2}$ on average), so gauge alignment preserves the in-span part in closed form but drops the out-of-span part. A fixed-rank Union-SVD ablation recovers part of this loss in AvgAcc/Forgetting but not in Final Top-1. This explains why removing v1's implicit renormalization (which changed historical contributions whenever $\|A\|$ or $A$'s basis moved) does not hurt and even helps on fine-grained CUB, while the final-task gap persists.
+
+We also confirmed that the more aggressive fixed-state Live-A aggregate and its dual-head/K=2 prototype extensions do not meet the pre-registered multi-seed gates (Section 4.6c); those results are retained as negative evidence and do not alter the main claims.
 
 Relation to our prior system. On ImageNet-R the method has a small but statistically significant Final/AvgAcc deficit relative to EXP-009 ($-0.65$/$-0.52$); on CIFAR-100 and Forgetting the differences are not significant (C5). Its contribution is the 86% state reduction and O(1) memory, not an accuracy gain. We do not claim universal superiority over SD-LoRA or prior drift-compensation methods; CUB is single-seed and external baselines (InfLoRA/CL-LoRA/LoRA-DRS/DGS) were not re-implemented (CIT-06/03/13/14).
 

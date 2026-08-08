@@ -228,6 +228,17 @@ def test_model_tensor_hash_invariant_under_no_grad_forward():
     assert before_hash == hash_named_tensors(after_map)
 
 
+def test_model_tensor_snapshot_is_clone():
+    torch.manual_seed(3)
+    model = nn.Linear(4, 4)
+    snapshot = model_tensor_map(model)
+    original = model.weight.detach().cpu().clone()
+    with torch.no_grad():
+        model.weight.add_(1.0)
+    assert torch.equal(snapshot["param:weight"], original)
+    assert not torch.equal(snapshot["param:weight"], model.weight.detach().cpu())
+
+
 class _FakeHead(nn.Module):
     def __init__(self, scale):
         super().__init__()
@@ -307,5 +318,20 @@ def test_four_rank_prototype_and_dual_head_sync():
         [sys.executable, str(script)],
         check=True,
         timeout=120,
+        env=env,
+    )
+
+
+@pytest.mark.skipif(
+    torch.cuda.device_count() < 4, reason="requires four CUDA GPUs"
+)
+def test_four_rank_nccl_prototype_and_dual_head_sync():
+    script = Path(__file__).resolve().parent / "ddp_p0_nccl_rank_sync.py"
+    env = dict(os.environ)
+    env["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+    subprocess.run(
+        [sys.executable, str(script)],
+        check=True,
+        timeout=180,
         env=env,
     )

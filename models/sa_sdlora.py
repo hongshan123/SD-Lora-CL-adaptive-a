@@ -45,6 +45,18 @@ PROTOTYPES_FILENAME = "sa_prototypes.pt"
 P0_HASHES_FILENAME = "p0_hashes.json"
 
 
+def collective_device():
+    """Return the tensor device required by the current process group backend.
+
+    NCCL collectives require CUDA tensors; Gloo accepts CPU tensors.
+    """
+    if dist.is_initialized():
+        backend = dist.get_backend()
+        if backend == dist.Backend.NCCL:
+            return torch.device("cuda", torch.cuda.current_device())
+    return torch.device("cpu")
+
+
 def dual_head_logits(network, features):
     """Return calibrated fc/prototype/fused logits for one feature batch."""
     fc_logits = network.fc(features)["logits"] / network.tau_fc
@@ -106,41 +118,48 @@ def broadcast_prototypes(prototypes, src=0):
         return prototypes
     keys, stacked, counts = serialize_prototypes(prototypes)
     rank = dist.get_rank()
-    size_tensor = torch.zeros(4, dtype=torch.long)
+    device = collective_device()
+    size_tensor = torch.zeros(4, dtype=torch.long, device=device)
     if rank == src:
         size_tensor = torch.tensor(
             [len(keys), stacked.shape[0], stacked.shape[1], stacked.shape[2]],
             dtype=torch.long,
+            device=device,
         )
     dist.broadcast(size_tensor, src=src)
     flat = torch.zeros(
         int(size_tensor[1] * size_tensor[2] * size_tensor[3]),
         dtype=torch.float32,
+        device=device,
     )
     if rank == src:
-        flat = stacked.reshape(-1).to(torch.float32)
+        flat = stacked.to(device=device, dtype=torch.float32).reshape(-1)
     dist.broadcast(flat, src=src)
-    stacked = flat.reshape(
-        int(size_tensor[1]),
-        int(size_tensor[2]),
-        int(size_tensor[3]),
+    stacked = flat.cpu().reshape(
+        int(size_tensor[1]), int(size_tensor[2]), int(size_tensor[3])
     )
-    keys_tensor = torch.zeros(int(size_tensor[0]), dtype=torch.long)
+    keys_tensor = torch.zeros(int(size_tensor[0]), dtype=torch.long, device=device)
     if rank == src:
-        keys_tensor = torch.tensor(keys, dtype=torch.long)
+        keys_tensor = torch.tensor(keys, dtype=torch.long, device=device)
     dist.broadcast(keys_tensor, src=src)
-    broadcast_counts = torch.zeros(int(size_tensor[0]), dtype=torch.long)
+    broadcast_counts = torch.zeros(
+        int(size_tensor[0]), dtype=torch.long, device=device
+    )
     if rank == src:
-        broadcast_counts = counts
+        broadcast_counts = counts.to(device=device)
     dist.broadcast(broadcast_counts, src=src)
     return deserialize_prototypes(
-        keys_tensor.tolist(), stacked, broadcast_counts
+        keys_tensor.tolist(), stacked, broadcast_counts.cpu()
     )
 
 
 def broadcast_dual_head_values(lambda_val, tau_fc, tau_proto, src=0):
     """Broadcast calibration scalars from ``src`` to every DDP rank."""
-    values = torch.tensor([lambda_val, tau_fc, tau_proto], dtype=torch.float64)
+    values = torch.tensor(
+        [lambda_val, tau_fc, tau_proto],
+        dtype=torch.float64,
+        device=collective_device(),
+    )
     if dist.is_initialized() and dist.get_world_size() > 1:
         dist.broadcast(values, src=src)
     return float(values[0]), float(values[1]), float(values[2])
@@ -150,7 +169,8 @@ def all_ranks_equal(value):
     """True when ``value`` is bit-identical on every DDP rank."""
     if not (dist.is_initialized() and dist.get_world_size() > 1):
         return True
-    flat = value.detach().cpu().to(torch.float64).reshape(-1)
+    device = collective_device()
+    flat = value.detach().to(device=device, dtype=torch.float64).reshape(-1)
     gathered = [
         torch.zeros_like(flat) for _ in range(dist.get_world_size())
     ]

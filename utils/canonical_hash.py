@@ -44,9 +44,9 @@ def model_tensor_map(model, include_eval_scalars=True):
     """
     tensors = {}
     for name, tensor in model.named_parameters():
-        tensors["param:" + name] = tensor
+        tensors["param:" + name] = tensor.detach().cpu().clone()
     for name, tensor in model.named_buffers():
-        tensors["buffer:" + name] = tensor
+        tensors["buffer:" + name] = tensor.detach().cpu().clone()
     if include_eval_scalars:
         for name in ("dual_lambda", "tau_fc", "tau_proto"):
             if hasattr(model, name):

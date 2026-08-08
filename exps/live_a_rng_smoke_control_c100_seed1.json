@@ -31,5 +31,6 @@
     "sa_use_prototype_classifier": true,
     "sa_cumulative_state": true,
     "sa_cumulative_merge": "live_a_aggregate_b",
-    "sa_live_a_history_groups": 1
+    "sa_live_a_history_groups": 1,
+    "sa_deterministic_training": true
 }

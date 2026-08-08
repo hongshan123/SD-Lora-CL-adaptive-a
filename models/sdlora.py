@@ -77,6 +77,7 @@ class Learner(BaseLearner):
         self._total_classes = self._known_classes + data_manager.get_task_size(
             self._cur_task
         )
+        self._configure_deterministic_training()
         self._network.update_fc(self._total_classes)
         if self._is_main_process():
             logging.info(
@@ -99,11 +100,18 @@ class Learner(BaseLearner):
             if self._is_distributed()
             else None
         )
+        train_generator = None
+        if self.args.get("sa_deterministic_training", False):
+            train_generator = torch.Generator()
+            train_generator.manual_seed(
+                int(self.args["seed"]) + self._cur_task * 1000 + 1
+            )
         self.train_loader = DataLoader(
             train_dataset,
             batch_size=self.args["batch_size"],
             shuffle=train_sampler is None,
             sampler=train_sampler,
+            generator=train_generator,
             num_workers=num_workers,
             pin_memory=True,
         )
@@ -111,10 +119,17 @@ class Learner(BaseLearner):
             np.arange(0, self._total_classes), source="test", mode="test"
         )
         self._eval_test_dataset = test_dataset
+        test_generator = None
+        if self.args.get("sa_deterministic_training", False):
+            test_generator = torch.Generator()
+            test_generator.manual_seed(
+                int(self.args["seed"]) + self._cur_task * 1000 + 2
+            )
         self.test_loader = DataLoader(
             test_dataset,
             batch_size=self.args["batch_size"],
             shuffle=False,
+            generator=test_generator,
             num_workers=num_workers,
             pin_memory=True,
         )
@@ -126,6 +141,13 @@ class Learner(BaseLearner):
 
         if len(self._multiple_gpus) > 1 and not self._is_distributed():
             self._network = self._network.module
+
+    def _configure_deterministic_training(self):
+        if not self.args.get("sa_deterministic_training", False):
+            return
+        torch.use_deterministic_algorithms(True, warn_only=True)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
     def update_network(self, index=True):
         # if use VIT-B-16

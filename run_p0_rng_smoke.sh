@@ -14,6 +14,8 @@ conda activate "$CONDA_ENV" || exit 1
 export HF_ENDPOINT
 export CUDA_VISIBLE_DEVICES="$GPU_IDS"
 export PYTHONUNBUFFERED=1
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+export TORCH_DETERMINISTIC=1
 
 control=exps/live_a_rng_smoke_control_c100_seed1.json
 dual=exps/live_a_rng_smoke_dual_b_c100_seed1.json

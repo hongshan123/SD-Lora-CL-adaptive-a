@@ -623,3 +623,11 @@
 - SD-LoRA 8 个配对基线（rerun2）全部 exit=0；Live-A/EXP-009 14 个运行此前已完成。`scripts/stage_b_stats.sh` 输出 `stage_b_stats_output.txt`。
 - 汇总：C100 相对 EXP-009 三项通过（TOST ±0.5 等价）；INR 相对 EXP-009 的 AvgAcc 平均差 **-0.374**（p=0.007，未过 -0.30 门槛），Final 平均差 -0.285（擦线）。相对 SD-LoRA：INR Final +0.187、AvgAcc **-0.973**；C100 Final **+1.202**、AvgAcc -0.074、Forgetting **+2.472**。
 - 判定：Stage B 未完全通过；C100 Final 显著优于 SD-LoRA，但 INR AvgAcc 的结构性损失不允许宣称全面优越。按目标文件进入 Stage B2 的 evaluation-only 双头诊断路径（暂不训练，不引入回放/测试集选择）。
+
+## 2026-08-08 Stage B2 evaluation-only 双头诊断（final-space）
+
+- 说明：Live-A artifact 只持久化最终骨干与最终 prototype；逐任务原型可由最终 `sa_prototypes.pt` 按类子集精确重建（旧原型在无 LRPT 时逐任务原样保留），逐任务 FC 头已保存。因此本诊断使用最终 merged backbone + 逐任务 FC + 逐任务 prototype 子集，属于 final-space 诊断（非逐任务骨干快照），已在脚本注释与文档中标注限制。
+- 脚本：`scripts/diagnose_live_a_dual_head.py`；温度在“当前任务训练类”上用训练标签网格拟合（禁止测试标签）。
+- C100 seed1993（训练日志 proto AvgAcc=91.985）：fc AvgAcc=91.417、proto final-space=92.635、fusion A=92.857、fusion B=92.802；相对训练日志 prototype，A/B 提升约 **+0.87/+0.82**。
+- INR seed1995（训练日志 proto AvgAcc=81.99）：fc AvgAcc=83.776、proto final-space=84.475、fusion A=84.375、fusion B=84.398；相对训练日志 prototype，A/B 提升约 **+2.39/+2.41**。
+- 判定：两个预注册调度在双数据集诊断中相对当前训练日志 prototype 的提升均 ≥0.7，触发正式双头训练实现（目标文件 §6.2 第 3 步）。注意：final-space 诊断本身不作为最终验收，正式双头重跑为准。

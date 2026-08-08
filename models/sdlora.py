@@ -110,6 +110,7 @@ class Learner(BaseLearner):
         test_dataset = data_manager.get_dataset(
             np.arange(0, self._total_classes), source="test", mode="test"
         )
+        self._eval_test_dataset = test_dataset
         self.test_loader = DataLoader(
             test_dataset,
             batch_size=self.args["batch_size"],

@@ -5,6 +5,7 @@ import os
 import numpy as np
 import timm
 import torch
+import torch.distributed as dist
 from torch import optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
@@ -25,11 +26,29 @@ from backbone.lrpt import (
 )
 from backbone.sa_lora import SharedALoRA_ViT_timm
 from utils.inc_net import SimpleCosineIncrementalNet, SharedAPrototypeNet
+from utils.rng_utils import (
+    deterministic_loader,
+    max_abs_diff,
+    rng_preserving,
+)
 from models.sdlora import Learner as SDLoraLearner
 
 
 num_workers = 8
 PROTOTYPES_FILENAME = "sa_prototypes.pt"
+
+
+def dual_head_logits(network, features):
+    """Return calibrated fc/prototype/fused logits for one feature batch."""
+    fc_logits = network.fc(features)["logits"] / network.tau_fc
+    proto_logits = (
+        network.prototype_head(features)["logits"] / network.tau_proto
+    )
+    fused_logits = (
+        (1.0 - network.dual_lambda) * fc_logits
+        + network.dual_lambda * proto_logits
+    )
+    return fc_logits, proto_logits, fused_logits
 
 
 class SharedACosineNet(SimpleCosineIncrementalNet):
@@ -285,34 +304,73 @@ class Learner(SDLoraLearner):
                         lr=float(self.args.get("sa_final_head_lr", 1e-3)),
                     )
             if self.args.get("sa_use_prototype_classifier", False):
-                if self._lrpt_enabled and self._lrpt_pre_features is not None:
-                    self._apply_lrpt_to_old_prototypes(data_manager)
-                prototypes = self._compute_prototypes(data_manager, raw_network)
-                raw_network.set_prototypes(prototypes)
-                logging.info(
-                    "[SharedA-SDLoRA] prototype classifier active for %d classes",
-                    len(prototypes),
-                )
-                if self._dual_head:
-                    self._prepare_dual_head(data_manager, raw_network)
-                raw_network.backbone.cleanup_per_task_files(self.args["filepath"])
+                if self._is_main_process():
+                    if (
+                        self._lrpt_enabled
+                        and self._lrpt_pre_features is not None
+                    ):
+                        self._apply_lrpt_to_old_prototypes(data_manager)
+                    prototypes = self._compute_prototypes(
+                        data_manager, raw_network
+                    )
+                    raw_network.set_prototypes(prototypes)
+                    logging.info(
+                        "[SharedA-SDLoRA] prototype classifier active for %d classes",
+                        len(prototypes),
+                    )
+                if self._is_main_process():
+                    raw_network.backbone.cleanup_per_task_files(
+                        self.args["filepath"]
+                    )
+        if self._dual_head:
+            self._prepare_dual_head(data_manager, self._raw_network())
 
     def eval_task(self):
-        cnn_accy, nme_accy = super().eval_task()
-        if self._dual_head and self._is_main_process():
-            raw_network = self._raw_network()
-            for mode in ("fc", "proto"):
-                raw_network.set_head_mode(mode)
-                mode_accy, _ = super().eval_task()
-                logging.info(
-                    "[DualHead] task %d mode=%s top1=%.2f top5=%.2f",
-                    self._cur_task,
-                    mode,
-                    mode_accy["top1"],
-                    mode_accy["top5"],
+        if not self._dual_head:
+            return super().eval_task()
+        if not self._is_main_process():
+            return None, None
+        raw_network = self._raw_network()
+        raw_network.eval()
+        preds = {"fc": [], "proto": [], "fused": []}
+        y_true = []
+        with rng_preserving(), torch.no_grad():
+            loader = deterministic_loader(
+                self._eval_test_dataset,
+                batch_size=self.args["batch_size"],
+                shuffle=False,
+                num_workers=num_workers,
+                seed=0,
+            )
+            for _, inputs, targets in loader:
+                inputs = inputs.to(self._device, non_blocking=True)
+                feats = raw_network.backbone(inputs)
+                fc_logits, proto_logits, fused_logits = dual_head_logits(
+                    raw_network, feats
                 )
-            raw_network.set_head_mode("fused")
-        return cnn_accy, nme_accy
+                for mode, logits in (
+                    ("fc", fc_logits),
+                    ("proto", proto_logits),
+                    ("fused", fused_logits),
+                ):
+                    topk = torch.topk(
+                        logits, k=self.topk, dim=1, largest=True, sorted=True
+                    ).indices.cpu().numpy()
+                    preds[mode].append(topk)
+                y_true.append(targets.cpu().numpy())
+        accuracies = {}
+        for mode in preds:
+            accuracies[mode] = self._evaluate(
+                np.concatenate(preds[mode]), np.concatenate(y_true)
+            )
+            logging.info(
+                "[DualHead] task %d mode=%s top1=%.2f top5=%.2f",
+                self._cur_task,
+                mode,
+                accuracies[mode]["top1"],
+                accuracies[mode]["top5"],
+            )
+        return accuracies["fused"], None
 
     def _dual_lambda(self, task_id, num_tasks):
         if num_tasks <= 1:
@@ -332,36 +390,80 @@ class Learner(SDLoraLearner):
         return best_tau
 
     def _prepare_dual_head(self, data_manager, raw_network):
-        features, targets = self._extract_current_task_features(
-            data_manager, return_targets=True
-        )
-        features = features.to(self._device)
-        targets = targets.to(self._device)
-        raw_network.eval()
-        with torch.no_grad():
-            fc_logits = raw_network.fc(features)["logits"]
-            proto_logits = raw_network.prototype_head(features)["logits"]
-        tau_fc = self._fit_dual_temperature(fc_logits, targets)
-        tau_proto = self._fit_dual_temperature(proto_logits, targets)
-        lambda_val = self._dual_lambda(self._cur_task, self._dual_num_tasks)
+        lambda_val, tau_fc, tau_proto = 0.0, 1.0, 1.0
+        if self._is_main_process():
+            raw_network.eval()
+            params_before = [
+                tensor.detach().cpu().clone()
+                for tensor in list(raw_network.parameters())
+                + list(raw_network.buffers())
+            ]
+            with rng_preserving(), torch.no_grad():
+                if (
+                    getattr(self, "_last_proto_task", None) == self._cur_task
+                    and getattr(self, "_last_proto_features", None) is not None
+                ):
+                    features = self._last_proto_features
+                    targets = self._last_proto_targets
+                else:
+                    features, targets = self._extract_current_task_features(
+                        data_manager, return_targets=True
+                    )
+                features = features.to(self._device)
+                targets = targets.to(self._device)
+                fc_logits = raw_network.fc(features)["logits"]
+                proto_logits = raw_network.prototype_head(features)["logits"]
+            tau_fc = self._fit_dual_temperature(fc_logits, targets)
+            tau_proto = self._fit_dual_temperature(proto_logits, targets)
+            lambda_val = self._dual_lambda(
+                self._cur_task, self._dual_num_tasks
+            )
+            params_after = [
+                tensor.detach().cpu().clone()
+                for tensor in list(raw_network.parameters())
+                + list(raw_network.buffers())
+            ]
+            param_diff = max_abs_diff(params_before, params_after)
+            if param_diff != 0.0:
+                raise RuntimeError(
+                    "Dual-head calibration mutated model parameters "
+                    "(max_abs_diff={:.3e})".format(param_diff)
+                )
+            logging.info(
+                "[DualHead] calibration parameter invariance PASS "
+                "(max_abs_diff=0.000e+00)"
+            )
+        if self._is_distributed():
+            values = torch.tensor(
+                [lambda_val, tau_fc, tau_proto], device=self._device
+            )
+            dist.broadcast(values, src=0)
+            lambda_val, tau_fc, tau_proto = [
+                float(value) for value in values.tolist()
+            ]
         raw_network.set_dual_head(lambda_val, tau_fc, tau_proto)
-        state = {
-            "schedule": self._dual_schedule,
-            "task_id": self._cur_task,
-            "num_tasks": self._dual_num_tasks,
-            "lambda": lambda_val,
-            "tau_fc": tau_fc,
-            "tau_proto": tau_proto,
-        }
-        torch.save(state, os.path.join(self.args["filepath"], "sa_dual_head.pt"))
-        logging.info(
-            "[DualHead] task %d schedule=%s lambda=%.3f tau_fc=%.3f tau_proto=%.3f",
-            self._cur_task,
-            self._dual_schedule,
-            lambda_val,
-            tau_fc,
-            tau_proto,
-        )
+        if self._is_main_process():
+            state = {
+                "schedule": self._dual_schedule,
+                "task_id": self._cur_task,
+                "num_tasks": self._dual_num_tasks,
+                "lambda": lambda_val,
+                "tau_fc": tau_fc,
+                "tau_proto": tau_proto,
+            }
+            torch.save(
+                state,
+                os.path.join(self.args["filepath"], "sa_dual_head.pt"),
+            )
+            logging.info(
+                "[DualHead] task %d schedule=%s lambda=%.3f tau_fc=%.3f "
+                "tau_proto=%.3f",
+                self._cur_task,
+                self._dual_schedule,
+                lambda_val,
+                tau_fc,
+                tau_proto,
+            )
 
     def _additional_training_losses(
         self, inputs=None, targets=None, features=None
@@ -416,18 +518,18 @@ class Learner(SDLoraLearner):
         dataset = data_manager.get_dataset(
             cur_classes, source="train", mode="test"
         )
-        loader = DataLoader(
-            dataset,
-            batch_size=64,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=True,
-        )
         raw_network = self._raw_network()
         raw_network.eval()
         features = []
         targets = []
-        with torch.no_grad():
+        with rng_preserving(), torch.no_grad():
+            loader = deterministic_loader(
+                dataset,
+                batch_size=64,
+                shuffle=False,
+                num_workers=num_workers,
+                seed=0,
+            )
             for _, inputs, batch_targets in loader:
                 inputs = inputs.to(self._device, non_blocking=True)
                 feats = raw_network.backbone(inputs)
@@ -797,23 +899,30 @@ class Learner(SDLoraLearner):
         dataset = data_manager.get_dataset(
             cur_classes, source="train", mode="test"
         )
-        loader = DataLoader(
-            dataset,
-            batch_size=64,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=True,
-        )
         raw_network.eval()
         per_class = {c: [] for c in cur_classes.tolist()}
-        with torch.no_grad():
+        all_features = []
+        all_targets = []
+        with rng_preserving(), torch.no_grad():
+            loader = deterministic_loader(
+                dataset,
+                batch_size=64,
+                shuffle=False,
+                num_workers=num_workers,
+                seed=0,
+            )
             for _, inputs, targets in loader:
                 inputs = inputs.to(self._device, non_blocking=True)
                 feats = raw_network.backbone(inputs)
                 if not self.args.get("sa_raw_prototypes", False):
                     feats = F.normalize(feats, p=2, dim=1)
+                all_features.append(feats.cpu())
+                all_targets.append(targets)
                 for f, target in zip(feats.cpu(), targets):
                     per_class[int(target.item())].append(f)
+        self._last_proto_features = torch.cat(all_features)
+        self._last_proto_targets = torch.cat(all_targets)
+        self._last_proto_task = self._cur_task
         k_prototypes = int(self.args.get("sa_k_prototypes", 1))
         if k_prototypes <= 1:
             prototypes = {

@@ -636,3 +636,10 @@
 
 - 首次运行 A 在 task1 epoch5 崩溃：新任务训练中 `_compute_accuracy` 仍使用上一任务的 fused 头，40 类 FC logits 与 20 类 prototype logits 拼接 shape 不匹配。
 - 修复：`incremental_train` 每个任务开始前把 `head_mode` 重置为 `fc`，任务结束校准后再切 `fused`；全量测试 81 passed。失败日志保留为 `live_a_dual_head_inr_seed1995_{a,b}.failed.log`，输出目录改用 `*_A2/_B2` 避免复用部分产物。
+
+## 2026-08-08 Stage B2 INR 双头正式结果：Schedule B 通过
+
+- Schedule A（INR seed1995）：Final **79.04**、AvgAcc **82.741**、Forgetting **6.939**；AvgAcc 低于等效下限 82.83（差 0.09），未通过。
+- Schedule B（INR seed1995）：Final **79.21**、AvgAcc **82.937**、Forgetting **6.851**；Final 与纯 prototype 最终值一致（lambda_final=1），AvgAcc 高于下限，通过。
+- 两个调度均按归一化任务进度固定函数生成（T=10 时精确等于预注册数组），温度仅用当前任务训练类拟合。
+- 决策：采用 Schedule B 跑 C100 seed1993 与 paired multi-seed（INR/C100 seeds 1/2/3）；Schedule A 作为负结果保留。

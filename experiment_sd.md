@@ -590,3 +590,17 @@
   - Live-A vs SD-LoRA：两数据集 Final 平均均不低于 SD-LoRA（INR +0.19、C100 +1.20）；但 **INR AvgAcc 平均下降 0.97（超过 0.5）**，C100 Forgetting 显著恶化 +2.47（必须作为代价报告）。按目标文件不得宣称全面优越。
   - 参数：Live-A LoRA 368,640（10.00%），含原型 C100 445,440 / INR 522,240，相对 SD-LoRA 3,686,400 减少约 85.8–87.9%；状态与任务数无关。
 - 结论：**Stage B 未完全通过**。Live-A 的固定小状态 Final 优势主要体现于 C100，INR AvgAcc 相对 EXP-009/SD-LoRA 的损失是稳定、结构性的；该结果作为负结果记录，不因单 seed 最优结果调整门槛。按目标文件 §6，若 Final 相对 SD-LoRA 保持优势但 AvgAcc/AAA 低于 SD-LoRA，应进入 Stage B2 evaluation-only 双头诊断。
+
+## EXP-026 Stage B2 双头正式训练（INR seed1995，Schedule A/B）
+
+- 日期：2026-08-08
+- 状态：INR 完成；C100/多 seed 进行中
+- 触发：Stage B2 evaluation-only 诊断显示融合 A/B 相对训练日志 prototype 的 AvgAcc 提升 C100 +0.87/+0.82、INR +2.39/+2.41，均 ≥0.7；正式双头路径已实现（`utils/inc_net.py` `SharedAPrototypeNet` 支持 fc/proto/fused 三种 head mode；`models/sa_sdlora.py` 每任务用当前任务训练类网格拟合 FC/prototype 温度，按归一化任务进度固定调度 A/B；最终任务 lambda=1）。
+- 实现提交：`8ee6753`；生命周期修复提交 `885c69a`（每个任务训练前重置为 FC 头，避免 epoch 测试期新旧 prototype 维度不匹配）。
+- 结果（INR seed1995）：
+  | 调度 | Final Top1 | AvgAcc | Forgetting | 说明 |
+  | --- | ---: | ---: | ---: | --- |
+  | Schedule A | 79.04 | 82.741 | 6.939 | AvgAcc 低于等效下限 82.83（差 0.09） |
+  | Schedule B | **79.21** | **82.937** | **6.851** | 通过 INR Stage B2 验收（Final=纯 prototype 最终值，AvgAcc ≥82.83，F 不劣于纯 prototype） |
+- 每任务纯 FC/纯 prototype 结果已写入日志（`[DualHead] task ... mode=...`）；主表使用 fused 曲线，不挑选每阶段最好值。
+- 决策：按预注册调度函数（与测试集无关）选择 **Schedule B** 继续 C100 seed1993 与 paired multi-seed；A 保留为负结果记录。

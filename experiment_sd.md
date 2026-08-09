@@ -653,3 +653,10 @@
 - backend-aware collectives（NCCL/CUDA、Gloo/CPU）；snapshot 改为 clone；新增 NCCL 四卡同步测试；NCCL Dual-B smoke `P0.5 SMOKE PASS`。
 - 测试 98 passed；提交 `14ab833`，manifest 记录真实 commit。
 - 进入 P1 ImageNet-R seed1995 完整配对（SGD/20 epochs/4 卡/NCCL）。
+
+## 2026-08-09 P1：ImageNet-R seed1995 正式配对通过
+
+- Live-A control / Dual-B / SD-LoRA / EXP-009 全部完成；trajectory hash、RNG hash、prototype 曲线、四 rank sync、fused/prototype identity 全部 PASS。
+- Dual-B Final 78.84 / AAA 83.067 / F 6.624；control AAA 82.152；SD-LoRA Final 77.94 / AAA 82.898；EXP-009 Final 78.74 / AAA 82.326。
+- Dual-B AAA 相对 control +0.915，Final/AAA 相对 SD-LoRA +0.90/+0.169；主状态 675,840，相对 SD-LoRA 减少 81.7%。
+- artifact consistency 三组 PASS；进入 P2 CIFAR-100 seed1993。

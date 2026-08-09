@@ -708,3 +708,28 @@
 - NCCL 两任务 Dual-B smoke：`P0.5 SMOKE PASS`；无报错、无非确定性 warning、四 rank 同步 PASS、`lambda=1` fused/prototype logits 检查 PASS、eval 前后 RNG/tensor hash PASS。
 - 提交：`14ab833`；run manifest 在启动时记录真实 commit `14ab8332917f4f76340243a9422e020499dc60aa`，未训练后回填。
 - 结论：P0.5 通过，进入 P1 ImageNet-R 正式配对。
+
+## 2026-08-09 P1：ImageNet-R seed1995 正式配对（NCCL/SGD/20 epochs）通过
+
+- 协议：4 卡 NCCL DDP，每卡 batch 32（全局 128），SGD 20 epochs，`sa_deterministic_training=true`，seed1995，N=10。
+- 运行：`INR_P1_LIVEA_CONTROL_SEED1995_NCCL/`、`INR_P1_LIVEA_DUALB_SEED1995_NCCL/`、`INR_P1_SDLORA_SEED1995_NCCL/`、`INR_P1_EXP009_SEED1995_NCCL/`。
+- 轨迹验收（全部 PASS）：
+  - control 与 Dual-B 的 task0–9 `post_train_hash` 完全一致；
+  - control 与 Dual-B 的 eval 前后 RNG hash 完全一致；
+  - Dual-B prototype 曲线与 control 曲线完全一致；
+  - 四 rank `lambda/tau` 一致，prototype rank sync PASS；
+  - 最终 `lambda=1` fused/prototype logits 差 ≤1e-6。
+- 指标（日志自动汇总）：
+  | 方法 | Final | AAA | Forgetting |
+  | --- | ---: | ---: | ---: |
+  | Live-A control (prototype) | 78.84 | 82.152 | 6.683 |
+  | Live-A Dual-B (fused) | 78.84 | 83.067 | 6.624 |
+  | SD-LoRA | 77.94 | 82.898 | — |
+  | EXP-009 | 78.74 | 82.326 | — |
+  - Dual-B AAA 相对 control 提升 **+0.915**（门槛 ≥0.7）；
+  - Dual-B Final 相对 SD-LoRA **+0.90**（门槛 ≥0）；
+  - Dual-B AAA 相对 SD-LoRA **+0.169**（门槛 ≥-0.3）。
+- 参数：Live-A 必要主状态 **675,840**（G 184,320 + A 184,320 + FC 153,600 + prototype 153,600），相对 SD-LoRA LoRA 3,686,400 减少 **81.7%**（含 FC 口径 82.4%）。
+- artifact consistency：control/dual/EXP-009 `verify_sa_consistency.py` 全部 **PASS**（feature 4.8e-6 / 7.0e-6，logit ≤2.6e-7）。
+- 提交：配置/验证 `2e19b46`；SD-LoRA DDP unused-param 修复 `c7a1057`；EXP-009 legacy unused-param 修复 `2fef3a4`。control/dual/SD-LoRA 运行于 `4e4b2d2`，EXP-009 运行于 `2fef3a4`（修复仅影响 legacy/基线 DDP 路径，不改变 Live-A cumulative 训练代码）。
+- 结论：**P1 通过**，按计划进入 P2 CIFAR-100 seed1993（因 P1 轨迹一致，C100 不再单独跑 Live-A control，直接用 Dual-B 的 prototype 曲线作为同轨迹 control）。

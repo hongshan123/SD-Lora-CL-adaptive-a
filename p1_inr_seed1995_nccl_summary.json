@@ -1,0 +1,35 @@
+{
+  "checks": {
+    "aaa_gain_gate": true,
+    "aaa_vs_sdlora_gate": true,
+    "eval_rng_equal": true,
+    "final_vs_sdlora_gate": true,
+    "fused_proto_final_identity": true,
+    "post_train_equal": true,
+    "prototype_curve_equal": true,
+    "rank_sync": true
+  },
+  "control": {
+    "aaa": 82.15200000000002,
+    "final": 78.84,
+    "forgetting": 6.683333333333334
+  },
+  "dual_b": {
+    "aaa_fused": 83.06700000000001,
+    "aaa_gain_vs_control": 0.914999999999992,
+    "final_fused": 78.84,
+    "forgetting": 6.624444444444445
+  },
+  "exp009": {
+    "aaa": 82.326,
+    "final": 78.74
+  },
+  "gates": {
+    "dual_aaa_minus_sdlora": 0.16900000000001114,
+    "dual_final_minus_sdlora": 0.9000000000000057
+  },
+  "sdlora": {
+    "aaa": 82.898,
+    "final": 77.94
+  }
+}

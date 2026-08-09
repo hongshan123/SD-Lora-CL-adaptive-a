@@ -8,6 +8,7 @@ logs/
 
 # checkpoint / experiment output directories
 CF100_*/
+C100_*/
 ImageNetR_*/
 INR_*/
 CUB_*/

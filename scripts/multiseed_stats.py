@@ -211,7 +211,18 @@ def main():
 
     groups = {}
     for name, pattern in args.group:
-        groups[name] = collect_patterns([pattern], args.metric)
+        collected = collect_patterns([pattern], args.metric)
+        if name in groups:
+            for seed, value in collected.items():
+                if seed in groups[name]:
+                    raise ValueError(
+                        "duplicate seed {} in group {}".format(seed, name)
+                    )
+                groups[name][seed] = value
+        else:
+            groups[name] = collected
+
+    for name in groups:
         print_group(name, groups[name], args.metric)
 
     if args.paired:

@@ -25,7 +25,8 @@ FUSED_DIFF_RE = re.compile(
 )
 RANK_RE = re.compile(
     r"\[DualHead\] rank (\d+) task (\d+) "
-    r"lambda=([0-9.]+) tau_fc=([0-9.]+) tau_proto=([0-9.]+)"
+    r"lambda=([0-9]+\.[0-9]{6}) tau_fc=([0-9]+\.[0-9]{6}) "
+    r"tau_proto=([0-9]+\.[0-9]{6})"
 )
 CNN_TOTAL_RE = re.compile(r"CNN: \{'total': np\.float64\(([0-9.]+)\)")
 FORGETTING_RE = re.compile(r"Forgetting \(CNN\): ([0-9.]+)")
@@ -74,14 +75,16 @@ def parse_dual_modes(path):
 
 def parse_rank_values(path):
     values = {}
+    ranks = set()
     for line in Path(path).read_text(encoding="utf-8", errors="ignore").splitlines():
         match = RANK_RE.search(line)
         if match:
+            ranks.add(int(match.group(1)))
             task = int(match.group(2))
             values.setdefault(task, set()).add(
                 (match.group(3), match.group(4), match.group(5))
             )
-    return values
+    return values, ranks
 
 
 def last_metric(path, regex):
@@ -109,7 +112,7 @@ def main():
     dual_rng = parse_eval_rng(args.dual_log)
     control_totals = parse_cnn_totals(args.control_log)
     dual_modes = parse_dual_modes(args.dual_log)
-    rank_values = parse_rank_values(args.dual_log)
+    rank_values, ranks_seen = parse_rank_values(args.dual_log)
     fused_diffs = [
         (int(match.group(1)), float(match.group(2)))
         for line in Path(args.dual_log).read_text(
@@ -129,7 +132,10 @@ def main():
             for i in range(len(control_totals))
         )
     )
-    checks["rank_sync"] = all(len(values) == 1 for values in rank_values.values())
+    checks["rank_sync"] = (
+        ranks_seen == {0, 1, 2, 3}
+        and all(len(values) == 1 for values in rank_values.values())
+    )
     final_fused_diff = dict(fused_diffs)
     checks["fused_proto_final_identity"] = bool(
         final_fused_diff and 9 in final_fused_diff

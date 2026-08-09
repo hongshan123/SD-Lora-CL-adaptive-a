@@ -1,0 +1,27 @@
+{
+  "checks": {
+    "aaa_vs_sdlora_gate": true,
+    "final_vs_sdlora_gate": true,
+    "fused_final_equals_proto_final": true,
+    "fused_proto_logit_identity": true,
+    "rank_sync": true
+  },
+  "dual_b": {
+    "aaa_fused": 91.85600000000002,
+    "final_fused": 88.32,
+    "final_proto": 88.32,
+    "forgetting": 8.233333333333334
+  },
+  "exp009": {
+    "aaa": 92.04199999999999,
+    "final": 88.37
+  },
+  "gates": {
+    "dual_aaa_minus_sdlora": -0.1419999999999817,
+    "dual_final_minus_sdlora": 1.3199999999999932
+  },
+  "sdlora": {
+    "aaa": 91.998,
+    "final": 87.0
+  }
+}

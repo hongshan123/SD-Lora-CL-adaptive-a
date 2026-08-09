@@ -733,3 +733,23 @@
 - artifact consistency：control/dual/EXP-009 `verify_sa_consistency.py` 全部 **PASS**（feature 4.8e-6 / 7.0e-6，logit ≤2.6e-7）。
 - 提交：配置/验证 `2e19b46`；SD-LoRA DDP unused-param 修复 `c7a1057`；EXP-009 legacy unused-param 修复 `2fef3a4`。control/dual/SD-LoRA 运行于 `4e4b2d2`，EXP-009 运行于 `2fef3a4`（修复仅影响 legacy/基线 DDP 路径，不改变 Live-A cumulative 训练代码）。
 - 结论：**P1 通过**，按计划进入 P2 CIFAR-100 seed1993（因 P1 轨迹一致，C100 不再单独跑 Live-A control，直接用 Dual-B 的 prototype 曲线作为同轨迹 control）。
+
+## 2026-08-09 P2：CIFAR-100 seed1993 正式配对（NCCL/SGD/20 epochs）通过
+
+- 协议：4 卡 NCCL DDP，每卡 batch 32，SGD 20 epochs，cosine scheduler（沿用 released-code 的 C100 超参），`sa_deterministic_training=true`，seed1993，N=10。
+- 运行：`C100_P2_LIVEA_DUALB_SEED1993_NCCL/`、`C100_P2_SDLORA_SEED1993_NCCL/`、`C100_P2_EXP009_SEED1993_NCCL/`。
+- 结果（脚本自动汇总）：
+  | 方法 | Final | AAA | Forgetting |
+  | --- | ---: | ---: | ---: |
+  | Live-A Dual-B (fused=prototype) | 88.32 | 91.856 | 8.233 |
+  | SD-LoRA | 87.00 | 91.998 | — |
+  | EXP-009 | 88.37 | 92.042 | — |
+  - Dual-B Final 相对 SD-LoRA **+1.32**（门槛 ≥0）；
+  - Dual-B AAA 相对 SD-LoRA **-0.142**（门槛 ≥-0.3，通过）；
+  - fused Final 与 prototype Final 完全一致，`lambda=1` logits 差 ≤1e-6；
+  - 四 rank 同步 PASS（运行时 all-gather 断言 + 日志校验）。
+- 最终旧类 88.0 / 新类 91.2；BWT = -8.233（与 Forgetting 一致，历史峰值效应如实报告）；accuracy matrix 见日志。
+- 参数：Live-A 必要主状态 **522,240**（G 184,320 + A 184,320 + FC 76,800 + prototype 76,800），相对 SD-LoRA LoRA 3,686,400 减少 **85.8%**；bias/temperature/lambda 标量另计。
+- artifact consistency：Dual-B/EXP-009 `verify_sa_consistency.py` 全部 **PASS**（feature ≤1.05e-5，logit ≤2.4e-7）。
+- 修复：P2 校验中发现 rank 打印与 logging 行交错导致解析误报，已移除重复 rank logging 并收紧正则；运行时四 rank all-gather 断言在训练中已生效，未重新训练即完成校验。
+- 结论：**P2 通过**，按计划进入 P3 多 seed 主结果。

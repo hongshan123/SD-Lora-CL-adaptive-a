@@ -764,15 +764,6 @@ class Learner(SDLoraLearner):
             ),
             flush=True,
         )
-        logging.info(
-            "[DualHead] rank %d task %d lambda=%.6f tau_fc=%.6f "
-            "tau_proto=%.6f",
-            self.args.get("rank", 0),
-            self._cur_task,
-            lambda_val,
-            tau_fc,
-            tau_proto,
-        )
         if self._is_main_process():
             state = {
                 "schedule": self._dual_schedule,

@@ -660,3 +660,9 @@
 - Dual-B Final 78.84 / AAA 83.067 / F 6.624；control AAA 82.152；SD-LoRA Final 77.94 / AAA 82.898；EXP-009 Final 78.74 / AAA 82.326。
 - Dual-B AAA 相对 control +0.915，Final/AAA 相对 SD-LoRA +0.90/+0.169；主状态 675,840，相对 SD-LoRA 减少 81.7%。
 - artifact consistency 三组 PASS；进入 P2 CIFAR-100 seed1993。
+
+## 2026-08-09 P2：CIFAR-100 seed1993 正式配对通过
+
+- Dual-B Final 88.32 / AAA 91.856 / F 8.233；SD-LoRA Final 87.00 / AAA 91.998；EXP-009 Final 88.37 / AAA 92.042。
+- fused Final 与 prototype Final 一致；Final 相对 SD-LoRA +1.32，AAA 相对 SD-LoRA -0.142（门槛通过）；主状态 522,240，减少 85.8%。
+- artifact consistency PASS；进入 P3 多 seed 主结果。

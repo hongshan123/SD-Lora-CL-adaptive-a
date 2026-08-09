@@ -48,10 +48,16 @@ class Learner(BaseLearner):
             find_unused_parameters = not self.args.get(
                 "sa_deterministic_training", False
             )
-            if self.args.get("model_name", "").lower() == "sdlora":
-                # SD-LoRA has LoRA parameters that are genuinely unused on
-                # some DDP ranks; strict DDP reduction cannot succeed without
-                # unused-parameter detection for this baseline.
+            model_name = self.args.get("model_name", "").lower()
+            legacy_sa_sdlora = (
+                model_name == "sa_sdlora"
+                and not self.args.get("sa_cumulative_state", False)
+            )
+            if model_name == "sdlora" or legacy_sa_sdlora:
+                # SD-LoRA and legacy EXP-009 Shared-A runs have LoRA/scale
+                # parameters that are genuinely unused on some DDP ranks;
+                # strict DDP reduction cannot succeed without unused-parameter
+                # detection for these paths.
                 find_unused_parameters = True
             self._network = DDP(
                 self._network,

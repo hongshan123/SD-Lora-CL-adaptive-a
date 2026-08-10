@@ -880,3 +880,11 @@
   新增单测；HBD/sdlora_dual_b 相关 13 项测试通过。
 - 失败产物保留：`C100_P2_ABL_C_FROZEN_A_SEED1993_NCCL_FAILED_DIAG/` 与 `p4_abl_c_dev_queue_diag.failed.log`。
 - 下一步：commit 后重启 P4-C 开发队列。
+
+## 2026-08-11 P4：C 消融开发种子完成
+
+- C100 seed1993（exit=0）：Final 88.26 / AAA 92.119 / F 7.778；对照完整方法 -0.06/+0.26/-0.46。
+- INR seed1995（exit=0）：Final 78.31 / AAA 83.03 / F 6.309；对照 -0.53/-0.04/-0.32。
+- 审计：consistency PASS；持久参数不变。
+- 机制：Live-A 的 A 更新主要贡献 INR 最终任务塑性（约 +0.5 Final）；C100 上近中性。
+- 下一步：rank1 SD-LoRA+Dual-B 同预算基线（smoke → C100/INR 开发），然后 3-seed 补跑。

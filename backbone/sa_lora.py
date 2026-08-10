@@ -1264,6 +1264,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         if not wrappers:
             return None
         a_params = [w.weight for w in self.w_As]
+        if not all(p.requires_grad for p in a_params):
+            # Frozen-A ablation (P4-C): the Live-A gradient path is disabled
+            # by construction; there is no A gradient to report.
+            return None
 
         hist_loss = torch.zeros((), device=x.device)
         cur_loss = torch.zeros((), device=x.device)

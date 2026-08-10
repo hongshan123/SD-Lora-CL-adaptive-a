@@ -869,3 +869,14 @@
 - 判定：C100 门槛未通过 → 按 §8.4/§14 关闭 HBD，不运行 INR seed1995 与 HBD seed1-5；
   方法定义冻结（无 HBD 的 Live-A Aggregate-B + Dual-B），现有 seed1-5 即最终主结果，不再重跑。
 - 下一步：进入 P4 消融与参数匹配（A/B/C/D/E/F + SD-LoRA rank1+Dual-B 同预算基线），再 P5 任务长度/第三数据集/强基线/效率；论文定位为固定状态 Final-参数 Pareto。
+
+## 2026-08-11 P4：C 消融（冻结 Live-A 的 A）首启失败与修复（工程错误）
+
+- 现象：task0 正常完成；task1 首 batch 在 `live_a_gradient_diagnostics` 的
+  `torch.autograd.grad(hist_loss, a_params)` 报 `element 0 of tensors does not require grad`，四 rank 失败（status=1）。
+- 根因：`sa_train_a_all_tasks=false` 时 A 的 `requires_grad=False`，训练期诊断却仍对 A 求梯度；
+  这是 P4-C 消融路径的诊断缺陷，不是方法负结果。
+- 修复：`live_a_gradient_diagnostics` 在任一 A 参数不要求梯度时返回 None（冻结 A 路径按构造无 A 梯度）；
+  新增单测；HBD/sdlora_dual_b 相关 13 项测试通过。
+- 失败产物保留：`C100_P2_ABL_C_FROZEN_A_SEED1993_NCCL_FAILED_DIAG/` 与 `p4_abl_c_dev_queue_diag.failed.log`。
+- 下一步：commit 后重启 P4-C 开发队列。

@@ -282,6 +282,22 @@ def test_hbd_teacher_hash_unchanged_by_student_training(tmp_path):
         assert torch.equal(saved, current.weight.detach())
 
 
+def test_live_a_gradient_diagnostics_none_when_a_frozen(tmp_path):
+    dim, rank = 6, 2
+    run = _run_tasks(tmp_path, tasks=2)
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=2,
+        train_a_all_tasks=False,
+        cumulative_state=True,
+        cumulative_merge="live_a_aggregate_b",
+    )
+    x = torch.randn(4, 6, dim)
+    assert model.live_a_gradient_diagnostics(x) is None
+
+
 def test_hbd_task0_creates_no_loss_and_missing_teacher_raises():
     learner = object.__new__(Learner)
     learner._hbd_enabled = True

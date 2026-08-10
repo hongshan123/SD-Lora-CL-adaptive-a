@@ -227,7 +227,7 @@ def test_hbd_loss_gradients_flow_only_to_shared_a(tmp_path):
     )
     x = torch.randn(4, 6, dim)
     with torch.no_grad():
-        teacher_outputs = live_a_historical_outputs(teacher, x)
+        teacher_outputs = live_a_historical_outputs(teacher, x, teacher_captures)
     for handle in teacher_handles:
         handle.remove()
 

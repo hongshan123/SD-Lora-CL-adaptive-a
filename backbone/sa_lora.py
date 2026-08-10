@@ -103,25 +103,18 @@ def register_live_a_historical_capture_hooks(model, capture_list):
             "no _LiveAAggregateQKV wrappers found; HBD requires "
             "sa_cumulative_merge=live_a_aggregate_b"
         )
-    model._hbd_capture_list = capture_list
     return handles
 
 
-def live_a_historical_outputs(model, x):
+def live_a_historical_outputs(model, x, capture_list):
     """Run a frozen Live-A model forward and return per-block (q, v) outputs.
 
     The caller must have registered capture hooks on ``model`` and must wrap
     this call in ``torch.no_grad()`` when a teacher is used.
     """
-    captures = getattr(model, "_hbd_capture_list", None)
-    if captures is None:
-        raise RuntimeError(
-            "live_a_historical_outputs requires a capture list attached "
-            "to model._hbd_capture_list"
-        )
-    captures.clear()
+    capture_list.clear()
     model(x)
-    return list(captures)
+    return list(capture_list)
 
 
 def _join_path(prefix, name):

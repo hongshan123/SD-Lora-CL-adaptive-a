@@ -821,3 +821,15 @@
 - 测试：`tests/test_hbd.py` 8 项（距离函数、教师折叠 G_prev/冻结/零 B、无新增持久参数、捕获钩子、梯度只流向 A、Task0 无损失/缺教师报错）；全量 108 passed。
 - 配置：`exps/hbd_smoke_c100_seed1.json`（2 task × 2 epoch，seed1）、`exps/c100_p2_hbd_seed1993_nccl.json`（开发种子，20 epoch）。
 - 下一步：commit → 两任务 NCCL DDP smoke（nohup）→ 审计通过后启动 C100 seed1993 开发运行。
+
+## 2026-08-11 P2：HBD smoke 首跑失败与修复（工程错误，非方法结果）
+
+- 现象：任务 0 正常完成；任务 1 首 batch 在 `_log_hbd_first_batch` 的 `copy.deepcopy(raw_network)` 报
+  `RuntimeError: Only Tensors created explicitly by the user (graph leaves) support the deepcopy protocol`，
+  四 rank 同时失败（status=1）。
+- 根因：`register_live_a_historical_capture_hooks` 把捕获列表挂在 backbone 属性 `_hbd_capture_list` 上；
+  列表内是带 autograd 图的 HBD 学生响应张量，deepcopy 整个网络时尝试复制这些图内张量而失败。
+- 修复：捕获列表不再挂到模型上，`live_a_historical_outputs(model, x, capture_list)` 显式接收列表；
+  调用点（learner/tests）同步更新。任务 0 产物完整（train/eval/consistency 正常），保留为
+  `C100_HBD_SMOKE_NCCL_FAILED_20260811_0205/`，日志保留为 `hbd_smoke_*.failed.*`。
+- 测试：HBD 16 项 + Live-A 相关全部通过；等待重跑 smoke。

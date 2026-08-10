@@ -901,7 +901,7 @@ class Learner(SDLoraLearner):
                 handle.remove()
         with torch.no_grad():
             teacher_outputs = live_a_historical_outputs(
-                self._hbd_teacher, inputs
+                self._hbd_teacher, inputs, self._hbd_teacher_captures
             )
         distance = hbd_historical_branch_distance(
             student_captures, teacher_outputs
@@ -947,7 +947,7 @@ class Learner(SDLoraLearner):
                     handle.remove()
             with torch.no_grad():
                 teacher_outputs = live_a_historical_outputs(
-                    self._hbd_teacher, inputs
+                    self._hbd_teacher, inputs, self._hbd_teacher_captures
                 )
             clone_distance = hbd_historical_branch_distance(
                 clone_captures, teacher_outputs

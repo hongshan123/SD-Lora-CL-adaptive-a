@@ -859,3 +859,13 @@
 - 动作：停止 λ=0.1 开发运行（保留 `C100_P2_HBD_SEED1993_NCCL_FAILED_LAMBDA01/` 与
   `c100_p2_hbd_seed1993_nccl_lambda01.failed.log`）；smoke/dev 配置 λ 改为 6.0。
 - 纪律：不因准确率调参；修正后不允许第二轮 λ 扫描；smoke 复验 first_drift ratio 落在区间后重启开发运行。
+
+## 2026-08-11 P2：C100 seed1993 HBD 开发运行完成——Final 门槛未过，HBD 关闭
+
+- 结果（λ=6.0，exit=0，约 1.5h）：Final 87.82（<88.12 ✗）、AAA 92.176（≥92.156 ✓）、Forgetting 6.156（≤7.233 ✓）。
+- 观测：HBD 中期收益明显（T5-T8 比基线高 0.6-0.9，Forgetting -2.08），但 T9 Final 低基线 0.50；
+  首 batch HBD 结构性为 0，first_drift 梯度比 0.030-0.096（任务 1/3/5/6/8/9 已记录）。
+- 审计：consistency PASS；持久参数与无 HBD 完全一致；Task0 无蒸馏；四 rank/RNG/校准 PASS；全量测试 108 passed。
+- 判定：C100 门槛未通过 → 按 §8.4/§14 关闭 HBD，不运行 INR seed1995 与 HBD seed1-5；
+  方法定义冻结（无 HBD 的 Live-A Aggregate-B + Dual-B），现有 seed1-5 即最终主结果，不再重跑。
+- 下一步：进入 P4 消融与参数匹配（A/B/C/D/E/F + SD-LoRA rank1+Dual-B 同预算基线），再 P5 任务长度/第三数据集/强基线/效率；论文定位为固定状态 Final-参数 Pareto。

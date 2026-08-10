@@ -177,4 +177,7 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
   - C100：完整方法 87.41±0.32 / 91.06±0.64 / 9.09±0.62；SD-LoRA 86.81±0.56 / 91.45±0.63 / 6.57±0.71；EXP-009 87.58±0.28 / 91.12±0.54 / 9.19±0.47。
   - 完整方法相对 SD-LoRA：INR Final +0.73（p≈0.078）、AAA +0.10、F -0.11；C100 Final +0.60（p≈0.041）、AAA -0.39（p≈0.006）、F +2.52（p<0.001）。
 - 主门槛现状：Final 与参数目标通过；**C100 AAA −0.385 > −0.30 未通过，C100 Forgetting +2.52 显著**，因此 P3 未通过，P4–P6 未触发。
-- 下一阶段（按任务书）：P0 严格统计已完成（`p0-strict-n5` 分支）；P1 离线机制诊断已完成（见 `p1_mechanism_diagnostics_summary.md`——oracle 刷新 old +1.4~+1.7、Forgetting -1.7 左右，prototype 坐标失配为主要瓶颈，支持历史分支漂移假设）；P2 唯一允许的新训练组件 Historical-Branch Activation Distillation（C100 seed1993 → INR seed1995，门槛见任务书 §8.4）；通过后冻结并执行 HBD seed1-5 一次性确认；之后 P4 消融/参数匹配、P5 任务长度/第三数据集/强基线/效率。
+- 下一阶段（按任务书）：P0 严格统计已完成（`p0-strict-n5` 分支）；P1 离线机制诊断已完成（见 `p1_mechanism_diagnostics_summary.md`——oracle 刷新 old +1.4~+1.7、Forgetting -1.7 左右，prototype 坐标失配为主要瓶颈，支持历史分支漂移假设）；P2 HBD 已实现并完成 C100 seed1993 开发运行（见 `p2_hbd_development_result.md`——Final 87.82 < 88.12 未过门槛，AAA/Forgetting 改善，**HBD 按任务书关闭**，不运行 INR 与 seed1-5）。
+- 当前冻结方法：无 HBD 的 **Live-A Aggregate-B + Dual-B**；严格 n=5 主结果（seed1-5）即最终主结果，不再重复训练。
+- 论文定位：固定 O(1) 状态的 Final-参数 Pareto（C100 AAA/Forgetting 代价如实报告）。
+- 后续：P4 消融矩阵（A 完整方法、B 纯 prototype、C 冻结/关闭 Live-A、D EXP-009 bank 同 prototype 口径、E 去 HBD=control、F 同轨迹头生命周期）+ **SD-LoRA rank1 + 同 Dual-B 头**同预算基线（≥3 预注册种子）；P5 任务长度 N=5/10/20、第三数据集（CUB-200 或同等标准 CIL）、强基线（InfLoRA/CL-LoRA 等官方实现，分栏报告）、效率实测与最小导出验证。

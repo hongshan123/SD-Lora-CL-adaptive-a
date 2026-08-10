@@ -251,6 +251,37 @@ def test_hbd_loss_gradients_flow_only_to_shared_a(tmp_path):
     assert all(g is None or torch.all(g == 0) for g in b_grads)
 
 
+def test_hbd_teacher_hash_unchanged_by_student_training(tmp_path):
+    dim, rank = 6, 2
+    run = _run_tasks(tmp_path, tasks=2)
+    torch.manual_seed(53)
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(dim),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=2,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="live_a_aggregate_b",
+    )
+    teacher = model.build_hbd_teacher()
+    teacher_a_hash = [
+        w.weight.detach().clone() for w in teacher.w_As
+    ]
+    optimizer = torch.optim.SGD(
+        [w.weight for w in model.w_As], lr=0.1
+    )
+    x = torch.randn(4, 6, dim)
+    model.train()
+    for _ in range(3):
+        optimizer.zero_grad()
+        loss = model(x).square().mean()
+        loss.backward()
+        optimizer.step()
+    for saved, current in zip(teacher_a_hash, teacher.w_As):
+        assert torch.equal(saved, current.weight.detach())
+
+
 def test_hbd_task0_creates_no_loss_and_missing_teacher_raises():
     learner = object.__new__(Learner)
     learner._hbd_enabled = True

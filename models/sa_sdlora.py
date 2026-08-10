@@ -332,6 +332,7 @@ class Learner(SDLoraLearner):
         self._hbd_teacher_captures = []
         self._hbd_teacher_handles = []
         self._hbd_first_batch = True
+        self._hbd_ratio_logged = False
         self._proto_ema = {}
         self._proto_ema_task = None
         if self._sa_operator_stability_lambda < 0:
@@ -391,6 +392,7 @@ class Learner(SDLoraLearner):
                 )
             )
             self._hbd_first_batch = True
+            self._hbd_ratio_logged = False
         if self._dual_head:
             raw_network = self._raw_network()
             raw_network.set_head_mode("fc")
@@ -910,12 +912,24 @@ class Learner(SDLoraLearner):
         if self._hbd_first_batch:
             self._hbd_first_batch = False
             self._log_hbd_first_batch(
-                raw_network, inputs, targets, features
+                raw_network, inputs, targets, features, label="first"
+            )
+        if (
+            not self._hbd_ratio_logged
+            and float(distance.detach()) > 1e-8
+        ):
+            self._hbd_ratio_logged = True
+            self._log_hbd_first_batch(
+                raw_network,
+                inputs,
+                targets,
+                features,
+                label="first_drift",
             )
         return hbd_loss
 
     def _log_hbd_first_batch(
-        self, raw_network, inputs, targets, features
+        self, raw_network, inputs, targets, features, label="first"
     ):
         """Record CE/HBD values and the CE-vs-HBD gradient norm ratio on A.
 
@@ -974,9 +988,10 @@ class Learner(SDLoraLearner):
                 parameter.grad = None
         if self._is_main_process():
             logging.info(
-                "[HBD] task %d first batch: CE=%.4f HBD=%.4f "
+                "[HBD] task %d %s batch: CE=%.4f HBD=%.4f "
                 "dL/dA_ce=%.4e dL/dA_hbd=%.4e ratio_hbd_ce=%.4f",
                 self._cur_task,
+                label,
                 ce_loss.detach().item(),
                 clone_hbd_loss.detach().item(),
                 ce_norm,

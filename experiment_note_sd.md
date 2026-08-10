@@ -842,3 +842,10 @@
   避免不可 pickle 对象；CE/HBD 梯度范数仍全部在克隆参数上计算，不触发 DDP 多轮 reduction。
 - 失败产物保留：`C100_HBD_SMOKE_NCCL_FAILED_20260811_0211/` 与 `hbd_smoke_*.failed2.*`。
 - 下一步：commit 修复后重跑 smoke。
+
+## 2026-08-11 P2：HBD 两任务 NCCL DDP smoke 通过（三跑）
+
+- 结果：exit=0；Task0 无 HBD（epoch 信息无 hbd 项）；Task1 `[HBD] first batch` 记录，epoch hbd≈0.0038/0.0046（A 移动后约束生效）。
+- 审计：PostTrainHash ×2、RNGHash calibration/eval PASS ×2、PrototypeSync PASS ×2、校准参数四 rank 一致、lambda=1 fused/proto diff=0、无 determinism warning、Trainable params 0→1 仅增 fc（368641→407091，HBD 零参数）、`verify_sa_consistency` PASS（feature 6.2e-6 / logit 3.0e-7）。
+- 首 batch HBD=0/ratio=0 是结构性事实：任务开始时 B_t=0 且 A_live=A_prev，学生与教师历史响应完全一致；新增 `first_drift` 日志在 HBD distance>1e-8 的首个 batch（A 已移动）记录工程尺度比。新增“教师 hash 训练后不变”单测。
+- 下一步：commit → 启动 C100 seed1993 开发运行（20 epoch × 10 tasks，nohup+30 分钟巡检）。

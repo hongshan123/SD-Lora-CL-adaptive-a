@@ -805,3 +805,19 @@
 - **判定**：两个开发种子均满足“oracle old ≥ +1.0 且 F 降 ≥0.75” → prototype 坐标失配是主要瓶颈，P1 支持历史分支漂移假设，**允许进入 P2 HBD**；不自行发明替代 transport。
 - 产物：`p1_dual_b_head_decomposition_output.txt`、`p1_mechanism_diagnostics_summary.md`。
 - 下一步：实现 P2 Historical-Branch Activation Distillation（教师快照 + G_prev 分支响应蒸馏，Task0 零损失，lambda_hbd=0.1，单测 + 两任务 DDP smoke，然后 C100 seed1993）。
+
+## 2026-08-11 P2：HBD 实现与单元测试
+
+- 实现（`backbone/sa_lora.py`）：
+  - `hbd_historical_branch_distance`：token/branch 平均的 normalized cosine distance，跨层取均值；
+  - `register_live_a_historical_capture_hooks` / `live_a_historical_outputs`：按 block 前向钩子捕获 `(q, v)` 历史分支响应（真实层输入）；
+  - `SharedALoRA_ViT_timm.build_hbd_teacher()`：任务 t 开始时 deepcopy 冻结教师——A_prev 冻结、`G_prev = G_{t-2} + s B_{t-1}/||B_{t-1}||` 显式折叠、当前 B 清零、eval/no_grad/requires_grad=False；不注册、不持久化。
+- 实现（`models/sa_sdlora.py`）：
+  - 配置 `sa_hbd_enabled` / `sa_hbd_lambda=0.1`（要求 `sa_cumulative_merge=live_a_aggregate_b`）；
+  - `incremental_train` 在任务 t>0 训练前建教师、训练后释放；
+  - `_hbd_training_loss`：额外一次 live backbone autograd 前向取学生历史响应，与冻结教师响应算距离；只约束历史 G_prev 分支，fresh B 无 HBD 梯度；
+  - Task0 不创建 HBD 损失；
+  - 首 batch 记录 CE/HBD 值、dL/dA 梯度范数与 HBD/CE 比（在 deepcopy 网络上计算，避免触发 DDP 多轮 reduction；`rng_preserving` 保证不扰动轨迹）。
+- 测试：`tests/test_hbd.py` 8 项（距离函数、教师折叠 G_prev/冻结/零 B、无新增持久参数、捕获钩子、梯度只流向 A、Task0 无损失/缺教师报错）；全量 108 passed。
+- 配置：`exps/hbd_smoke_c100_seed1.json`（2 task × 2 epoch，seed1）、`exps/c100_p2_hbd_seed1993_nccl.json`（开发种子，20 epoch）。
+- 下一步：commit → 两任务 NCCL DDP smoke（nohup）→ 审计通过后启动 C100 seed1993 开发运行。

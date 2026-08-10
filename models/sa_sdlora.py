@@ -1,4 +1,5 @@
 import logging
+import copy
 import json
 import math
 import os
@@ -25,7 +26,12 @@ from backbone.lrpt import (
     project_map_to_basis,
     transport_prediction_error,
 )
-from backbone.sa_lora import SharedALoRA_ViT_timm
+from backbone.sa_lora import (
+    SharedALoRA_ViT_timm,
+    hbd_historical_branch_distance,
+    live_a_historical_outputs,
+    register_live_a_historical_capture_hooks,
+)
 from utils.canonical_hash import (
     compare_named_tensors,
     hash_named_tensors,
@@ -310,6 +316,22 @@ class Learner(SDLoraLearner):
         self._sa_prototype_consistency_weight = float(
             args.get("sa_prototype_consistency_weight", 0.0)
         )
+        self._hbd_enabled = bool(args.get("sa_hbd_enabled", False))
+        self._hbd_lambda = float(args.get("sa_hbd_lambda", 0.1))
+        if self._hbd_enabled:
+            if self._hbd_lambda <= 0:
+                raise ValueError(
+                    "sa_hbd_lambda must be > 0 when sa_hbd_enabled=true"
+                )
+            if args.get("sa_cumulative_merge", "gauge") != "live_a_aggregate_b":
+                raise ValueError(
+                    "sa_hbd_enabled requires "
+                    "sa_cumulative_merge=live_a_aggregate_b"
+                )
+        self._hbd_teacher = None
+        self._hbd_teacher_captures = []
+        self._hbd_teacher_handles = []
+        self._hbd_first_batch = True
         self._proto_ema = {}
         self._proto_ema_task = None
         if self._sa_operator_stability_lambda < 0:
@@ -359,6 +381,16 @@ class Learner(SDLoraLearner):
 
     def incremental_train(self, data_manager):
         self._dual_num_tasks = data_manager.nb_tasks
+        if self._hbd_enabled and self._cur_task >= 0:
+            backbone = self._raw_network().backbone
+            self._hbd_teacher = backbone.build_hbd_teacher()
+            self._hbd_teacher_captures = []
+            self._hbd_teacher_handles = (
+                register_live_a_historical_capture_hooks(
+                    self._hbd_teacher, self._hbd_teacher_captures
+                )
+            )
+            self._hbd_first_batch = True
         if self._dual_head:
             raw_network = self._raw_network()
             raw_network.set_head_mode("fc")
@@ -393,6 +425,12 @@ class Learner(SDLoraLearner):
                 self._lrpt_pre_features.shape[0],
             )
         super().incremental_train(data_manager)
+        if self._hbd_teacher is not None:
+            for handle in self._hbd_teacher_handles:
+                handle.remove()
+            self._hbd_teacher_handles = []
+            self._hbd_teacher_captures = []
+            self._hbd_teacher = None
         if self._is_main_process():
             self._log_post_train_hash(self._cur_task)
         if self._is_main_process():
@@ -791,6 +829,12 @@ class Learner(SDLoraLearner):
         self, inputs=None, targets=None, features=None
     ):
         losses = {}
+        if self._hbd_enabled and self._cur_task > 0:
+            hbd_loss = self._hbd_training_loss(
+                inputs, targets, features
+            )
+            if hbd_loss is not None:
+                losses["hbd"] = hbd_loss
         if self._sa_operator_stability_lambda > 0 and self._cur_task > 0:
             operator_loss = (
                 self._raw_network().backbone.old_operator_stability_loss()
@@ -824,6 +868,118 @@ class Learner(SDLoraLearner):
         cosine = (feats * proto_matrix).sum(dim=1)
         losses["prototype_consistency"] = w * (1.0 - cosine).mean()
         return losses
+
+    def _hbd_training_loss(
+        self, inputs=None, targets=None, features=None
+    ):
+        """Historical-Branch Activation Distillation loss (task t > 0).
+
+        Runs one extra autograd forward over the live backbone to collect the
+        per-block historical-branch responses (``G_prev * normalize(A_live) * x``)
+        and compares them with the frozen task-start teacher responses
+        (``G_prev * normalize(A_prev) * x_teacher``).  Only the historical
+        branch is constrained; fresh ``B_t`` receives no HBD gradient.
+        """
+        if not self._hbd_enabled or self._cur_task == 0:
+            return None
+        if self._hbd_teacher is None:
+            raise RuntimeError(
+                "HBD teacher missing for task {}; snapshot must be created "
+                "before training".format(self._cur_task)
+            )
+        raw_network = self._raw_network()
+        backbone = raw_network.backbone
+        student_captures = []
+        handles = register_live_a_historical_capture_hooks(
+            backbone, student_captures
+        )
+        try:
+            with torch.enable_grad():
+                backbone(inputs)
+        finally:
+            for handle in handles:
+                handle.remove()
+        with torch.no_grad():
+            teacher_outputs = live_a_historical_outputs(
+                self._hbd_teacher, inputs
+            )
+        distance = hbd_historical_branch_distance(
+            student_captures, teacher_outputs
+        )
+        hbd_loss = self._hbd_lambda * distance
+        if self._hbd_first_batch:
+            self._hbd_first_batch = False
+            self._log_hbd_first_batch(
+                raw_network, inputs, targets, features
+            )
+        return hbd_loss
+
+    def _log_hbd_first_batch(
+        self, raw_network, inputs, targets, features
+    ):
+        """Record CE/HBD values and the CE-vs-HBD gradient norm ratio on A.
+
+        The ratio is computed on a deep-copied network so the diagnostic
+        backwards never trigger DDP reduction hooks on the live parameters.
+        RNG is restored afterwards so the diagnostic does not perturb the
+        training trajectory.
+        """
+        if features is None:
+            return
+        with rng_preserving():
+            clone = copy.deepcopy(raw_network)
+            clone.train()
+            clone_feats = clone.backbone(inputs)
+            clone_logits = clone.fc(clone_feats)["logits"]
+            ce_loss = F.cross_entropy(
+                clone_logits[:, self._known_classes :],
+                targets - self._known_classes,
+            )
+            clone_captures = []
+            clone_handles = register_live_a_historical_capture_hooks(
+                clone.backbone, clone_captures
+            )
+            try:
+                with torch.enable_grad():
+                    clone.backbone(inputs)
+            finally:
+                for handle in clone_handles:
+                    handle.remove()
+            with torch.no_grad():
+                teacher_outputs = live_a_historical_outputs(
+                    self._hbd_teacher, inputs
+                )
+            clone_distance = hbd_historical_branch_distance(
+                clone_captures, teacher_outputs
+            )
+            clone_hbd_loss = self._hbd_lambda * clone_distance
+            a_params = [w.weight for w in clone.backbone.w_As]
+            ce_norm, hbd_norm = 0.0, 0.0
+            for parameter in a_params:
+                parameter.grad = None
+            ce_loss.backward(retain_graph=True)
+            ce_norm = sum(
+                p.grad.detach().square().sum().item() for p in a_params
+            ) ** 0.5
+            for parameter in a_params:
+                parameter.grad = None
+            clone_hbd_loss.backward(retain_graph=True)
+            hbd_norm = sum(
+                p.grad.detach().square().sum().item() for p in a_params
+            ) ** 0.5
+            for parameter in a_params:
+                parameter.grad = None
+        if self._is_main_process():
+            logging.info(
+                "[HBD] task %d first batch: CE=%.4f HBD=%.4f "
+                "dL/dA_ce=%.4e dL/dA_hbd=%.4e ratio_hbd_ce=%.4f",
+                self._cur_task,
+                ce_loss.detach().item(),
+                clone_hbd_loss.detach().item(),
+                ce_norm,
+                hbd_norm,
+                hbd_norm / max(ce_norm, 1e-12),
+            )
 
     def _extract_current_task_features(
         self, data_manager, task_index=None, normalize=False, return_targets=False

@@ -10,6 +10,7 @@ which reproduces the exact forward of the per-task bank at evaluation time.
 """
 
 import math
+import copy
 import os
 from collections.abc import Sequence
 
@@ -37,6 +38,90 @@ SA_MERGE_MODE_UNION_SVD = "union_svd"
 SA_MERGE_MODE_LIVE_A_AGGREGATE_B = "live_a_aggregate_b"
 SA_STATE_FILENAME = "sa_state.pt"
 SA_MERGED_FILENAME = "sa_merged_lora.pt"
+
+
+def hbd_historical_branch_distance(
+    student_outputs, teacher_outputs
+):
+    """Normalized cosine distance between historical-branch responses.
+
+    ``student_outputs`` / ``teacher_outputs`` are lists of ``(q, v)`` tensors
+    shaped ``[B, T, D]`` (one entry per LoRA block, in block order).  For every
+    Q/V branch the tokens are L2-normalized and the mean cosine similarity is
+    taken; the loss is ``1 - mean`` averaged over branches and blocks (the
+    guide's preferred token/branch-averaged normalized cosine distance).
+
+    Gradients flow only through ``student_outputs``; teacher tensors should be
+    detached (the training hook runs the teacher under ``torch.no_grad()``).
+    """
+    if len(student_outputs) != len(teacher_outputs):
+        raise ValueError(
+            "student/teacher historical output counts differ: {} vs {}".format(
+                len(student_outputs), len(teacher_outputs)
+            )
+        )
+    branch_losses = []
+    for (sq, sv), (tq, tv) in zip(student_outputs, teacher_outputs):
+        for s, t in ((sq, tq), (sv, tv)):
+            s_flat = s.reshape(-1, s.shape[-1])
+            t_flat = t.reshape(-1, t.shape[-1])
+            s_norm = F.normalize(s_flat, p=2, dim=1)
+            t_norm = F.normalize(t_flat, p=2, dim=1)
+            branch_losses.append(
+                1.0 - (s_norm * t_norm).sum(dim=1).mean()
+            )
+    if not branch_losses:
+        raise ValueError("HBD requires at least one historical branch output")
+    return torch.stack(branch_losses).mean()
+
+
+def register_live_a_historical_capture_hooks(model, capture_list):
+    """Register forward hooks capturing per-block historical-branch outputs.
+
+    Each hook appends ``(q, v)`` for the block's ``_LiveAAggregateQKV``
+    wrapper using that block's actual input tokens.  Returns the hook handles;
+    callers must remove them after the forward.
+    """
+    handles = []
+    for blk in model.lora_vit.blocks:
+        wrapper = blk.attn.qkv
+        if not isinstance(wrapper, _LiveAAggregateQKV):
+            continue
+
+        def _make_hook(capture_list):
+            def _hook(module, args, output):
+                hq, hv = module.historical_output(args[0])
+                capture_list.append((hq, hv))
+
+            return _hook
+
+        handles.append(
+            wrapper.register_forward_hook(_make_hook(capture_list))
+        )
+    if not handles:
+        raise ValueError(
+            "no _LiveAAggregateQKV wrappers found; HBD requires "
+            "sa_cumulative_merge=live_a_aggregate_b"
+        )
+    model._hbd_capture_list = capture_list
+    return handles
+
+
+def live_a_historical_outputs(model, x):
+    """Run a frozen Live-A model forward and return per-block (q, v) outputs.
+
+    The caller must have registered capture hooks on ``model`` and must wrap
+    this call in ``torch.no_grad()`` when a teacher is used.
+    """
+    captures = getattr(model, "_hbd_capture_list", None)
+    if captures is None:
+        raise RuntimeError(
+            "live_a_historical_outputs requires a capture list attached "
+            "to model._hbd_capture_list"
+        )
+    captures.clear()
+    model(x)
+    return list(captures)
 
 
 def _join_path(prefix, name):
@@ -854,6 +939,8 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._last_cumulative_gauge_diagnostics = None
         self._last_union_svd_truncation_error = None
         self._last_live_a_save_stats = None
+        # HBD teacher lifecycle (plain attributes; never enter state_dict).
+        self._hbd_capture_list = None
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -1230,6 +1317,80 @@ class SharedALoRA_ViT_timm(nn.Module):
             "mean_B_norm": (b_norm / len(wrappers)) ** 0.5,
             "scale": float(self.wrapped_param[0].param.detach().item()),
         }
+
+    def _fold_live_a_teacher_aggregate(self):
+        """Return ``G_prev`` per Q/V branch from the task-start model state.
+
+        The in-memory Live-A semantics keep ``aggregate_up == G_{t-2}`` while
+        the current raw ``B_{t-1}`` is still in the wrappers.  The teacher
+        snapshot for task ``t`` needs ``G_{t-1} = G_{t-2} + s B_{t-1}/||B_{t-1}||``,
+        i.e. exactly what ``_save_live_a_state`` writes to disk.
+        """
+        if self.cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B:
+            raise ValueError(
+                "HBD teacher requires sa_cumulative_merge=live_a_aggregate_b"
+            )
+        folded = []
+        for idx, w_b in enumerate(self.w_Bs):
+            b = w_b.weight.detach().cpu().float()
+            scale = (
+                self.wrapped_param[0]
+                .param.detach()
+                .cpu()
+                .float()
+                .reshape(())
+            )
+            g_old = (
+                self.aggregate_up[idx]
+                if idx < len(self.aggregate_up)
+                else torch.zeros_like(b)
+            )
+            folded.append(
+                g_old
+                + scale
+                * b
+                / (torch.linalg.vector_norm(b) + 1e-8)
+            )
+        return folded
+
+    def build_hbd_teacher(self):
+        """Build the frozen task-start teacher (``A_prev``, ``G_prev``, zero B).
+
+        The teacher is a deep copy of the current model with:
+          * shared A frozen at the current (task-start) value;
+          * historical aggregate folded to ``G_prev = G_{t-2} + s B_{t-1}/||B_{t-1}||``;
+          * current-task B zeroed so the full forward equals ``G_prev A/||A||``.
+        It is not registered anywhere, never saved, and must be released at
+        the end of the task.
+        """
+        teacher = copy.deepcopy(self)
+        teacher.eval()
+        for parameter in teacher.parameters():
+            parameter.requires_grad_(False)
+        folded = self._fold_live_a_teacher_aggregate()
+        wrappers = [
+            blk.attn.qkv
+            for blk in teacher.lora_vit.blocks
+            if isinstance(blk.attn.qkv, _LiveAAggregateQKV)
+        ]
+        if len(wrappers) * 2 != len(folded):
+            raise ValueError(
+                "HBD teacher branch mismatch: {} wrappers vs {} folded".format(
+                    len(wrappers), len(folded)
+                )
+            )
+        for wrapper_index, wrapper in enumerate(wrappers):
+            wrapper.aggregate_q.copy_(
+                folded[2 * wrapper_index].to(wrapper.aggregate_q.device)
+            )
+            wrapper.aggregate_v.copy_(
+                folded[2 * wrapper_index + 1].to(
+                    wrapper.aggregate_v.device
+                )
+            )
+        for w_b in teacher.w_Bs:
+            w_b.weight.zero_()
+        return teacher
 
     def _load_state(self):
         path = _join_path(self.save_file, SA_STATE_FILENAME)

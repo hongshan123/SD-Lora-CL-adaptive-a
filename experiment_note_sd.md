@@ -791,3 +791,17 @@
 - **口径修正**：n=6（`p3_multiseed_stats_output.txt`）明确降级为敏感性分析；论文主显著性一律使用 n=5。
 - 产物：`p3_strict_n5_stats_output.txt`、`p3_strict_n5_summary.md`、三份研究记录修正。
 - 下一步：P1 低成本机制诊断（Dual-B 头分解 + prototype 失配/表示遗忘分解，全部离线复用现有 checkpoint）。
+
+## 2026-08-11 P1：Dual-B 头分解与 prototype/表示遗忘分解（离线）
+
+- **P1.1 头分解**（`scripts/diagnose_dual_b_head.py`，确认种子 n=5，纯日志解析）：
+  - INR：FC/proto/fused AAA = 83.020 / 82.646 / 83.064；fused − SD-LoRA = +0.103；fused 相对纯 proto +0.42（早期 FC 头贡献）。
+  - C100：FC/proto/fused AAA = 90.467 / 91.021 / 91.063；fused − SD-LoRA = -0.385；fused 相对纯 proto 仅 +0.04。C100 缺口集中在 T2-T5，Dual-B 头不能修复，指向原型/表示侧。
+- **P1.2 漂移分解**（`scripts/diagnose_prototype_representation_drift.py`，开发种子，旧训练数据仅离线 oracle）：
+  - INR seed1995 oracle 上限：Final +1.32、AAA +0.71、Forgetting -1.77、old +1.65（old 78.10→79.75）；C100 seed1993：Final +1.11、AAA +0.81、Forgetting -1.65、old +1.41（88.00→89.41）。
+  - 保存/重算原型余弦：INR 0.9478、C100 0.9622；紧致度 0.5811/0.6919；margin 0.1808/0.2236。
+  - 任务时模型 vs 最终模型（保存原型）：INR -1.64、C100 -0.66 → 最终模型不更差，表示遗忘分支不成立。
+  - 路径 4（任务时模型+重算原型）不可重构：Live-A 只有最终 O(1) 状态，逐任务快照未持久化，P1 禁止重训；已如实记录。
+- **判定**：两个开发种子均满足“oracle old ≥ +1.0 且 F 降 ≥0.75” → prototype 坐标失配是主要瓶颈，P1 支持历史分支漂移假设，**允许进入 P2 HBD**；不自行发明替代 transport。
+- 产物：`p1_dual_b_head_decomposition_output.txt`、`p1_mechanism_diagnostics_summary.md`。
+- 下一步：实现 P2 Historical-Branch Activation Distillation（教师快照 + G_prev 分支响应蒸馏，Task0 零损失，lambda_hbd=0.1，单测 + 两任务 DDP smoke，然后 C100 seed1993）。

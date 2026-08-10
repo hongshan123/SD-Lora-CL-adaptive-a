@@ -674,6 +674,22 @@
 - 门槛：Final 两数据集均不低于 SD-LoRA（通过）；AAA 门槛因 C100 -0.344（>0.3）未通过；状态减少 81.7%/85.8% 通过。
 - 结论：**P3 未通过，停止 P4–P6**，结果如实记录为负结果/机制证据。
 
+## 2026-08-11 P1：Dual-B 头分解与 prototype/表示遗忘分解（离线，无重训）
+
+- 状态：完成（全部复用冻结 checkpoint/日志；不改变训练轨迹）。
+- P1.1 头分解（确认种子 n=5，`scripts/diagnose_dual_b_head.py`）：
+  - INR：FC AAA 83.020、prototype 82.646、fused 83.064（相对 SD-LoRA +0.103）；fused 相对纯 prototype +0.42，主要来自 T0-T4 的 FC 部分。
+  - C100：FC AAA 90.467、prototype 91.021、fused 91.063（相对 SD-LoRA -0.385）；fused 相对纯 prototype 仅 +0.04，C100 中期缺口不在 Dual-B 头生命周期。
+  - 逐任务明细：`p1_dual_b_head_decomposition_output.txt`。
+- P1.2 漂移分解（开发种子，`scripts/diagnose_prototype_representation_drift.py`）：
+  - INR seed1995：最终模型+保存原型 Final 78.84 / AAA 83.79 / F 6.19 / old 78.10 / new 85.54；oracle 重算后 Final 80.16 / AAA 84.50 / F 4.43 / old 79.75 / new 83.87（old +1.65、F -1.77、Final +1.32）。
+  - C100 seed1993：最终模型+保存原型 Final 88.32 / AAA 92.53 / F 5.62 / old 88.00 / new 91.20；oracle 重算后 Final 89.43 / AAA 93.34 / F 3.97 / old 89.41 / new 89.60（old +1.41、F -1.65、Final +1.11）。
+  - 保存 vs 重算原型余弦：INR 0.9478、C100 0.9622（随任务年龄增大）；类内紧致度 INR 0.5811 / C100 0.6919；最近错误类 margin INR 0.1808 / C100 0.2236。
+  - 路径 4（任务时模型+重算原型）不可重构：Live-A 只持久化最终 O(1) 状态，逐任务快照未保存且 P1 禁止重训；决策用路径 1/2/3 已覆盖。
+- 决策（§7.3）：两开发种子 oracle 刷新 old ≥1.0 且 F ≥0.75（1.65/1.77、1.41/1.65）→ **prototype 坐标失配是主要瓶颈，P1 支持共享 A/历史分支漂移假设**；任务时模型并不优于最终模型，共享 A 表示遗忘分支不成立。
+- 汇总：`p1_mechanism_diagnostics_summary.md`。
+- 下一步：P2 Historical-Branch Activation Distillation（唯一允许的新训练组件）。
+
 ### ⚠️ 统计口径修正（2026-08-11 P0）
 
 - 上述 n=6 统计把开发种子（INR seed1995、C100 seed1993）并入主统计，**只能作为描述性敏感性分析**，不能作为论文主显著性结论。

@@ -849,3 +849,13 @@
 - 审计：PostTrainHash ×2、RNGHash calibration/eval PASS ×2、PrototypeSync PASS ×2、校准参数四 rank 一致、lambda=1 fused/proto diff=0、无 determinism warning、Trainable params 0→1 仅增 fc（368641→407091，HBD 零参数）、`verify_sa_consistency` PASS（feature 6.2e-6 / logit 3.0e-7）。
 - 首 batch HBD=0/ratio=0 是结构性事实：任务开始时 B_t=0 且 A_live=A_prev，学生与教师历史响应完全一致；新增 `first_drift` 日志在 HBD distance>1e-8 的首个 batch（A 已移动）记录工程尺度比。新增“教师 hash 训练后不变”单测。
 - 下一步：commit → 启动 C100 seed1993 开发运行（20 epoch × 10 tasks，nohup+30 分钟巡检）。
+
+## 2026-08-11 P2：C100 开发运行首启停止——λ=0.1 梯度比不达标，执行唯一一次工程尺度修正
+
+- 观测（只依据梯度比，不依据准确率）：任务 1 `first_drift` batch 的
+  `dL/dA_hbd=4.6670e-04`、`dL/dA_ce=4.4465e-01`、`ratio_hbd_ce=0.0010`；首 batch 为结构性 0。
+- 判定：按任务书 §8.2，比值 0.0010 ∉ [0.05, 0.50]，允许一次纯工程尺度修正；
+  修正后 ratio 与 λ 线性缩放，取 `sa_hbd_lambda=6.0`（目标 first_drift ratio≈0.06，带余量进入区间）。
+- 动作：停止 λ=0.1 开发运行（保留 `C100_P2_HBD_SEED1993_NCCL_FAILED_LAMBDA01/` 与
+  `c100_p2_hbd_seed1993_nccl_lambda01.failed.log`）；smoke/dev 配置 λ 改为 6.0。
+- 纪律：不因准确率调参；修正后不允许第二轮 λ 扫描；smoke 复验 first_drift ratio 落在区间后重启开发运行。

@@ -51,5 +51,5 @@
     "sa_dual_head": true,
     "sa_dual_head_schedule": "B",
     "sa_hbd_enabled": true,
-    "sa_hbd_lambda": 0.1
+    "sa_hbd_lambda": 6.0
 }

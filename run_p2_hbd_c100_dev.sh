@@ -42,7 +42,7 @@ fi
 commit=$(git rev-parse HEAD)
 config_sha=$(sha256sum "$config" | awk '{print $1}')
 
-nohup bash -lc '
+setsid nohup bash -lc '
 set -uo pipefail
 cd /home/zhaoyang/SD-Lora-CL
 source /home/zhaoyang/miniconda3/etc/profile.d/conda.sh

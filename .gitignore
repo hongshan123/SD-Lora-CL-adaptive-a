@@ -4,6 +4,7 @@ workspace/
 logs/
 *.log
 *.lock
+*.pid
 *.tar.gz
 
 # checkpoint / experiment output directories

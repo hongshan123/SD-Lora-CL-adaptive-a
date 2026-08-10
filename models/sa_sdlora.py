@@ -927,21 +927,24 @@ class Learner(SDLoraLearner):
         if features is None:
             return
         with rng_preserving():
-            clone = copy.deepcopy(raw_network)
+            # Deep-copy only the modules that contribute to the CE/HBD graphs
+            # (the full network holds unpicklable runtime references).
+            clone = copy.deepcopy(raw_network.backbone)
+            clone_fc = copy.deepcopy(raw_network.fc)
             clone.train()
-            clone_feats = clone.backbone(inputs)
-            clone_logits = clone.fc(clone_feats)["logits"]
+            clone_feats = clone(inputs)
+            clone_logits = clone_fc(clone_feats)["logits"]
             ce_loss = F.cross_entropy(
                 clone_logits[:, self._known_classes :],
                 targets - self._known_classes,
             )
             clone_captures = []
             clone_handles = register_live_a_historical_capture_hooks(
-                clone.backbone, clone_captures
+                clone, clone_captures
             )
             try:
                 with torch.enable_grad():
-                    clone.backbone(inputs)
+                    clone(inputs)
             finally:
                 for handle in clone_handles:
                     handle.remove()
@@ -953,7 +956,7 @@ class Learner(SDLoraLearner):
                 clone_captures, teacher_outputs
             )
             clone_hbd_loss = self._hbd_lambda * clone_distance
-            a_params = [w.weight for w in clone.backbone.w_As]
+            a_params = [w.weight for w in clone.w_As]
             ce_norm, hbd_norm = 0.0, 0.0
             for parameter in a_params:
                 parameter.grad = None

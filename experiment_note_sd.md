@@ -833,3 +833,12 @@
   调用点（learner/tests）同步更新。任务 0 产物完整（train/eval/consistency 正常），保留为
   `C100_HBD_SMOKE_NCCL_FAILED_20260811_0205/`，日志保留为 `hbd_smoke_*.failed.*`。
 - 测试：HBD 16 项 + Live-A 相关全部通过；等待重跑 smoke。
+
+## 2026-08-11 P2：HBD smoke 二跑失败与修复（工程错误，非方法结果）
+
+- 现象：任务 0 正常；任务 1 首 batch 仍在 `_log_hbd_first_batch` 的 `copy.deepcopy(raw_network)` 失败，
+  但错误变为 `TypeError: cannot pickle '_io.TextIOWrapper' object`（整网 deepcopy 碰到不可 pickle 的运行时引用）。
+- 修复：诊断只 deepcopy `raw_network.backbone` 与 `raw_network.fc` 两个纯模块（不复制整个增量网络），
+  避免不可 pickle 对象；CE/HBD 梯度范数仍全部在克隆参数上计算，不触发 DDP 多轮 reduction。
+- 失败产物保留：`C100_HBD_SMOKE_NCCL_FAILED_20260811_0211/` 与 `hbd_smoke_*.failed2.*`。
+- 下一步：commit 修复后重跑 smoke。

@@ -898,3 +898,11 @@
   保证评估对训练 RNG 不可见；RNG before/after 检查保留并恒等通过。
 - 失败产物保留：`C100_RANK1_SMOKE_NCCL_FAILED_RNG/` 与 `rank1_smoke_*_rng.failed.*`。
 - 下一步：commit 后重跑 rank1 smoke。
+
+## 2026-08-11 P4：rank1 smoke 通过（二跑）
+
+- 结果：exit=0（约 13 分钟）；task0/1 校准与 eval RNGHash PASS；lambda=1 fused/proto diff=0；
+  task1 fused=proto=88.11；持久参数 task0 36,885 / task1 75,335（T=10 bank 368,640，与完整方法 LoRA 状态一致）。
+- 说明：`verify_sa_consistency.py` 只适用于 Shared-A 状态产物；SD-LoRA bank 基线的 artifact 一致性由
+  per-task lora 文件 + 单遍 fused eval 覆盖（与 P3 SD-LoRA 基线口径一致）。
+- 下一步：C100 seed1993 → INR seed1995 开发队列运行中；通过后 3-seed 补跑。

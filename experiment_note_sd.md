@@ -888,3 +888,13 @@
 - 审计：consistency PASS；持久参数不变。
 - 机制：Live-A 的 A 更新主要贡献 INR 最终任务塑性（约 +0.5 Final）；C100 上近中性。
 - 下一步：rank1 SD-LoRA+Dual-B 同预算基线（smoke → C100/INR 开发），然后 3-seed 补跑。
+
+## 2026-08-11 P4：rank1 smoke 首跑失败与修复（工程错误）
+
+- 现象：task0 训练完成；`eval_task` 报 `dual eval perturbed RNG state`（四 rank 失败）。
+- 根因：SD-LoRA 训练 wrapper `_LoRA_qkv_timm_train.forward` 每次前向都新建 `nn.Linear`，
+  默认初始化（kaiming）消耗 torch RNG；评估遍历因此改变 RNG 状态（sa_sdlora 的 Shared-A 路径无此行为）。
+- 修复：`sdlora_dual_b.eval_task` 的评估遍历用 `rng_preserving()` 包裹（与校准一致），
+  保证评估对训练 RNG 不可见；RNG before/after 检查保留并恒等通过。
+- 失败产物保留：`C100_RANK1_SMOKE_NCCL_FAILED_RNG/` 与 `rank1_smoke_*_rng.failed.*`。
+- 下一步：commit 后重跑 rank1 smoke。

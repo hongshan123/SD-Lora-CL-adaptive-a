@@ -268,12 +268,16 @@ class Learner(SDLoraLearner):
             num_workers=self._loader_workers(),
             seed=0,
         )
-        preds, y_true, fused_proto_diff = evaluate_dual_head_once(
-            self._raw_network(),
-            loader,
-            device=self._device,
-            topk=self.topk,
-        )
+        # The SD-LoRA train wrapper instantiates fresh nn.Linear modules on
+        # every forward (default init draws RNG), so the evaluation traversal
+        # restores the RNG state; this keeps eval invisible to training.
+        with rng_preserving():
+            preds, y_true, fused_proto_diff = evaluate_dual_head_once(
+                self._raw_network(),
+                loader,
+                device=self._device,
+                topk=self.topk,
+            )
         if float(self._raw_network().dual_lambda) >= 1.0:
             logging.info(
                 "[DualHead] task %d fused_proto_max_diff=%.3e PASS",

@@ -1,0 +1,338 @@
+INR
+## final
+dual             n=6 mean=   79.03 std=    0.23
+    seed=1      p3_inr_livea_dual_b_seed1_nccl.log                                        78.91
+    seed=2      p3_inr_livea_dual_b_seed2_nccl.log                                        79.16
+    seed=3      p3_inr_livea_dual_b_seed3_nccl.log                                        78.81
+    seed=4      p3_inr_livea_dual_b_seed4_nccl.log                                        79.08
+    seed=5      p3_inr_livea_dual_b_seed5_nccl.log                                        79.41
+    seed=1995   inr_p1_livea_dual_b_seed1995_nccl.log                                     78.84
+sdlora           n=6 mean=   78.28 std=    0.46
+    seed=1      p3_inr_sdlora_seed1_nccl.log                                              78.86
+    seed=2      p3_inr_sdlora_seed2_nccl.log                                              77.88
+    seed=3      p3_inr_sdlora_seed3_nccl.log                                              78.78
+    seed=4      p3_inr_sdlora_seed4_nccl.log                                              78.34
+    seed=5      p3_inr_sdlora_seed5_nccl.log                                              77.86
+    seed=1995   inr_p1_sdlora_seed1995_nccl.log                                           77.94
+exp009           n=6 mean=   79.09 std=    0.33
+    seed=1      p3_inr_exp009_seed1_nccl.log                                              78.93
+    seed=2      p3_inr_exp009_seed2_nccl.log                                              79.33
+    seed=3      p3_inr_exp009_seed3_nccl.log                                              78.83
+    seed=4      p3_inr_exp009_seed4_nccl.log                                              79.08
+    seed=5      p3_inr_exp009_seed5_nccl.log                                              79.61
+    seed=1995   inr_p1_exp009_seed1995_nccl.log                                           78.74
+
+Paired dual - sdlora (seed-joined, n=6):
+    seed=1      A=   78.91 B=   78.86 diff=   +0.05
+    seed=2      A=   79.16 B=   77.88 diff=   +1.28
+    seed=3      A=   78.81 B=   78.78 diff=   +0.03
+    seed=4      A=   79.08 B=   78.34 diff=   +0.74
+    seed=5      A=   79.41 B=   77.86 diff=   +1.55
+    seed=1995   A=   78.84 B=   77.94 diff=   +0.90
+    mean_diff=+0.758 sd_diff=0.625 t=+2.973 p=0.0310 95%CI=[0.103, 1.414] cohen_dz=+1.214
+    TOST margin=0.5 equivalent=False p_upper=0.8212 p_lower=0.0022
+dual             n=6 mean=   79.03 std=    0.23
+    seed=1      p3_inr_livea_dual_b_seed1_nccl.log                                        78.91
+    seed=2      p3_inr_livea_dual_b_seed2_nccl.log                                        79.16
+    seed=3      p3_inr_livea_dual_b_seed3_nccl.log                                        78.81
+    seed=4      p3_inr_livea_dual_b_seed4_nccl.log                                        79.08
+    seed=5      p3_inr_livea_dual_b_seed5_nccl.log                                        79.41
+    seed=1995   inr_p1_livea_dual_b_seed1995_nccl.log                                     78.84
+exp009           n=6 mean=   79.09 std=    0.33
+    seed=1      p3_inr_exp009_seed1_nccl.log                                              78.93
+    seed=2      p3_inr_exp009_seed2_nccl.log                                              79.33
+    seed=3      p3_inr_exp009_seed3_nccl.log                                              78.83
+    seed=4      p3_inr_exp009_seed4_nccl.log                                              79.08
+    seed=5      p3_inr_exp009_seed5_nccl.log                                              79.61
+    seed=1995   inr_p1_exp009_seed1995_nccl.log                                           78.74
+
+Paired dual - exp009 (seed-joined, n=6):
+    seed=1      A=   78.91 B=   78.93 diff=   -0.02
+    seed=2      A=   79.16 B=   79.33 diff=   -0.17
+    seed=3      A=   78.81 B=   78.83 diff=   -0.02
+    seed=4      A=   79.08 B=   79.08 diff=   +0.00
+    seed=5      A=   79.41 B=   79.61 diff=   -0.20
+    seed=1995   A=   78.84 B=   78.74 diff=   +0.10
+    mean_diff=-0.052 sd_diff=0.113 t=-1.121 p=0.3131 95%CI=[-0.170, 0.067] cohen_dz=-0.458
+    TOST margin=0.5 equivalent=True p_upper=0.0000 p_lower=0.0001
+## avg
+dual             n=6 mean=   83.06 std=    0.46
+    seed=1      p3_inr_livea_dual_b_seed1_nccl.log                                        83.36
+    seed=2      p3_inr_livea_dual_b_seed2_nccl.log                                        82.28
+    seed=3      p3_inr_livea_dual_b_seed3_nccl.log                                        83.54
+    seed=4      p3_inr_livea_dual_b_seed4_nccl.log                                        82.81
+    seed=5      p3_inr_livea_dual_b_seed5_nccl.log                                        83.33
+    seed=1995   inr_p1_livea_dual_b_seed1995_nccl.log                                     83.07
+sdlora           n=6 mean=   82.95 std=    0.78
+    seed=1      p3_inr_sdlora_seed1_nccl.log                                              83.98
+    seed=2      p3_inr_sdlora_seed2_nccl.log                                              81.79
+    seed=3      p3_inr_sdlora_seed3_nccl.log                                              83.65
+    seed=4      p3_inr_sdlora_seed4_nccl.log                                              82.70
+    seed=5      p3_inr_sdlora_seed5_nccl.log                                              82.68
+    seed=1995   inr_p1_sdlora_seed1995_nccl.log                                           82.90
+exp009           n=6 mean=   82.58 std=    0.34
+    seed=1      p3_inr_exp009_seed1_nccl.log                                              82.65
+    seed=2      p3_inr_exp009_seed2_nccl.log                                              82.04
+    seed=3      p3_inr_exp009_seed3_nccl.log                                              82.89
+    seed=4      p3_inr_exp009_seed4_nccl.log                                              82.63
+    seed=5      p3_inr_exp009_seed5_nccl.log                                              82.94
+    seed=1995   inr_p1_exp009_seed1995_nccl.log                                           82.33
+
+Paired dual - sdlora (seed-joined, n=6):
+    seed=1      A=   83.36 B=   83.98 diff=   -0.62
+    seed=2      A=   82.28 B=   81.79 diff=   +0.49
+    seed=3      A=   83.54 B=   83.65 diff=   -0.11
+    seed=4      A=   82.81 B=   82.70 diff=   +0.11
+    seed=5      A=   83.33 B=   82.68 diff=   +0.65
+    seed=1995   A=   83.07 B=   82.90 diff=   +0.17
+    mean_diff=+0.114 sd_diff=0.454 t=+0.613 p=0.5667 95%CI=[-0.363, 0.590] cohen_dz=+0.250
+    TOST margin=0.5 equivalent=True p_upper=0.0458 p_lower=0.0106
+dual             n=6 mean=   83.06 std=    0.46
+    seed=1      p3_inr_livea_dual_b_seed1_nccl.log                                        83.36
+    seed=2      p3_inr_livea_dual_b_seed2_nccl.log                                        82.28
+    seed=3      p3_inr_livea_dual_b_seed3_nccl.log                                        83.54
+    seed=4      p3_inr_livea_dual_b_seed4_nccl.log                                        82.81
+    seed=5      p3_inr_livea_dual_b_seed5_nccl.log                                        83.33
+    seed=1995   inr_p1_livea_dual_b_seed1995_nccl.log                                     83.07
+exp009           n=6 mean=   82.58 std=    0.34
+    seed=1      p3_inr_exp009_seed1_nccl.log                                              82.65
+    seed=2      p3_inr_exp009_seed2_nccl.log                                              82.04
+    seed=3      p3_inr_exp009_seed3_nccl.log                                              82.89
+    seed=4      p3_inr_exp009_seed4_nccl.log                                              82.63
+    seed=5      p3_inr_exp009_seed5_nccl.log                                              82.94
+    seed=1995   inr_p1_exp009_seed1995_nccl.log                                           82.33
+
+Paired dual - exp009 (seed-joined, n=6):
+    seed=1      A=   83.36 B=   82.65 diff=   +0.71
+    seed=2      A=   82.28 B=   82.04 diff=   +0.24
+    seed=3      A=   83.54 B=   82.89 diff=   +0.65
+    seed=4      A=   82.81 B=   82.63 diff=   +0.18
+    seed=5      A=   83.33 B=   82.94 diff=   +0.39
+    seed=1995   A=   83.07 B=   82.33 diff=   +0.74
+    mean_diff=+0.485 sd_diff=0.246 t=+4.832 p=0.0047 95%CI=[0.227, 0.744] cohen_dz=+1.973
+    TOST margin=0.5 equivalent=False p_upper=0.4448 p_lower=0.0001
+## forgetting
+dual             n=6 mean=    7.51 std=    1.02
+    seed=1      p3_inr_livea_dual_b_seed1_nccl.log                                         6.52
+    seed=2      p3_inr_livea_dual_b_seed2_nccl.log                                         8.40
+    seed=3      p3_inr_livea_dual_b_seed3_nccl.log                                         9.06
+    seed=4      p3_inr_livea_dual_b_seed4_nccl.log                                         7.11
+    seed=5      p3_inr_livea_dual_b_seed5_nccl.log                                         7.32
+    seed=1995   inr_p1_livea_dual_b_seed1995_nccl.log                                      6.62
+sdlora           n=6 mean=    7.58 std=    1.07
+    seed=1      p3_inr_sdlora_seed1_nccl.log                                               7.09
+    seed=2      p3_inr_sdlora_seed2_nccl.log                                               9.22
+    seed=3      p3_inr_sdlora_seed3_nccl.log                                               8.56
+    seed=4      p3_inr_sdlora_seed4_nccl.log                                               6.85
+    seed=5      p3_inr_sdlora_seed5_nccl.log                                               7.21
+    seed=1995   inr_p1_sdlora_seed1995_nccl.log                                            6.53
+exp009           n=6 mean=    7.56 std=    0.89
+    seed=1      p3_inr_exp009_seed1_nccl.log                                               6.86
+    seed=2      p3_inr_exp009_seed2_nccl.log                                               8.37
+    seed=3      p3_inr_exp009_seed3_nccl.log                                               8.93
+    seed=4      p3_inr_exp009_seed4_nccl.log                                               6.87
+    seed=5      p3_inr_exp009_seed5_nccl.log                                               7.44
+    seed=1995   inr_p1_exp009_seed1995_nccl.log                                            6.89
+
+Paired dual - sdlora (seed-joined, n=6):
+    seed=1      A=    6.52 B=    7.09 diff=   -0.57
+    seed=2      A=    8.40 B=    9.22 diff=   -0.82
+    seed=3      A=    9.06 B=    8.56 diff=   +0.49
+    seed=4      A=    7.11 B=    6.85 diff=   +0.26
+    seed=5      A=    7.32 B=    7.21 diff=   +0.12
+    seed=1995   A=    6.62 B=    6.53 diff=   +0.09
+    mean_diff=-0.071 sd_diff=0.509 t=-0.344 p=0.7449 95%CI=[-0.606, 0.463] cohen_dz=-0.140
+    TOST margin=0.5 equivalent=True p_upper=0.0202 p_lower=0.0471
+dual             n=6 mean=    7.51 std=    1.02
+    seed=1      p3_inr_livea_dual_b_seed1_nccl.log                                         6.52
+    seed=2      p3_inr_livea_dual_b_seed2_nccl.log                                         8.40
+    seed=3      p3_inr_livea_dual_b_seed3_nccl.log                                         9.06
+    seed=4      p3_inr_livea_dual_b_seed4_nccl.log                                         7.11
+    seed=5      p3_inr_livea_dual_b_seed5_nccl.log                                         7.32
+    seed=1995   inr_p1_livea_dual_b_seed1995_nccl.log                                      6.62
+exp009           n=6 mean=    7.56 std=    0.89
+    seed=1      p3_inr_exp009_seed1_nccl.log                                               6.86
+    seed=2      p3_inr_exp009_seed2_nccl.log                                               8.37
+    seed=3      p3_inr_exp009_seed3_nccl.log                                               8.93
+    seed=4      p3_inr_exp009_seed4_nccl.log                                               6.87
+    seed=5      p3_inr_exp009_seed5_nccl.log                                               7.44
+    seed=1995   inr_p1_exp009_seed1995_nccl.log                                            6.89
+
+Paired dual - exp009 (seed-joined, n=6):
+    seed=1      A=    6.52 B=    6.86 diff=   -0.34
+    seed=2      A=    8.40 B=    8.37 diff=   +0.03
+    seed=3      A=    9.06 B=    8.93 diff=   +0.13
+    seed=4      A=    7.11 B=    6.87 diff=   +0.24
+    seed=5      A=    7.32 B=    7.44 diff=   -0.12
+    seed=1995   A=    6.62 B=    6.89 diff=   -0.27
+    mean_diff=-0.055 sd_diff=0.227 t=-0.592 p=0.5795 95%CI=[-0.293, 0.183] cohen_dz=-0.242
+    TOST margin=0.5 equivalent=True p_upper=0.0009 p_lower=0.0024
+C100
+## final
+dual             n=6 mean=   87.56 std=    0.47
+    seed=1      p3_c100_livea_dual_b_seed1_nccl.log                                       87.02
+    seed=2      p3_c100_livea_dual_b_seed2_nccl.log                                       87.84
+    seed=3      p3_c100_livea_dual_b_seed3_nccl.log                                       87.42
+    seed=4      p3_c100_livea_dual_b_seed4_nccl.log                                       87.20
+    seed=5      p3_c100_livea_dual_b_seed5_nccl.log                                       87.56
+    seed=1993   c100_p2_livea_dual_b_seed1993_nccl.log                                    88.32
+sdlora           n=6 mean=   86.84 std=    0.50
+    seed=1      p3_c100_sdlora_seed1_nccl.log                                             86.78
+    seed=2      p3_c100_sdlora_seed2_nccl.log                                             87.57
+    seed=3      p3_c100_sdlora_seed3_nccl.log                                             86.06
+    seed=4      p3_c100_sdlora_seed4_nccl.log                                             86.59
+    seed=5      p3_c100_sdlora_seed5_nccl.log                                             87.03
+    seed=1993   c100_p2_sdlora_seed1993_nccl.log                                          87.00
+exp009           n=6 mean=   87.71 std=    0.41
+    seed=1      p3_c100_exp009_seed1_nccl.log                                             87.45
+    seed=2      p3_c100_exp009_seed2_nccl.log                                             88.01
+    seed=3      p3_c100_exp009_seed3_nccl.log                                             87.64
+    seed=4      p3_c100_exp009_seed4_nccl.log                                             87.26
+    seed=5      p3_c100_exp009_seed5_nccl.log                                             87.54
+    seed=1993   c100_p2_exp009_seed1993_nccl.log                                          88.37
+
+Paired dual - sdlora (seed-joined, n=6):
+    seed=1      A=   87.02 B=   86.78 diff=   +0.24
+    seed=2      A=   87.84 B=   87.57 diff=   +0.27
+    seed=3      A=   87.42 B=   86.06 diff=   +1.36
+    seed=4      A=   87.20 B=   86.59 diff=   +0.61
+    seed=5      A=   87.56 B=   87.03 diff=   +0.53
+    seed=1993   A=   88.32 B=   87.00 diff=   +1.32
+    mean_diff=+0.722 sd_diff=0.500 t=+3.534 p=0.0167 95%CI=[0.197, 1.247] cohen_dz=+1.443
+    TOST margin=0.5 equivalent=False p_upper=0.8364 p_lower=0.0009
+dual             n=6 mean=   87.56 std=    0.47
+    seed=1      p3_c100_livea_dual_b_seed1_nccl.log                                       87.02
+    seed=2      p3_c100_livea_dual_b_seed2_nccl.log                                       87.84
+    seed=3      p3_c100_livea_dual_b_seed3_nccl.log                                       87.42
+    seed=4      p3_c100_livea_dual_b_seed4_nccl.log                                       87.20
+    seed=5      p3_c100_livea_dual_b_seed5_nccl.log                                       87.56
+    seed=1993   c100_p2_livea_dual_b_seed1993_nccl.log                                    88.32
+exp009           n=6 mean=   87.71 std=    0.41
+    seed=1      p3_c100_exp009_seed1_nccl.log                                             87.45
+    seed=2      p3_c100_exp009_seed2_nccl.log                                             88.01
+    seed=3      p3_c100_exp009_seed3_nccl.log                                             87.64
+    seed=4      p3_c100_exp009_seed4_nccl.log                                             87.26
+    seed=5      p3_c100_exp009_seed5_nccl.log                                             87.54
+    seed=1993   c100_p2_exp009_seed1993_nccl.log                                          88.37
+
+Paired dual - exp009 (seed-joined, n=6):
+    seed=1      A=   87.02 B=   87.45 diff=   -0.43
+    seed=2      A=   87.84 B=   88.01 diff=   -0.17
+    seed=3      A=   87.42 B=   87.64 diff=   -0.22
+    seed=4      A=   87.20 B=   87.26 diff=   -0.06
+    seed=5      A=   87.56 B=   87.54 diff=   +0.02
+    seed=1993   A=   88.32 B=   88.37 diff=   -0.05
+    mean_diff=-0.152 sd_diff=0.162 t=-2.298 p=0.0700 95%CI=[-0.321, 0.018] cohen_dz=-0.938
+    TOST margin=0.5 equivalent=True p_upper=0.0001 p_lower=0.0016
+## avg
+dual             n=6 mean=   91.20 std=    0.66
+    seed=1      p3_c100_livea_dual_b_seed1_nccl.log                                       91.83
+    seed=2      p3_c100_livea_dual_b_seed2_nccl.log                                       91.66
+    seed=3      p3_c100_livea_dual_b_seed3_nccl.log                                       90.63
+    seed=4      p3_c100_livea_dual_b_seed4_nccl.log                                       90.76
+    seed=5      p3_c100_livea_dual_b_seed5_nccl.log                                       90.43
+    seed=1993   c100_p2_livea_dual_b_seed1993_nccl.log                                    91.86
+sdlora           n=6 mean=   91.54 std=    0.60
+    seed=1      p3_c100_sdlora_seed1_nccl.log                                             92.23
+    seed=2      p3_c100_sdlora_seed2_nccl.log                                             91.90
+    seed=3      p3_c100_sdlora_seed3_nccl.log                                             91.13
+    seed=4      p3_c100_sdlora_seed4_nccl.log                                             91.33
+    seed=5      p3_c100_sdlora_seed5_nccl.log                                             90.65
+    seed=1993   c100_p2_sdlora_seed1993_nccl.log                                          92.00
+exp009           n=6 mean=   91.27 std=    0.61
+    seed=1      p3_c100_exp009_seed1_nccl.log                                             91.71
+    seed=2      p3_c100_exp009_seed2_nccl.log                                             91.60
+    seed=3      p3_c100_exp009_seed3_nccl.log                                             90.82
+    seed=4      p3_c100_exp009_seed4_nccl.log                                             91.03
+    seed=5      p3_c100_exp009_seed5_nccl.log                                             90.42
+    seed=1993   c100_p2_exp009_seed1993_nccl.log                                          92.04
+
+Paired dual - sdlora (seed-joined, n=6):
+    seed=1      A=   91.83 B=   92.23 diff=   -0.39
+    seed=2      A=   91.66 B=   91.90 diff=   -0.23
+    seed=3      A=   90.63 B=   91.13 diff=   -0.50
+    seed=4      A=   90.76 B=   91.33 diff=   -0.58
+    seed=5      A=   90.43 B=   90.65 diff=   -0.22
+    seed=1993   A=   91.86 B=   92.00 diff=   -0.14
+    mean_diff=-0.344 sd_diff=0.174 t=-4.852 p=0.0047 95%CI=[-0.527, -0.162] cohen_dz=-1.981
+    TOST margin=0.5 equivalent=True p_upper=0.0000 p_lower=0.0399
+dual             n=6 mean=   91.20 std=    0.66
+    seed=1      p3_c100_livea_dual_b_seed1_nccl.log                                       91.83
+    seed=2      p3_c100_livea_dual_b_seed2_nccl.log                                       91.66
+    seed=3      p3_c100_livea_dual_b_seed3_nccl.log                                       90.63
+    seed=4      p3_c100_livea_dual_b_seed4_nccl.log                                       90.76
+    seed=5      p3_c100_livea_dual_b_seed5_nccl.log                                       90.43
+    seed=1993   c100_p2_livea_dual_b_seed1993_nccl.log                                    91.86
+exp009           n=6 mean=   91.27 std=    0.61
+    seed=1      p3_c100_exp009_seed1_nccl.log                                             91.71
+    seed=2      p3_c100_exp009_seed2_nccl.log                                             91.60
+    seed=3      p3_c100_exp009_seed3_nccl.log                                             90.82
+    seed=4      p3_c100_exp009_seed4_nccl.log                                             91.03
+    seed=5      p3_c100_exp009_seed5_nccl.log                                             90.42
+    seed=1993   c100_p2_exp009_seed1993_nccl.log                                          92.04
+
+Paired dual - exp009 (seed-joined, n=6):
+    seed=1      A=   91.83 B=   91.71 diff=   +0.12
+    seed=2      A=   91.66 B=   91.60 diff=   +0.06
+    seed=3      A=   90.63 B=   90.82 diff=   -0.19
+    seed=4      A=   90.76 B=   91.03 diff=   -0.27
+    seed=5      A=   90.43 B=   90.42 diff=   +0.01
+    seed=1993   A=   91.86 B=   92.04 diff=   -0.19
+    mean_diff=-0.076 sd_diff=0.162 t=-1.150 p=0.3022 95%CI=[-0.245, 0.094] cohen_dz=-0.469
+    TOST margin=0.5 equivalent=True p_upper=0.0002 p_lower=0.0007
+## forgetting
+dual             n=6 mean=    8.95 std=    0.65
+    seed=1      p3_c100_livea_dual_b_seed1_nccl.log                                        9.96
+    seed=2      p3_c100_livea_dual_b_seed2_nccl.log                                        8.33
+    seed=3      p3_c100_livea_dual_b_seed3_nccl.log                                        9.41
+    seed=4      p3_c100_livea_dual_b_seed4_nccl.log                                        8.90
+    seed=5      p3_c100_livea_dual_b_seed5_nccl.log                                        8.86
+    seed=1993   c100_p2_livea_dual_b_seed1993_nccl.log                                     8.23
+sdlora           n=6 mean=    6.41 std=    0.74
+    seed=1      p3_c100_sdlora_seed1_nccl.log                                              7.69
+    seed=2      p3_c100_sdlora_seed2_nccl.log                                              5.82
+    seed=3      p3_c100_sdlora_seed3_nccl.log                                              6.18
+    seed=4      p3_c100_sdlora_seed4_nccl.log                                              6.72
+    seed=5      p3_c100_sdlora_seed5_nccl.log                                              6.43
+    seed=1993   c100_p2_sdlora_seed1993_nccl.log                                           5.63
+exp009           n=6 mean=    9.05 std=    0.55
+    seed=1      p3_c100_exp009_seed1_nccl.log                                              9.41
+    seed=2      p3_c100_exp009_seed2_nccl.log                                              8.52
+    seed=3      p3_c100_exp009_seed3_nccl.log                                              9.47
+    seed=4      p3_c100_exp009_seed4_nccl.log                                              9.66
+    seed=5      p3_c100_exp009_seed5_nccl.log                                              8.90
+    seed=1993   c100_p2_exp009_seed1993_nccl.log                                           8.33
+
+Paired dual - sdlora (seed-joined, n=6):
+    seed=1      A=    9.96 B=    7.69 diff=   +2.27
+    seed=2      A=    8.33 B=    5.82 diff=   +2.51
+    seed=3      A=    9.41 B=    6.18 diff=   +3.23
+    seed=4      A=    8.90 B=    6.72 diff=   +2.18
+    seed=5      A=    8.86 B=    6.43 diff=   +2.42
+    seed=1993   A=    8.23 B=    5.63 diff=   +2.60
+    mean_diff=+2.535 sd_diff=0.375 t=+16.540 p=0.0000 95%CI=[2.141, 2.929] cohen_dz=+6.752
+    TOST margin=0.5 equivalent=False p_upper=1.0000 p_lower=0.0000
+dual             n=6 mean=    8.95 std=    0.65
+    seed=1      p3_c100_livea_dual_b_seed1_nccl.log                                        9.96
+    seed=2      p3_c100_livea_dual_b_seed2_nccl.log                                        8.33
+    seed=3      p3_c100_livea_dual_b_seed3_nccl.log                                        9.41
+    seed=4      p3_c100_livea_dual_b_seed4_nccl.log                                        8.90
+    seed=5      p3_c100_livea_dual_b_seed5_nccl.log                                        8.86
+    seed=1993   c100_p2_livea_dual_b_seed1993_nccl.log                                     8.23
+exp009           n=6 mean=    9.05 std=    0.55
+    seed=1      p3_c100_exp009_seed1_nccl.log                                              9.41
+    seed=2      p3_c100_exp009_seed2_nccl.log                                              8.52
+    seed=3      p3_c100_exp009_seed3_nccl.log                                              9.47
+    seed=4      p3_c100_exp009_seed4_nccl.log                                              9.66
+    seed=5      p3_c100_exp009_seed5_nccl.log                                              8.90
+    seed=1993   c100_p2_exp009_seed1993_nccl.log                                           8.33
+
+Paired dual - exp009 (seed-joined, n=6):
+    seed=1      A=    9.96 B=    9.41 diff=   +0.54
+    seed=2      A=    8.33 B=    8.52 diff=   -0.19
+    seed=3      A=    9.41 B=    9.47 diff=   -0.06
+    seed=4      A=    8.90 B=    9.66 diff=   -0.76
+    seed=5      A=    8.86 B=    8.90 diff=   -0.04
+    seed=1993   A=    8.23 B=    8.33 diff=   -0.10
+    mean_diff=-0.100 sd_diff=0.414 t=-0.591 p=0.5800 95%CI=[-0.535, 0.335] cohen_dz=-0.241
+    TOST margin=0.5 equivalent=True p_upper=0.0082 p_lower=0.0322

@@ -753,3 +753,28 @@
 - artifact consistency：Dual-B/EXP-009 `verify_sa_consistency.py` 全部 **PASS**（feature ≤1.05e-5，logit ≤2.4e-7）。
 - 修复：P2 校验中发现 rank 打印与 logging 行交错导致解析误报，已移除重复 rank logging 并收紧正则；运行时四 rank all-gather 断言在训练中已生效，未重新训练即完成校验。
 - 结论：**P2 通过**，按计划进入 P3 多 seed 主结果。
+
+## 2026-08-10 P3：多 seed 主结果（n=6）完成，主方法门槛未通过
+
+- 协议：INR seeds {1,2,3,4,5,1995}、C100 seeds {1,2,3,4,5,1993}；每 seed 运行 Dual-B / SD-LoRA / EXP-009（Dual-B 的 prototype 曲线作为同轨迹 Live-A control）。全部 30 个正式运行 exit=0，commit 均为 `c256cc4`，统计由 `scripts/multiseed_stats.py` 自动生成 `p3_multiseed_stats_output.txt`。
+- INR n=6 结果（mean±std）：
+  | 方法 | Final | AAA | Forgetting |
+  | --- | ---: | ---: | ---: |
+  | Dual-B | 79.03±0.23 | 83.06±0.46 | 7.51±1.02 |
+  | SD-LoRA | 78.28±0.46 | 82.95±0.78 | 7.58±1.07 |
+  | EXP-009 | 79.09±0.33 | 82.58±0.34 | 7.56±0.89 |
+  - Dual-B vs SD-LoRA：Final **+0.758**（p=0.031，95% CI [0.103,1.414]），AAA **+0.114**（p=0.567，TOST ±0.5 等价），Forgetting **-0.071**（等价）。
+  - Dual-B vs EXP-009：Final **-0.052**（TOST 等价），AAA **+0.485**（p=0.005），Forgetting **-0.055**（等价）。
+- C100 n=6 结果（mean±std）：
+  | 方法 | Final | AAA | Forgetting |
+  | --- | ---: | ---: | ---: |
+  | Dual-B | 87.56±0.47 | 91.20±0.66 | 8.95±0.65 |
+  | SD-LoRA | 86.84±0.50 | 91.54±0.60 | 6.41±0.74 |
+  | EXP-009 | 87.71±0.41 | 91.27±0.61 | 9.05±0.55 |
+  - Dual-B vs SD-LoRA：Final **+0.722**（p=0.017，95% CI [0.197,1.247]），AAA **-0.344**（p=0.005），Forgetting **+2.535**（p<0.001）。
+- 门槛判定：
+  - 两个数据集 Final 均不低于 SD-LoRA：INR +0.758、C100 +0.722，**通过**。
+  - 两个数据集 AAA 均不低于 SD-LoRA 超过 0.3：INR +0.114 通过；**C100 -0.344 未通过**（低 0.344 > 0.3）。
+  - C100 Forgetting 相对 SD-LoRA **+2.535**（显著代价，历史峰值效应如实报告）。
+  - 状态口径不变：INR 675,840 / C100 522,240，相对 SD-LoRA LoRA 减少 81.7% / 85.8%，**通过**。
+- 结论：**P3 主方法门槛未通过**。按执行纪律，不进入 P4 消融 / P5 任务长度 / P6 效率；Dual-B 作为“Final 保持 + INR AAA 修复、但 C100 AAA 轻微损失与 C100 Forgetting 显著代价”的结果如实记录。

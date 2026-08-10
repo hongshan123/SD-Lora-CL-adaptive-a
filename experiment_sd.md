@@ -666,3 +666,10 @@
 - Dual-B Final 88.32 / AAA 91.856 / F 8.233；SD-LoRA Final 87.00 / AAA 91.998；EXP-009 Final 88.37 / AAA 92.042。
 - fused Final 与 prototype Final 一致；Final 相对 SD-LoRA +1.32，AAA 相对 SD-LoRA -0.142（门槛通过）；主状态 522,240，减少 85.8%。
 - artifact consistency PASS；进入 P3 多 seed 主结果。
+
+## 2026-08-10 P3：多 seed 主结果（n=6）完成，主方法门槛未通过
+
+- INR：Dual-B Final 79.03±0.23 / AAA 83.06±0.46 / F 7.51±1.02；相对 SD-LoRA Final +0.758、AAA +0.114、F -0.071。
+- C100：Dual-B Final 87.56±0.47 / AAA 91.20±0.66 / F 8.95±0.65；相对 SD-LoRA Final +0.722、AAA -0.344、F +2.535。
+- 门槛：Final 两数据集均不低于 SD-LoRA（通过）；AAA 门槛因 C100 -0.344（>0.3）未通过；状态减少 81.7%/85.8% 通过。
+- 结论：**P3 未通过，停止 P4–P6**，结果如实记录为负结果/机制证据。

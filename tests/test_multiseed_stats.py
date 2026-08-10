@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.multiseed_stats import (
+    collect_patterns,
     collect_paths,
     pair_groups,
     parse_seed,
@@ -79,6 +80,28 @@ def test_duplicate_seed_raises(tmp_path):
     b = _write_log(tmp_path, "a2.log", 1, [2.0], 2.0, 2.0)
     with pytest.raises(ValueError):
         collect_paths([a, b], "final")
+
+
+def test_confirmation_seed_filter_keeps_allowed_and_reports_excluded(tmp_path):
+    paths = [
+        _write_log(tmp_path, "a1.log", 1, [70.0], 1.0, 1.0),
+        _write_log(tmp_path, "a2.log", 2, [75.0], 1.0, 1.0),
+        _write_log(tmp_path, "a_dev.log", 1995, [80.0], 1.0, 1.0),
+    ]
+    collected, excluded = collect_patterns(
+        [str(tmp_path / "a*.log")], "final", allowed_seeds=[1, 2]
+    )
+    assert set(collected) == {1, 2}
+    assert excluded == [(1995, str(tmp_path / "a_dev.log"))]
+
+
+def test_confirmation_seed_filter_errors_on_missing_seed(tmp_path):
+    paths = [
+        _write_log(tmp_path, "a1.log", 1, [70.0], 1.0, 1.0),
+        _write_log(tmp_path, "a2.log", 2, [75.0], 1.0, 1.0),
+    ]
+    with pytest.raises(ValueError):
+        collect_paths(paths, "final", allowed_seeds=[1, 2, 3])
 
 
 def test_tost_inside_margin_is_equivalent():

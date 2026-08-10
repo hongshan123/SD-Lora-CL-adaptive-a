@@ -165,3 +165,16 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - Stage B2 双头：Schedule B 修复 INR AvgAcc（83.26±0.81，相对 EXP-009 +0.44），但 INR Final 相对 EXP-009 -0.53、C100 Forgetting 相对 SD-LoRA +2.83，严格门槛未过。
 - K=2 prototype 后备：INR max 78.56/81.34/7.55、logsumexp 77.51/81.08/7.67，均低于 K=1 与 SD-LoRA，停止。
 - 结论：Live-A 不升级为论文主方法；保留为“固定 O(1) 状态、Final 优先”的消融/负结果记录。所有实验日志、统计脚本、文档与 Git 提交已同步。
+
+> ⚠️ 口径修正（2026-08-11）：本节数值来自 Stage B2 的 n=4 配对；其后 P3 以严格确定性协议完成 n=6/n=5 主统计（提交 `c256cc4`），完整方法（Live-A Aggregate-B + Dual-B）成为冻结主方法。主统计口径与修正见第 10 节。
+
+## 10. 冻结起点与下一阶段（2026-08-11，ccfa_next_experiment_guide_sd.md）
+
+- 冻结方法：**Live-A Aggregate-B + Dual-B**（rank-10 Q/V LoRA、共享 live down-projection A、历史 B 在线折叠为累计 G、每任务 fresh B、Dual-B 固定 Schedule B、最终 lambda=1、无回放/无 task-id/无 router/无随任务增长的 LoRA bank）。
+- 持久状态：LoRA `368,640`；含 Dual-B 头 INR `675,840`（相对 SD-LoRA 3,686,400 减 81.7%）、C100 `522,240`（减 85.8%）。
+- 严格 n=5（seed 1-5；开发 seed 1995/1993 仅作敏感性分析）：
+  - INR：完整方法 79.07±0.23 / 83.06±0.52 / 7.68±1.03；SD-LoRA 78.34±0.48 / 82.96±0.87 / 7.79±1.04；EXP-009 79.16±0.32 / 82.63±0.36 / 7.69±0.93。
+  - C100：完整方法 87.41±0.32 / 91.06±0.64 / 9.09±0.62；SD-LoRA 86.81±0.56 / 91.45±0.63 / 6.57±0.71；EXP-009 87.58±0.28 / 91.12±0.54 / 9.19±0.47。
+  - 完整方法相对 SD-LoRA：INR Final +0.73（p≈0.078）、AAA +0.10、F -0.11；C100 Final +0.60（p≈0.041）、AAA -0.39（p≈0.006）、F +2.52（p<0.001）。
+- 主门槛现状：Final 与参数目标通过；**C100 AAA −0.385 > −0.30 未通过，C100 Forgetting +2.52 显著**，因此 P3 未通过，P4–P6 未触发。
+- 下一阶段（按任务书）：P0 严格统计已完成（`p0-strict-n5` 分支）；P1 离线机制诊断（Dual-B 头分解、prototype 失配/表示遗忘分解）；P2 唯一允许的新训练组件 Historical-Branch Activation Distillation（C100 seed1993 → INR seed1995，门槛见任务书 §8.4）；通过后冻结并执行 HBD seed1-5 一次性确认；之后 P4 消融/参数匹配、P5 任务长度/第三数据集/强基线/效率。

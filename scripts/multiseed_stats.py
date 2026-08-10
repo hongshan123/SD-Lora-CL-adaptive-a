@@ -12,6 +12,20 @@ Example:
     --group exp009_inr 'sa_sdlora_proto_inr_seed*.log' \
     --metric final --paired main_inr exp009_inr \
     --margin 0.5
+
+Confirmation-seed discipline (paper primary statistics use only seeds that
+never participated in method development):
+
+  python scripts/multiseed_stats.py \
+    --group main_inr 'p3_inr_livea_dual_b_seed*_nccl.log' \
+    --group sdlora_inr 'p3_inr_sdlora_seed*_nccl.log' \
+    --metric final --paired main_inr sdlora_inr \
+    --seeds 1,2,3,4,5 --margin 0.5
+
+``--seeds`` filters every group to the given confirmation seeds and fails if
+any requested seed is absent.  Logs whose seeds fall outside the list (e.g.
+development seeds 1993/1995) are reported but excluded from the strict
+statistics; they remain available for descriptive sensitivity analysis.
 """
 
 import argparse
@@ -61,11 +75,19 @@ def metric_value(info, metric):
     raise ValueError("unknown metric {}".format(metric))
 
 
-def collect_paths(paths, metric):
-    """Return {seed: (path, value)}.  Raises on duplicate or malformed logs."""
+def collect_paths_with_excluded(paths, metric, allowed_seeds=None):
+    """Return ({seed: (path, value)}, [(seed, path), ...]).
+
+    Raises on duplicate or malformed logs.  If ``allowed_seeds`` is not None,
+    only those seeds are kept and the rest are reported as excluded.
+    """
     out = {}
+    excluded = []
     for path in paths:
         seed = parse_seed(path)
+        if allowed_seeds is not None and seed not in allowed_seeds:
+            excluded.append((seed, path))
+            continue
         value = metric_value(parse(path), metric)
         if seed in out:
             raise ValueError(
@@ -74,10 +96,24 @@ def collect_paths(paths, metric):
                 )
             )
         out[seed] = (path, value)
-    return out
+    if allowed_seeds is not None:
+        missing = [s for s in allowed_seeds if s not in out]
+        if missing:
+            raise ValueError(
+                "missing confirmation seeds: {}".format(missing)
+            )
+    return out, excluded
 
 
-def collect_patterns(patterns, metric):
+def collect_paths(paths, metric, allowed_seeds=None):
+    """Backward-compatible wrapper returning only the {seed: ...} dict."""
+    collected, _ = collect_paths_with_excluded(
+        paths, metric, allowed_seeds
+    )
+    return collected
+
+
+def collect_patterns(patterns, metric, allowed_seeds=None):
     paths = []
     for pattern in patterns:
         matched = sorted(glob.glob(pattern))
@@ -86,7 +122,32 @@ def collect_patterns(patterns, metric):
                 "no logs matched {}".format(pattern)
             )
         paths.extend(matched)
-    return collect_paths(paths, metric)
+    return collect_paths_with_excluded(paths, metric, allowed_seeds)
+
+
+def parse_seed_list(raw):
+    """Parse a comma-separated confirmation seed list, preserving order."""
+    if raw is None:
+        return None
+    seeds = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            raise argparse.ArgumentTypeError("empty token in --seeds")
+        try:
+            seed = int(token)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                "invalid seed {!r} in --seeds".format(token)
+            )
+        if seed in seeds:
+            raise argparse.ArgumentTypeError(
+                "duplicate seed {} in --seeds".format(seed)
+            )
+        seeds.append(seed)
+    if not seeds:
+        raise argparse.ArgumentTypeError("--seeds must not be empty")
+    return seeds
 
 
 def pair_groups(group_a, group_b):
@@ -192,8 +253,9 @@ def main():
     parser.add_argument(
         "--paired",
         nargs=2,
+        action="append",
         metavar=("A", "B"),
-        help="paired test between two group names",
+        help="paired test between two group names (repeatable)",
     )
     parser.add_argument(
         "--margin",
@@ -207,11 +269,33 @@ def main():
         default=0.05,
         help="significance level (default 0.05)",
     )
+    parser.add_argument(
+        "--seeds",
+        type=parse_seed_list,
+        default=None,
+        metavar="S1,S2,...",
+        help=(
+            "confirmation-seed allow-list (e.g. 1,2,3,4,5); logs with other "
+            "seeds are excluded and reported"
+        ),
+    )
     args = parser.parse_args()
 
     groups = {}
     for name, pattern in args.group:
-        collected = collect_patterns([pattern], args.metric)
+        collected, excluded = collect_patterns(
+            [pattern], args.metric, args.seeds
+        )
+        if excluded:
+            print(
+                "Note: excluded from {:<16} (non-confirmation seeds): {}".format(
+                    name,
+                    ", ".join(
+                        "{}@{}".format(seed, path)
+                        for seed, path in sorted(excluded)
+                    ),
+                )
+            )
         if name in groups:
             for seed, value in collected.items():
                 if seed in groups[name]:
@@ -221,12 +305,19 @@ def main():
                 groups[name][seed] = value
         else:
             groups[name] = collected
+        if args.seeds is not None:
+            missing = [s for s in args.seeds if s not in groups[name]]
+            if missing:
+                raise SystemExit(
+                    "group {!r} is missing confirmation seeds: {}".format(
+                        name, missing
+                    )
+                )
 
     for name in groups:
         print_group(name, groups[name], args.metric)
 
-    if args.paired:
-        a_name, b_name = args.paired
+    for a_name, b_name in (args.paired or []):
         if a_name not in groups or b_name not in groups:
             parser.error("--paired names must be defined groups")
         pairs = pair_groups(groups[a_name], groups[b_name])

@@ -778,3 +778,16 @@
   - C100 Forgetting 相对 SD-LoRA **+2.535**（显著代价，历史峰值效应如实报告）。
   - 状态口径不变：INR 675,840 / C100 522,240，相对 SD-LoRA LoRA 减少 81.7% / 85.8%，**通过**。
 - 结论：**P3 主方法门槛未通过**。按执行纪律，不进入 P4 消融 / P5 任务长度 / P6 效率；Dual-B 作为“Final 保持 + INR AAA 修复、但 C100 AAA 轻微损失与 C100 Forgetting 显著代价”的结果如实记录。
+
+## 2026-08-11 P0：严格 n=5 统计与 P3 审计（ccfa_next_experiment_guide_sd.md §6）
+
+- **分支**：从 `15ab791`（P3 记录提交）建立 `p0-strict-n5`，保留 P3 原始状态；文档提交（8fa3bbf/1f93585/a697b66）保留在 master。
+- **统计脚本**：`scripts/multiseed_stats.py` 新增 `--seeds 1,2,3,4,5` 显式确认种子列表（允许重复 `--paired`）；新增 `scripts/strict_n5_stats.sh` 一键生成严格 n=5 输出。
+- **审计脚本**：新增 `scripts/audit_p3_runs.py`——核对 30 个 P3 运行的 manifest commit（`c256cc4`）、config SHA-256、日志 seed、10 任务曲线/AAA/Forgetting、artifact（Dual-B 含 sa_state/sa_merged_lora/sa_prototypes/sa_dual_head；EXP-009 含 sa_state/sa_merged_lora/sa_prototypes；SD-LoRA 为 lora_w_a/b）与 queue status=0。结果 **P3 AUDIT PASS（30/30）**。
+- **严格 n=5 结果**（与任务书 §2.2 完全一致）：
+  - INR：Dual-B 79.07±0.23 / 83.06±0.52 / 7.68±1.03；SD-LoRA 78.34±0.48 / 82.96±0.87 / 7.79±1.04；EXP-009 79.16±0.32 / 82.63±0.36 / 7.69±0.93。Dual-B − SD-LoRA：Final +0.730（p=0.0784）、AAA +0.103、F -0.105。
+  - C100：Dual-B 87.41±0.32 / 91.06±0.64 / 9.09±0.62；SD-LoRA 86.81±0.56 / 91.45±0.63 / 6.57±0.71；EXP-009 87.58±0.28 / 91.12±0.54 / 9.19±0.47。Dual-B − SD-LoRA：Final +0.602（p=0.0411）、AAA -0.385（p=0.0057）、F +2.522（p=0.0002）。
+- **C100 症状复算**（从日志 accuracy matrix / old-new 行直接解析，5 seed 均值）：历史 90 类 86.71 vs 86.55（+0.16）、最新 10 类 93.68 vs 89.14（+4.54）、Task0 最终 75.42 vs 77.84（-2.42），与任务书 §2.3 一致。
+- **口径修正**：n=6（`p3_multiseed_stats_output.txt`）明确降级为敏感性分析；论文主显著性一律使用 n=5。
+- 产物：`p3_strict_n5_stats_output.txt`、`p3_strict_n5_summary.md`、三份研究记录修正。
+- 下一步：P1 低成本机制诊断（Dual-B 头分解 + prototype 失配/表示遗忘分解，全部离线复用现有 checkpoint）。

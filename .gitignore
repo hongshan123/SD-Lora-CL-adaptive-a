@@ -10,7 +10,9 @@ logs/
 # checkpoint / experiment output directories
 CF100_*/
 C100_*/
+CIFAR224_*/
 ImageNetR_*/
+IMAGENETR_*/
 INR_*/
 CUB_*/
 seed_1995_*/

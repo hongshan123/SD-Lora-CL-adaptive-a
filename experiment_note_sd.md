@@ -914,3 +914,10 @@
 - 审计：每任务 rank1（36,885/task），T=10 bank 368,640；fused=proto、lambda=1、RNG/校准 PASS。
 - 机制：rank-10 Aggregate-B 的容量优势在 INR 显著（Final +2.56/AAA +0.82）；C100 上 rank1 的历史保持更好但 Final 低。
 - 下一步：3-seed 补跑队列（abl-C 与 rank1，种子 1/2/3）。
+
+## 2026-08-11 P4：消融 C 3-seed 完成
+
+- 6 个运行全部 exit=0；C100 seed1-3 冻结 A 一致优于完整方法（Final +0.49、AAA +0.43、F -1.45）；
+  INR seed1-3 Final 一致下降（-0.59），AAA/F 接近。
+- 机制：A 更新 = INR 塑性（+0.5 Final）/ C100 历史干扰（-0.5 F）；完整方法的取舍成立。
+- 下一步：rank1 3-seed 队列（C100/INR × seeds 1-3）。

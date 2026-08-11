@@ -906,3 +906,11 @@
 - 说明：`verify_sa_consistency.py` 只适用于 Shared-A 状态产物；SD-LoRA bank 基线的 artifact 一致性由
   per-task lora 文件 + 单遍 fused eval 覆盖（与 P3 SD-LoRA 基线口径一致）。
 - 下一步：C100 seed1993 → INR seed1995 开发队列运行中；通过后 3-seed 补跑。
+
+## 2026-08-11 P4：rank1 开发种子完成
+
+- C100 seed1993（exit=0）：Final 87.73 / AAA 92.201 / F 5.689；对照完整方法 -0.59/+0.35/-2.54。
+- INR seed1995（exit=0）：Final 76.28 / AAA 82.251 / F 6.751；对照 -2.56/-0.82/+0.13。
+- 审计：每任务 rank1（36,885/task），T=10 bank 368,640；fused=proto、lambda=1、RNG/校准 PASS。
+- 机制：rank-10 Aggregate-B 的容量优势在 INR 显著（Final +2.56/AAA +0.82）；C100 上 rank1 的历史保持更好但 Final 低。
+- 下一步：3-seed 补跑队列（abl-C 与 rank1，种子 1/2/3）。

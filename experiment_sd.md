@@ -712,6 +712,18 @@
 - 分析：冻结 A 主要代价在 INR Final（-0.53，即 Live-A 的 A 更新贡献约 +0.5 的最终任务塑性）；C100 上几乎中性且 Forgetting 略好。A 冻结不是 C100 遗忘的来源。
 - 3-seed 补跑：配置已预注册（`exps/p4_abl_c_*_seed{1,2,3}_nccl.json`）。
 
+## 2026-08-11 P4：rank1 参数匹配基线（SD-LoRA rank1 + 同 Dual-B 头）开发种子
+
+- 状态：完成（smoke 通过；C100 seed1993 + INR seed1995，均 exit=0）。
+- 实现：`models/sdlora_dual_b.py`（每任务 rank-1 LoRA bank + prototype/Dual-B Schedule B 头，单遍 fused eval，RNG 中性校准）。
+- 结果（对照完整方法）：
+  - C100 seed1993：Final **87.73**（88.32，-0.59）、AAA **92.201**（91.856，+0.35）、Forgetting **5.689**（8.233，-2.54）。
+  - INR seed1995：Final **76.28**（78.84，-2.56）、AAA **82.251**（83.067，-0.82）、Forgetting **6.751**（6.624，+0.13）。
+- 参数：每任务 rank1（A+B+scale）36,885；T=10 bank 368,640，与完整方法 LoRA 持久状态相同（含 prototype/FC 后亦同）。
+- 分析：同预算下，rank-10 Aggregate-B 的在线容量在 INR 上全面优于十个 rank-1 task adapter（Final +2.56、AAA +0.82）；
+  C100 上 rank1 的 AAA/Forgetting 更好但 Final 低 0.59。论文主张按“INR 容量优势、C100 Final 优势”分列，不宣称全面优越。
+- 3-seed 补跑：配置已预注册（`exps/p4_rank1_*_seed{1,2,3}_nccl.json`）。
+
 ### ⚠️ 统计口径修正（2026-08-11 P0）
 
 - 上述 n=6 统计把开发种子（INR seed1995、C100 seed1993）并入主统计，**只能作为描述性敏感性分析**，不能作为论文主显著性结论。

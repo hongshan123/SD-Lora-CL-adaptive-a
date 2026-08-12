@@ -57,9 +57,12 @@
 - 完整方法（Live-A Aggregate-B + Dual-B，seed1-5）：见 `p3_strict_n5_summary.md`。
 - InfLoRA / CL-LoRA / LoRA-DRS 本机复现：决定运行 CIFAR-100（T=10，seed1）官方实现，使用各自官方默认训练细节；
   结果与发布值分栏报告，且仅作为“官方实现可复现性”证据，不做跨协议显著性比较。
-- 移植性修复（仅设备分配，不改变算法）：CL-LoRA `backbone/vit_cllora.py` 中
-  `block_weight = torch.ones(3).cuda()` 硬编码 cuda:0，改为
-  `torch.ones(3, device=x.device)`；bestformer 环境补装 scikit-learn/ipdb/easydict。
+- 移植性修复（仅设备分配，不改变算法）：
+  - CL-LoRA `backbone/vit_cllora.py`：`block_weight = torch.ones(3).cuda()`
+    硬编码 cuda:0，改为 `torch.ones(3, device=x.device)`；
+  - LoRA-DRS `models/zoo.py::ortho_penalty` 与 `models/sinet.py`：硬编码
+    `.cuda()` 改为 `device=t.device` / `device=x.device`；
+  - bestformer 环境补装 scikit-learn/ipdb/easydict。
 
 ## 4. 论文口径
 

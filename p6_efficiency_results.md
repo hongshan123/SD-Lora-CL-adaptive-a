@@ -1,6 +1,6 @@
 # P6 效率与 artifact 闭环结果
 
-更新时间：2026-08-12 20:50。状态/时间曲线已完成；显存/FLOPs/最小导出验证待 GPU 空闲后回填。
+更新时间：2026-08-13 02:35。全部测量完成（含 SD-LoRA T20 显存）。
 
 ## 1. 持久状态曲线（T=5/10/20，INR seed1995，`scripts/measure_state_curves.py`）
 
@@ -31,7 +31,7 @@
 | 方法 | T=5 | T=10 | T=20 |
 | --- | ---: | ---: | ---: |
 | 完整方法（Live-A Aggregate-B） | 3,468.6 MiB | 3,468.6 MiB | 3,468.6 MiB（O(1)） |
-| SD-LoRA（v1 bank） | 5,963.9 MiB | 8,186.7 MiB | T20 待 GPU 空闲后补测（预期 ~10-12 GiB） |
+| SD-LoRA（v1 bank） | 5,963.9 MiB | 8,186.7 MiB | 12,632.1 MiB（O(T)） |
 
 测量脚本：`scripts/measure_train_peak_memory.py`（完整方法）、
 `scripts/measure_train_peak_memory_sdlora.py`（v1 bank）。合成头为 100 类 Linear，

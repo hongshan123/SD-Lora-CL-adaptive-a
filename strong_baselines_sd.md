@@ -62,6 +62,11 @@
     硬编码 cuda:0，改为 `torch.ones(3, device=x.device)`；
   - LoRA-DRS `models/zoo.py::ortho_penalty` 与 `models/sinet.py`：硬编码
     `.cuda()` 改为 `device=t.device` / `device=x.device`；
+  - CL-LoRA `models/cllora.py::_init_train`：官方两阶段 backward（先
+    KD loss backward+step，再 CE loss backward+step）在现代 PyTorch 下因
+    step 原地修改参数导致 stale-graph 报错；本地复现改为同一 forward 的
+    KD+CE+orth 梯度合并为一次 backward+step（损失项与超参数不变，仅更新
+    次数从 2 次/iter 变为 1 次/iter，作为 autograd 兼容性修复记录）。
   - bestformer 环境补装 scikit-learn/ipdb/easydict。
 
 ## 4. 论文口径

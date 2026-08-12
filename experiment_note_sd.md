@@ -947,3 +947,23 @@
 - 多 seed 队列（8 runs：full s2/3、exp009 s1-3、sdlora s1-3，同冻结协议）已启动（commit `3cdfa7d`，PID 500608）。
 - 强基线：InfLoRA/CL-LoRA/LoRA-DRS 官方仓库已克隆并可在 bestformer env 导入；发布值表已写入 `strong_baselines_sd.md`；CIFAR-100 T=10 seed1 本机复现待 GPU 空闲后启动。
 - 效率：状态/时间曲线脚本完成（完整方法 O(1)，银行式 O(T)）；显存/FLOPs/最小导出验证待 GPU 空闲后执行。
+
+## 2026-08-13 P5：CUB 三方法 3-seed 完成
+
+- 完整方法 75.27±3.12 / 84.37±1.34 / 16.77±0.43；EXP-009 75.37±2.90 / 85.01±1.79 / 17.15±0.11；
+  SD-LoRA 71.26±1.47 / 81.66±0.90 / 10.97±2.17（全部 9 runs exit=0）。
+- 完整方法在 CUB 上 Final/AAA 显著高于同协议 SD-LoRA（+4.0/+2.7），Forgetting 代价 +5.8；
+  相对 EXP-009 等价（O(1) 状态换等价精度）。
+- 与 SD-LoRA 论文发布值（77.48/85.59）协议不同，只分栏报告。
+
+## 2026-08-13 P5：强基线进度
+
+- InfLoRA 本机复现完成：CIFAR-100 T=10 seed1 84.75/90.26（发布 86.51/91.70）。
+- CL-LoRA 本机复现失败：官方代码要求 torch 2.0.1；bestformer（torch 1.12）修复设备/两阶段
+  backward 后 task 0 仍发散（NaN），停止并采用发布值。
+- LoRA-DRS 本机复现运行中（设备硬编码修复后）。
+
+## 2026-08-13 P6：效率与 artifact 闭环完成
+
+- 状态/显存/时间/FLOPs/吞吐全部实测完成（见 `p6_efficiency_results.md`）。
+- 最小导出验证 PASS（C100 + CUB，logits 全等、Final 一致）。

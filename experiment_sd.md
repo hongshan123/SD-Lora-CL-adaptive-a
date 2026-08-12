@@ -766,3 +766,31 @@
 - 对照（SD-LoRA 论文发布值，Adam/batch128）：CUB T=10 = 77.48 / 85.59；本方法 seed1 与之相当。
 - 多 seed 队列（seed2/3 full + exp009/sdlora seed1-3，同冻结 SGD 协议）已预注册并启动：`run_p5_cub_multi_queue.sh`，commit `3cdfa7d`。
 - 汇总：`p5_cub_results.md`（待队列完成后回填多 seed 表）。
+
+## 2026-08-13 P5：CUB-200 三方法 3-seed 全部完成
+
+- 9 个运行全部 exit=0（完整方法 seed1-3、EXP-009 seed1-3、SD-LoRA seed1-3，同冻结协议）。
+- 完整方法 75.27±3.12 / 84.37±1.34 / 16.77±0.43；EXP-009 75.37±2.90 / 85.01±1.79 / 17.15±0.11；
+  SD-LoRA 71.26±1.47 / 81.66±0.90 / 10.97±2.17。
+- 配对差：完整方法 − EXP-009 = -0.10/-0.64/-0.38（等价）；完整方法 − SD-LoRA = +4.01/+2.70/+5.80。
+- 与 SD-LoRA 论文发布值（77.48/85.59）不同协议，不作显著比较。
+- 完整表：`p5_cub_results.md`；队列日志 `p5_cub_remaining_queue.log`。
+
+## 2026-08-13 P5：强外部基线
+
+- InfLoRA 本机复现完成（CIFAR-100 T=10 seed1）：**84.75 / 90.26**（发布值 86.51/91.70），
+  见 `p5_external_baselines_results.md`。
+- CL-LoRA 本机复现失败（torch 1.12 环境与官方两阶段 backward 不兼容；已修复设备/autograd
+  后 task 0 仍发散为 NaN），论文采用发布值（见 `strong_baselines_sd.md`）。
+- LoRA-DRS 本机复现运行中（设备硬编码已修复，待完成后回填）。
+
+## 2026-08-13 P6：效率与 artifact 闭环全部完成
+
+- 状态曲线：完整方法 LoRA 368,640 与持久磁盘 ~2.78MB 在 T=5/10/20 恒定（O(1)）；
+  SD-LoRA/EXP-009/rank1 为 O(T)（`scripts/measure_state_curves.py`）。
+- 显存曲线：完整方法 3,468.6 MiB（T=5/10/20 恒定）；SD-LoRA 5,963.9 → 8,186.7 → 12,632.1 MiB。
+- 时间曲线：T=10 每任务耗时完整方法 204s→336s（1.65×），SD-LoRA 177s→535s（3.02×）。
+- 推理：1.129e12 FLOPs/forward，空闲 GPU 515.3 img/s，578.4 MiB。
+- 最小导出验证：C100 与 CUB 各一份，features/fc/proto/fused logits max_abs_diff == 0，
+  Final 与训练日志一致（87.02 / 77.84）。
+- 汇总：`p6_efficiency_results.md`。

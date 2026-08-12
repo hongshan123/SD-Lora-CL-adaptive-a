@@ -939,3 +939,11 @@
 - Forgetting 随 T 单调恶化；C100 T20 完整方法 10.59 vs SD-LoRA 7.22（代价如实报告）。
 - 汇总：`p5_task_length_results.md`。
 - 下一步：CUB-200 第三数据集（完整方法）、强基线（InfLoRA/CL-LoRA）、效率测量与论文回填。
+
+## 2026-08-12 P5：CUB-200 seed1（完整方法）完成
+
+- 运行 27 分钟，exit=0；`Final 77.84 / AAA 85.85 / F 16.27`。
+- 旧 Adam 协议 EXP-009 CUB seed1 71.75 / 84.93 / 23.31 → 完整方法 +6.09 Final / +0.92 AAA / -7.04 F。
+- 多 seed 队列（8 runs：full s2/3、exp009 s1-3、sdlora s1-3，同冻结协议）已启动（commit `3cdfa7d`，PID 500608）。
+- 强基线：InfLoRA/CL-LoRA/LoRA-DRS 官方仓库已克隆并可在 bestformer env 导入；发布值表已写入 `strong_baselines_sd.md`；CIFAR-100 T=10 seed1 本机复现待 GPU 空闲后启动。
+- 效率：状态/时间曲线脚本完成（完整方法 O(1)，银行式 O(T)）；显存/FLOPs/最小导出验证待 GPU 空闲后执行。

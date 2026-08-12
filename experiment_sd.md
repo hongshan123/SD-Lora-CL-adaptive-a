@@ -757,3 +757,12 @@
   - 配对（Dual-B − SD-LoRA）：INR Final +0.730（p=0.0784）、AAA +0.103（p=0.6743）、F -0.105（p=0.6984）；C100 Final +0.602（p=0.0411）、AAA -0.385（p=0.0057）、F +2.522（p=0.0002）。
 - 30 个 P3 运行的 manifest/config SHA-256/seed/artifact/queue status 审计全部 PASS（`scripts/audit_p3_runs.py` → `P3 AUDIT PASS`）。
 - 工作分支：`p0-strict-n5`（从 `15ab791` 建立，保留 P3 原始状态）。
+
+## 2026-08-12 P5：第三数据集 CUB-200（完整方法 seed1）完成
+
+- 配置：`exps/p5_cub_livea_dual_b_seed1_nccl.json`（SGD/constant/0.01/20 ep/batch32/4 卡 NCCL/确定性协议，T=10，seed1）；commit `1e7d884` 后启动，实际运行 commit `1e7d884`，exit=0。
+- 结果（完整方法）：**Final 77.84 / AAA 85.85 / Forgetting 16.27**（曲线最后 5 项：83.11 → 77.84；AAA 85.848）。
+- 对照（旧协议，Adam）：EXP-009 CUB seed1 = 71.75 / 84.93 / 23.31（`sa_sdlora_proto_cub_seed1.log`），完整方法 **Final +6.09、AAA +0.92、F -7.04**。
+- 对照（SD-LoRA 论文发布值，Adam/batch128）：CUB T=10 = 77.48 / 85.59；本方法 seed1 与之相当。
+- 多 seed 队列（seed2/3 full + exp009/sdlora seed1-3，同冻结 SGD 协议）已预注册并启动：`run_p5_cub_multi_queue.sh`，commit `3cdfa7d`。
+- 汇总：`p5_cub_results.md`（待队列完成后回填多 seed 表）。

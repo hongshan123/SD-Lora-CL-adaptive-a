@@ -69,6 +69,18 @@
     次数从 2 次/iter 变为 1 次/iter，作为 autograd 兼容性修复记录）。
   - bestformer 环境补装 scikit-learn/ipdb/easydict。
 
+### 本机复现状态（2026-08-12 22:00）
+
+- InfLoRA：运行中（CIFAR-100 T=10 seed1，task ~3/10）。
+- LoRA-DRS：运行中（CIFAR-100 T=10 seed1，task 0，设备/正交损失修复后重启）。
+- CL-LoRA：**本机复现失败并停止**。原因：官方仓库要求 torch 2.0.1/timm 0.6.12，
+  本机 bestformer 为 torch 1.12.1/timm 0.6.12；修复设备硬编码与两阶段 backward
+  后，task 0 仍出现 loss 爆炸/NaN（同一代码在 20:59 曾正常收敛、21:36 起确定性
+  复现发散，疑似上游代码在 torch 1.12 下的数据/算子行为差异）。论文只报告
+  发布值（CVPR 2025 Table 1：CIFAR-100 T=20 A=91.02±0.12 / A_T=85.32±0.08；
+  CIFAR-100 T=10 消融 A=91.85；INR T=40 A=81.58±0.59 / A_T=74.51±0.14），
+  并在 limitations 中说明官方实现未能在本环境复现。
+
 ## 4. 论文口径
 
 外部基线只用于展示方法空间与参数效率定位；不宣称任何“全指标优于外部基线”。

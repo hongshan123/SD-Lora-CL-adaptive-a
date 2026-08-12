@@ -1,7 +1,7 @@
 # 论文最终定位（Live-A Aggregate-B + Dual-B，冻结协议）
 
-状态：2026-08-12，P0-P4 与 P5 任务长度已完成；CUB 多 seed、强基线本机复现、
-效率实测与最小导出验证进行中（`TODO_PENDING` 标记待回填）。
+状态：2026-08-12 21:30，P0-P4、P5 任务长度、CUB seed1、效率状态/时间/显存曲线、
+最小导出验证已完成；CUB 多 seed 与强基线本机复现运行中（`TODO_PENDING` 标记待回填）。
 
 ## 1. 冻结方法与主张
 
@@ -83,9 +83,10 @@ INR +0.38/+0.90/+1.69。相对 EXP-009 基本等价。
 
 ## 5b. 第三数据集 CUB-200-2011（多 seed）
 
-`TODO_PENDING`：完整方法 seed1 运行中；seed2/3、EXP-009 seed1-3、
-SD-LoRA seed1-3 队列已预注册（commit `689914c`）。结果与 EXP-009
-（旧 Adam 协议 seed1：71.75 / 84.93 / 23.31）及同协议重跑一并报告。
+seed1 已完成（commit `4fd4378`）：完整方法 **77.84 / 85.85 / 16.27**；
+对照旧 Adam EXP-009（71.75 / 84.93 / 23.31）Final +6.09、AAA +0.92、F -7.04。
+seed2/3、EXP-009 seed1-3、SD-LoRA seed1-3 队列运行中（commit `ca50db42`，
+`p5_cub_multi_queue.log`）；完成后回填均值±标准差。
 
 ## 6. 效率与 artifact 闭环
 
@@ -101,17 +102,20 @@ SD-LoRA seed1-3 队列已预注册（commit `689914c`）。结果与 EXP-009
 完整方法为 O(1) 状态；三种银行式基线为 O(T)。每任务耗时含全类 eval，
 但 bank 式方法因逐任务算子叠加增长明显更快。
 
-### 6.2 训练峰值显存、FLOPs、吞吐
+### 6.2 训练峰值显存、FLOPs、吞吐（已完成）
 
-`TODO_PENDING`：`run_p6_measurements.sh` 待 GPU 空闲后执行
-（完整方法 vs SD-LoRA 在 T=5/10/20 的训练步峰值显存；merged 推理
-FLOPs/吞吐；旧方法参考值 1.129e12 FLOPs、~413 img/s、~579 MiB）。
+| 方法 | T=5 | T=10 | T=20 |
+| --- | ---: | ---: | ---: |
+| 完整方法 | 3,468.6 MiB | 3,468.6 MiB | 3,468.6 MiB（O(1)） |
+| SD-LoRA | 5,963.9 MiB | 8,186.7 MiB | T20 待补测 |
+
+推理（merged，batch32）：1.129e12 FLOPs/forward、601.7 MiB 峰值；
+吞吐 253 img/s 为 GPU 共享时实测（空闲后复测取干净值）。
 
 ### 6.3 最小可恢复 artifact 导出与一致性
 
-`TODO_PENDING`：`scripts/export_minimal_artifact.py` +
-`scripts/verify_minimal_artifact.py`（C100 seed1 与 CUB seed1；
-要求 features/fc/proto/fused logits max_abs_diff == 0 且 Final 与日志一致）。
+已完成（`p6_efficiency_results.md`）：C100 seed1 与 CUB seed1 均
+max_abs_diff == 0，Final 与训练日志一致（87.02 / 77.84）。
 
 ## 7. 强外部基线
 
@@ -149,6 +153,6 @@ FLOPs/吞吐；旧方法参考值 1.129e12 FLOPs、~413 img/s、~579 MiB）。
 - [x] P5 任务长度 T=5/10/20（C100 + INR）
 - [ ] P5 CUB 多 seed（队列运行中）
 - [ ] P5 强基线本机复现（发布值已收集）
-- [ ] P6 效率实测（显存/FLOPs/吞吐；状态与时间曲线已完成）
-- [ ] P6 最小导出验证
+- [x] P6 效率实测（显存/FLOPs/吞吐；状态与时间曲线已完成；SD-LoRA T20 显存待补）
+- [x] P6 最小导出验证（C100 + CUB）
 - [ ] 论文定位回填

@@ -11,6 +11,11 @@ CONDA_ENV="sdlora"
 cd "$PROJECT_ROOT" || exit 1
 source "$CONDA_SH" || exit 1
 conda activate "$CONDA_ENV" || exit 1
+export HF_ENDPOINT=https://hf-mirror.com
+export PYTHONUNBUFFERED=1
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
+export TORCH_DETERMINISTIC=1
 
 RUNS=(
   "exps/p5_cub_livea_dual_b_seed2_nccl.json|./CUB_P5_LIVEA_DUALB_SEED2_NCCL/|p5_cub_livea_dual_b_seed2_nccl.log"

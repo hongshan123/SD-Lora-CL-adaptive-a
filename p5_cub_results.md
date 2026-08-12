@@ -1,6 +1,7 @@
 # P5 第三数据集 CUB-200-2011 结果（冻结协议）
 
-更新时间：2026-08-12 22:10（完整方法 3-seed 完成；EXP-009/SD-LoRA 队列运行中）。
+更新时间：2026-08-12 22:35（完整方法 3-seed 完成；EXP-009/SD-LoRA 队列因并发
+基线 OOM 中断后重排，待 GPU 空闲重启）。
 
 ## 1. 协议
 
@@ -25,8 +26,13 @@ seed1 相对旧 EXP-009：Final +6.09、AAA +0.92、F -7.04。
 
 ## 3. 多 seed（运行中）
 
-队列剩余 6 runs：EXP-009 seed1-3（同冻结协议重跑）、SD-LoRA seed1-3；
-全部 exit=0 后回填三方法均值±标准差与配对差。
+队列剩余 6 runs：EXP-009 seed1-3（同冻结协议重跑）、SD-LoRA seed1-3。
+
+⚠️ 2026-08-12 22:22：EXP-009 seed1 在 task 9 时 CUDA OOM（GPU2 与 LoRA-DRS
+本地复现并发，15.15 GiB + 8.54 GiB > 24 GiB）。已停止并发外部基线（CL-LoRA、
+LoRA-DRS 均已终止；InfLoRA 完成后 GPU 全空闲再重启队列）。失败目录已移出
+（`/tmp/CUB_P5_EXP009_SEED1_NCCL.failed_oom`）；`run_p5_cub_remaining_queue.sh`
+包含剩余 6 runs，并在启动前检查外部基线进程。
 
 ## 4. 待办
 

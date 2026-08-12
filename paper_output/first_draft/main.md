@@ -2,6 +2,13 @@
 
 **Status**: first draft (2026-08-07). Numbers are final from evidence bank unless marked `TODO_VERIFY` / `TODO_EVIDENCE`; citations marked `TODO_CITATION` need verification before submission.
 
+> ⚠️ 2026-08-12 口径更新：本稿描述的是已被替代的 cumulative+gauge 主方法。
+> 冻结后的最终主方法为 **Live-A Aggregate-B + Dual-B**（无 HBD），严格 n=5 主统计、
+> 任务长度、CUB、消融、强基线与效率结果见 `paper_output/final_positioning.md`
+> 及 `p3_strict_n5_summary.md` / `p4_ablations_results.md` / `p5_task_length_results.md` /
+> `p5_cub_results.md` / `p6_efficiency_results.md` / `strong_baselines_sd.md`。
+> 本文保留为历史草稿与证据档案，不作为最终论文主体。
+
 ## Abstract
 
 Rehearsal-free class-incremental learning (CIL) with low-rank adapters faces two coupled problems: the persistent adapter state grows linearly with the number of tasks, and a continuously updated shared down-projection $A$ drifts the historical LoRA operators that old prototypes depend on. We show that, in a shared-$A$ SD-LoRA setup, the entire historical bank of up-projections can be folded into a single cumulative matrix $H$ with an exactness below $10^{-5}$ (C1). When $A$ is re-canonicalized after each task with a thin QR decomposition $A^T = QR$, gauge alignment $H_{\mathrm{aligned}} = H_{\mathrm{old}}(Q_{\mathrm{old}}^T Q_{\mathrm{new}})$ is the closed-form least-squares preservation of the in-span part of the historical operator; measured pre-save residuals on ImageNet-R are $1.3$--$4.4\times10^{-2}$ per task, so the alignment is principled and quantified rather than exact (C2). The resulting persistent LoRA state is independent of the number of tasks: 371,040 parameters ($10.1\%$ of SD-LoRA's 3.69M) measured identically at $T=5,10,20,40$ (C3), with single-model inference, no task id/router, and no need to restore historical $B$ banks (C4). Across four seeds, removing $81.7\%$ of LoRA parameters costs $-0.65$ Final Top-1 ($p=0.026$) and $-0.52$ AvgAcc ($p=0.009$) on ImageNet-R relative to our prior Shared-A + prototype system, while CIFAR-100 differences are not significant (Final $p=0.28$, AvgAcc $p=0.15$) and Forgetting is unchanged on both datasets (C5). On the fine-grained CUB-200-2011 benchmark it outperforms that system by $+8.04$ Final Top-1 (single seed; C6). Inference FLOPs/throughput/peak memory are identical to the merged legacy model (C7). The algebra in C1--C2 is exact under the repository's normalization convention (C2).

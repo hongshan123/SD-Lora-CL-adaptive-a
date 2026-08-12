@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# P5 CUB-200 multi-seed queue (frozen protocol): remaining seeds for
+# full (Live-A Dual-B), EXP-009 and SD-LoRA.  seed1 of the full method is
+# already running as p5_cub_livea_dual_b_seed1_nccl.
+set -uo pipefail
+
+PROJECT_ROOT="/home/zhaoyang/SD-Lora-CL"
+CONDA_SH="/home/zhaoyang/miniconda3/etc/profile.d/conda.sh"
+CONDA_ENV="sdlora"
+
+cd "$PROJECT_ROOT" || exit 1
+source "$CONDA_SH" || exit 1
+conda activate "$CONDA_ENV" || exit 1
+
+RUNS=(
+  "exps/p5_cub_livea_dual_b_seed2_nccl.json|./CUB_P5_LIVEA_DUALB_SEED2_NCCL/|p5_cub_livea_dual_b_seed2_nccl.log"
+  "exps/p5_cub_livea_dual_b_seed3_nccl.json|./CUB_P5_LIVEA_DUALB_SEED3_NCCL/|p5_cub_livea_dual_b_seed3_nccl.log"
+  "exps/p5_cub_exp009_seed1_nccl.json|./CUB_P5_EXP009_SEED1_NCCL/|p5_cub_exp009_seed1_nccl.log"
+  "exps/p5_cub_exp009_seed2_nccl.json|./CUB_P5_EXP009_SEED2_NCCL/|p5_cub_exp009_seed2_nccl.log"
+  "exps/p5_cub_exp009_seed3_nccl.json|./CUB_P5_EXP009_SEED3_NCCL/|p5_cub_exp009_seed3_nccl.log"
+  "exps/p5_cub_sdlora_seed1_nccl.json|./CUB_P5_SDLORA_SEED1_NCCL/|p5_cub_sdlora_seed1_nccl.log"
+  "exps/p5_cub_sdlora_seed2_nccl.json|./CUB_P5_SDLORA_SEED2_NCCL/|p5_cub_sdlora_seed2_nccl.log"
+  "exps/p5_cub_sdlora_seed3_nccl.json|./CUB_P5_SDLORA_SEED3_NCCL/|p5_cub_sdlora_seed3_nccl.log"
+)
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "P5-CUB-MULTI FAIL: working tree is not clean; commit before launching"
+  exit 1
+fi
+if pgrep -f 'torchrun.*p5_cub' > /dev/null 2>&1; then
+  echo "P5-CUB-MULTI FAIL: p5_cub torchrun already running"
+  exit 1
+fi
+
+commit=$(git rev-parse HEAD)
+echo "P5-CUB-MULTI start: commit=$commit $(date +%F_%T)"
+
+for entry in "${RUNS[@]}"; do
+  config="${entry%%|*}"
+  rest="${entry#*|}"
+  outdir="${rest%%|*}"
+  runlog="${rest#*|}"
+
+  if [ -e "$outdir" ]; then
+    echo "FAIL: output directory already exists: $outdir"
+    exit 1
+  fi
+  config_sha=$(sha256sum "$config" | awk '{print $1}')
+  echo "===== $(date +%F_%T) START $(basename "$config") ====="
+
+  torchrun --standalone --nproc_per_node=4 main.py \
+    --config=./"$config" \
+    > "$runlog" 2>&1
+  status=$?
+  echo "===== $(date +%F_%T) END $(basename "$config") status=$status config_sha=$config_sha ====="
+  if [ "$status" -ne 0 ]; then
+    echo "P5-CUB-MULTI ABORT: $(basename "$config") failed with status $status"
+    exit "$status"
+  fi
+done
+
+echo "P5-CUB-MULTI ALL DONE $(date +%F_%T)"

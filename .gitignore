@@ -26,3 +26,6 @@ __pycache__/
 # misc
 Untitled
 .DS_Store
+
+# external baseline repositories (kept out of this repo; see strong-baseline doc)
+external_baselines/

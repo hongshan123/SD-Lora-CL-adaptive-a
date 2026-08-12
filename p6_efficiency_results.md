@@ -26,18 +26,33 @@
 每任务耗时含全类 eval（所有方法均随 T 增长），但银行式方法因逐任务算子
 叠加增长明显更快；完整方法为常数复杂度前向。
 
-## 3. 训练峰值显存（T=5/10/20）
+## 3. 训练峰值显存（T=5/10/20，合成训练步，batch 32）
 
-`TODO_PENDING`（`run_p6_measurements.sh` 待 GPU 空闲；参考旧方法 T10：
-v1 EXP-009 12,287 MiB、v2 gauge 3,416 MiB）。
+| 方法 | T=5 | T=10 | T=20 |
+| --- | ---: | ---: | ---: |
+| 完整方法（Live-A Aggregate-B） | 3,468.6 MiB | 3,468.6 MiB | 3,468.6 MiB（O(1)） |
+| SD-LoRA（v1 bank） | 5,963.9 MiB | 8,186.7 MiB | T20 待 GPU 空闲后补测（预期 ~10-12 GiB） |
 
-## 4. 推理 FLOPs / 吞吐
+测量脚本：`scripts/measure_train_peak_memory.py`（完整方法）、
+`scripts/measure_train_peak_memory_sdlora.py`（v1 bank）。合成头为 100 类 Linear，
+优化器/DataLoader 显存不计。
 
-`TODO_PENDING`（旧方法参考：merged 推理 1.129e12 FLOPs、~413 img/s、~579 MiB；
-冻结方法推理 backbone 同为 merged，预期一致）。
+## 4. 推理 FLOPs / 吞吐（merged Live-A Dual-B，INR T10，batch 32）
 
-## 5. 最小可恢复 artifact 导出与验证
+| 指标 | 值 | 备注 |
+| --- | ---: | --- |
+| FLOPs (forward) | 1.129e12 | 与旧 merged 推理一致 |
+| 吞吐 | 253.0 img/s | GPU3 与 CUB/baseline 共享时的实测，空闲后复测取干净值 |
+| 推理峰值显存 | 601.7 MiB | |
 
-`TODO_PENDING`（C100 seed1 与 CUB seed1；要求 max_abs_diff == 0 且
-Final 与训练日志一致；导出文件：sa_state.pt、sa_merged_lora.pt、
-sa_prototypes.pt、sa_dual_head.pt、最终 CLs_weight/bias、manifest）。
+## 5. 最小可恢复 artifact 导出与验证（已完成，全部 PASS）
+
+导出文件（每份）：`sa_state.pt`、`sa_merged_lora.pt`、`sa_prototypes.pt`、
+`sa_dual_head.pt`、最终 `CLs_weight{N}.pt` / `CLs_bias{N}.pt`、`minimal_manifest.json`。
+
+| 数据集 | 导出总字节 | features/fc/proto/fused max_abs_diff | 最小 artifact Final | 训练日志 Final | 结论 |
+| --- | ---: | --- | ---: | ---: | --- |
+| CIFAR-100 seed1 | 4,365,040 | 0.000e+00（全部） | 87.02 | 87.02 | PASS |
+| CUB seed1 | 5,006,976 | 0.000e+00（全部） | 77.84 | 77.84 | PASS |
+
+脚本：`scripts/export_minimal_artifact.py`、`scripts/verify_minimal_artifact.py`。

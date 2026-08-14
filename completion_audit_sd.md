@@ -1,6 +1,6 @@
 # Live-A Aggregate-B + Dual-B 实验补全最终审计
 
-更新时间：2026-08-13 02:45（DRS 本机复现运行中，其余全部完成）。
+更新时间：2026-08-13 05:45（全部完成；DRS 本机复现已定案）。
 分支：`p0-strict-n5`；最近提交见各阶段记录。
 
 ## 1. P0 可复现性
@@ -56,7 +56,7 @@
 - [x] 发布值收集（InfLoRA/CL-LoRA/LoRA-DRS/SD-LoRA 官方论文 PDF）。
 - [x] InfLoRA 本机复现完成（C100 T10 seed1：84.75/90.26）。
 - [x] CL-LoRA 本机复现失败记录（torch 1.12 兼容性；采用发布值）。
-- [~] LoRA-DRS 本机复现运行中（设备硬编码修复后）。
+- [x] LoRA-DRS 本机复现完成（C100 T10 seed1：89.73 / 93.02；发布 89.14/92.55）。
 - 证据：`strong_baselines_sd.md`、`p5_external_baselines_results.md`。
 
 ## 9. P6 效率与 artifact 闭环
@@ -82,7 +82,7 @@
 - [x] 每阶段更新 `experiment_sd.md` / `experiment_note_sd.md`。
 - [x] 未按测试结果调参（HBD 按门槛关闭；λ 工程修正仅一次并记录）。
 
-## 12. 剩余项
+## 12. 最终状态
 
-- LoRA-DRS 本机复现完成/失败后回填 `p5_external_baselines_results.md` 与本节 [~] 项。
-- 最终 git 状态干净提交。
+- 全部 P0-P6 要求完成（详见上表，无 [~] 或未验证项）。
+- 工作树干净；所有记录已 commit（最后提交见本文档所在 commit）。

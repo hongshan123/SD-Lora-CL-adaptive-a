@@ -961,7 +961,8 @@
 - InfLoRA 本机复现完成：CIFAR-100 T=10 seed1 84.75/90.26（发布 86.51/91.70）。
 - CL-LoRA 本机复现失败：官方代码要求 torch 2.0.1；bestformer（torch 1.12）修复设备/两阶段
   backward 后 task 0 仍发散（NaN），停止并采用发布值。
-- LoRA-DRS 本机复现运行中（设备硬编码修复后）。
+- LoRA-DRS 本机复现完成：CIFAR-100 T=10 seed1 89.73/93.02（发布 89.14/92.55），
+  与发布值一致；三个官方仓库中 InfLoRA/DRS 可复现，CL-LoRA 因 torch 版本不兼容未复现。
 
 ## 2026-08-13 P6：效率与 artifact 闭环完成
 

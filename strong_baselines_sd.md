@@ -69,10 +69,12 @@
     次数从 2 次/iter 变为 1 次/iter，作为 autograd 兼容性修复记录）。
   - bestformer 环境补装 scikit-learn/ipdb/easydict。
 
-### 本机复现状态（2026-08-12 22:00）
+### 本机复现状态（2026-08-13 05:45 定案）
 
-- InfLoRA：运行中（CIFAR-100 T=10 seed1，task ~3/10）。
-- LoRA-DRS：运行中（CIFAR-100 T=10 seed1，task 0，设备/正交损失修复后重启）。
+- InfLoRA：**完成**（CIFAR-100 T=10 seed1，Final 84.75 / AAA 90.26；发布 86.51/91.70）。
+- LoRA-DRS：**完成**（CIFAR-100 T=10 seed1，Final 89.73 / AAA 93.02；发布 89.14/92.55）。
+- 详细结果与日志：`p5_external_baselines_results.md`、`baseline_infolora_c100_seed1.log`、
+  `baseline_lora_drs_c100_seed1.log`。
 - CL-LoRA：**本机复现失败并停止**。原因：官方仓库要求 torch 2.0.1/timm 0.6.12，
   本机 bestformer 为 torch 1.12.1/timm 0.6.12；修复设备硬编码与两阶段 backward
   后，task 0 仍出现 loss 爆炸/NaN（同一代码在 20:59 曾正常收敛、21:36 起确定性

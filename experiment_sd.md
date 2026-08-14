@@ -782,7 +782,8 @@
   见 `p5_external_baselines_results.md`。
 - CL-LoRA 本机复现失败（torch 1.12 环境与官方两阶段 backward 不兼容；已修复设备/autograd
   后 task 0 仍发散为 NaN），论文采用发布值（见 `strong_baselines_sd.md`）。
-- LoRA-DRS 本机复现运行中（设备硬编码已修复，待完成后回填）。
+- LoRA-DRS 本机复现完成（CIFAR-100 T=10 seed1）：**89.73 / 93.02**（发布值 89.14/92.55），
+  见 `p5_external_baselines_results.md`（2026-08-13 05:45 完成，设备硬编码修复后全程无错）。
 
 ## 2026-08-13 P6：效率与 artifact 闭环全部完成
 

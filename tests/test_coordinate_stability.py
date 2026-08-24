@@ -14,6 +14,7 @@ from backbone.coordinate_stability import (
     fit_residual_orthogonal_transport,
     normalized_effective_operator,
 )
+from utils.inc_net import get_backbone
 from backbone.sa_lora import (
     SA_MERGED_FILENAME,
     SA_STATE_FILENAME,
@@ -204,3 +205,34 @@ def test_coordinate_aligned_live_a_state_roundtrip(tmp_path):
         cumulative_merge="live_a_aggregate_b",
         live_a_coordinate_align=True,
     )
+
+
+def test_backbone_factory_preserves_coordinate_alignment_flag(
+    tmp_path, monkeypatch
+):
+    run = tmp_path / "factory-run"
+    monkeypatch.setattr(
+        "utils.inc_net.timm.create_model",
+        lambda *args, **kwargs: _TinyViT(8),
+    )
+    backbone = get_backbone(
+        {
+            "backbone_type": "vit_base_patch16_224",
+            "model_name": "sa_sdlora",
+            "lora_rank": 3,
+            "increment": 10,
+            "filepath": str(run),
+            "sa_train_a_all_tasks": True,
+            "sa_cumulative_state": True,
+            "sa_cumulative_merge": "live_a_aggregate_b",
+            "sa_live_a_coordinate_align": True,
+        },
+        pretrained=True,
+    )
+
+    assert backbone.live_a_coordinate_align is True
+    backbone.save_lora_parameters(str(run), task_id=0)
+    state = torch.load(
+        run / SA_STATE_FILENAME, map_location="cpu", weights_only=True
+    )
+    assert state["coordinate_aligned"] is True

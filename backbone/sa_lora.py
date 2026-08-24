@@ -21,6 +21,7 @@ import torch.nn.functional as F
 from timm.models.vision_transformer import VisionTransformer as timm_ViT
 from torch import Tensor
 
+from backbone.coordinate_stability import align_live_a_aggregate
 from backbone.linears import SimpleLinear
 from backbone.lora import ParameterWrapper
 from backbone.sa_operator_stability import (
@@ -703,6 +704,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         cumulative_rank=None,
         freeze_old_scales=False,
         live_a_history_groups=1,
+        live_a_coordinate_align=False,
         resume=False,
     ):
         super().__init__()
@@ -739,6 +741,15 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.cumulative_merge = cumulative_merge
         self.freeze_old_scales = bool(freeze_old_scales)
         self.live_a_history_groups = int(live_a_history_groups)
+        self.live_a_coordinate_align = bool(live_a_coordinate_align)
+        if (
+            self.live_a_coordinate_align
+            and cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+        ):
+            raise ValueError(
+                "sa_live_a_coordinate_align requires "
+                "sa_cumulative_merge=live_a_aggregate_b"
+            )
         self.save_file = filepath
         if cur_task_index is not None and cur_task_index == 0:
             state_path = _join_path(filepath, SA_STATE_FILENAME)
@@ -817,6 +828,20 @@ class SharedALoRA_ViT_timm(nn.Module):
                     "artifact is v4 live-a-aggregate-b but "
                     "sa_cumulative_merge={}; use live_a_aggregate_b".format(
                         self.cumulative_merge
+                    )
+                )
+            state_coordinate_aligned = bool(
+                state.get("coordinate_aligned", False)
+            )
+            if (
+                self.task_id > 0
+                and state_coordinate_aligned != self.live_a_coordinate_align
+            ):
+                raise ValueError(
+                    "live-a coordinate alignment setting differs from the "
+                    "saved state (saved={}, requested={})".format(
+                        state_coordinate_aligned,
+                        self.live_a_coordinate_align,
                     )
                 )
             self.cumulative_state = True
@@ -924,6 +949,13 @@ class SharedALoRA_ViT_timm(nn.Module):
 
         # These are task-local, non-persistent snapshots used only while the
         # next task is trained. They never enter the saved Shared-A artifact.
+        self._live_a_previous_shared_a = (
+            [tensor.detach().cpu().float().clone() for tensor in shared_a]
+            if self.cumulative_merge == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+            else []
+        )
+        self._last_live_a_coordinate_diagnostics = None
+        self._last_saved_live_a_aggregate = None
         self._operator_reference_down = []
         self._operator_reference_up = []
         self._operator_reference_task_count = 0
@@ -1595,8 +1627,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         a_sum = 0.0
         b_sum = 0.0
         scale_value = None
+        coordinate_diagnostics = []
         for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
             b = w_b.weight.detach().cpu().float()
+            current_a = w_a.weight.detach().cpu().float()
             s = (
                 self.wrapped_param[0]
                 .param.detach()
@@ -1609,7 +1643,17 @@ class SharedALoRA_ViT_timm(nn.Module):
                 if idx < len(self.aggregate_up)
                 else torch.zeros_like(b)
             )
-            g_new = g_old + s * b / (
+            g_history = g_old
+            if self.live_a_coordinate_align and idx < len(
+                self._live_a_previous_shared_a
+            ):
+                g_history, diagnostics = align_live_a_aggregate(
+                    g_old,
+                    self._live_a_previous_shared_a[idx],
+                    current_a,
+                )
+                coordinate_diagnostics.append(diagnostics)
+            g_new = g_history + s * b / (
                 torch.linalg.vector_norm(b) + 1e-8
             )
             aggregate_up.append(g_new)
@@ -1624,6 +1668,33 @@ class SharedALoRA_ViT_timm(nn.Module):
             "mean_B_norm": (b_sum / n) ** 0.5,
             "scale": scale_value,
         }
+        if coordinate_diagnostics:
+            self._last_live_a_coordinate_diagnostics = {
+                "branches": len(coordinate_diagnostics),
+                "before_relative_error": sum(
+                    item["before_relative_error"]
+                    for item in coordinate_diagnostics
+                )
+                / len(coordinate_diagnostics),
+                "after_relative_error": sum(
+                    item["after_relative_error"]
+                    for item in coordinate_diagnostics
+                )
+                / len(coordinate_diagnostics),
+                "max_condition": max(
+                    item["condition"] for item in coordinate_diagnostics
+                ),
+            }
+        else:
+            self._last_live_a_coordinate_diagnostics = {
+                "branches": 0,
+                "before_relative_error": 0.0,
+                "after_relative_error": 0.0,
+                "max_condition": 0.0,
+            }
+        self._last_saved_live_a_aggregate = [
+            tensor.detach().clone() for tensor in aggregate_up
+        ]
         shared_a = [
             w_a.weight.detach().cpu().float() for w_a in self.w_As
         ]
@@ -1636,6 +1707,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "aggregate_up": aggregate_up,
                 "shared_a": shared_a,
                 "history_groups": self.live_a_history_groups,
+                "coordinate_aligned": self.live_a_coordinate_align,
             },
             _join_path(filename, SA_STATE_FILENAME),
         )
@@ -1661,24 +1733,30 @@ class SharedALoRA_ViT_timm(nn.Module):
                 == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
             ):
                 aggregate_total = []
-                for idx, w_b in enumerate(self.w_Bs):
-                    b = w_b.weight.detach().cpu().float()
-                    s = (
-                        self.wrapped_param[0]
-                        .param.detach()
-                        .cpu()
-                        .float()
-                        .reshape(())
-                    )
-                    g_old = (
-                        self.aggregate_up[idx]
-                        if idx < len(self.aggregate_up)
-                        else torch.zeros_like(b)
-                    )
-                    g_total = g_old + s * b / (
-                        torch.linalg.vector_norm(b) + 1e-8
-                    )
-                    aggregate_total.append(g_total)
+                if self._last_saved_live_a_aggregate is not None:
+                    aggregate_total = [
+                        tensor.detach().cpu().float().clone()
+                        for tensor in self._last_saved_live_a_aggregate
+                    ]
+                else:
+                    for idx, w_b in enumerate(self.w_Bs):
+                        b = w_b.weight.detach().cpu().float()
+                        s = (
+                            self.wrapped_param[0]
+                            .param.detach()
+                            .cpu()
+                            .float()
+                            .reshape(())
+                        )
+                        g_old = (
+                            self.aggregate_up[idx]
+                            if idx < len(self.aggregate_up)
+                            else torch.zeros_like(b)
+                        )
+                        g_total = g_old + s * b / (
+                            torch.linalg.vector_norm(b) + 1e-8
+                        )
+                        aggregate_total.append(g_total)
                 shared_a = [
                     w.weight.detach().cpu().float() for w in self.w_As
                 ]

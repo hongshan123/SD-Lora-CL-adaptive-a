@@ -802,3 +802,11 @@
 - 协议：完全复制 P5 T=20 冻结配置，仅修改运行标识、seed 和独立输出目录；不调参。
 - 执行：GPU 0-3，4-rank NCCL，串行 `nohup` 队列，失败即停止，独立 30 分钟监控。
 - 预注册与统计口径：`p7_t20_multiseed_plan.md`。
+## 2026-08-24 Coordinate-Stable Live-A 单 seed 开发实验
+
+- 状态：实现中，待 P7 T=20 队列释放 GPU 后自动启动。
+- 目标：联合解决 Live-A 更新导致的历史有效算子变化和旧 prototype 坐标失配，同时保持 O(1) LoRA 状态。
+- 方法：任务结束时闭式求解 `G_aligned` 以保持 `G_old normalize(A_old)`；部署态重建后，用当前任务前后配对特征拟合 rank-10 正交残差 transport。固定 80/20 训练数据门控，无验证收益则使用恒等映射；transport 用后丢弃。
+- 理论边界：不同于已有 generic affine/class-mean/JVP LRPT，本实验先在 LoRA 算子层消除可解释坐标变化，再只允许观测漂移子空间内的等距旋转，禁止自由缩放、偏置和持久映射网络。
+- 配置：`c100_coordinate_stable_seed1993_nccl.json`、`inr_coordinate_stable_seed1995_nccl.json`；完整协议与对应 Live-A + Dual-B 开发运行一致。
+- 预注册门槛与状态边界：见 `coordinate_stability_plan.md`。

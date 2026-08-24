@@ -26,6 +26,10 @@ from backbone.lrpt import (
     project_map_to_basis,
     transport_prediction_error,
 )
+from backbone.coordinate_stability import (
+    apply_residual_orthogonal_transport,
+    fit_residual_orthogonal_transport,
+)
 from backbone.sa_lora import (
     SharedALoRA_ViT_timm,
     hbd_historical_branch_distance,
@@ -49,6 +53,7 @@ from models.sdlora import Learner as SDLoraLearner
 num_workers = 8
 PROTOTYPES_FILENAME = "sa_prototypes.pt"
 P0_HASHES_FILENAME = "p0_hashes.json"
+COORDINATE_DIAGNOSTICS_FILENAME = "sa_coordinate_diagnostics.json"
 
 
 def collective_device():
@@ -310,6 +315,43 @@ class Learner(SDLoraLearner):
         self._lrpt_pre_targets = None
         self._lrpt_a_old = None
         self._lrpt_res_pre = None
+        self._coordinate_stable_transport = bool(
+            args.get("sa_coordinate_stable_transport", False)
+        )
+        self._coordinate_transport_rank = int(
+            args.get("sa_coordinate_transport_rank", args.get("lora_rank", 10))
+        )
+        self._coordinate_transport_reg = float(
+            args.get("sa_coordinate_transport_reg", 1e-4)
+        )
+        self._coordinate_transport_min_gain = float(
+            args.get("sa_coordinate_transport_min_gain", 0.0)
+        )
+        self._coordinate_pre_features = None
+        self._coordinate_pre_targets = None
+        if self._coordinate_stable_transport:
+            if not use_prototypes:
+                raise ValueError(
+                    "sa_coordinate_stable_transport requires "
+                    "sa_use_prototype_classifier=true"
+                )
+            if args.get("sa_cumulative_merge") != "live_a_aggregate_b":
+                raise ValueError(
+                    "sa_coordinate_stable_transport requires "
+                    "sa_cumulative_merge=live_a_aggregate_b"
+                )
+            if not args.get("sa_live_a_coordinate_align", False):
+                raise ValueError(
+                    "sa_coordinate_stable_transport requires "
+                    "sa_live_a_coordinate_align=true"
+                )
+            if self._lrpt_enabled:
+                raise ValueError(
+                    "sa_coordinate_stable_transport and lrpt_enabled are "
+                    "mutually exclusive"
+                )
+            if self._coordinate_transport_rank <= 0:
+                raise ValueError("sa_coordinate_transport_rank must be positive")
         self._sa_operator_stability_lambda = float(
             args.get("sa_operator_stability_lambda", 0.0)
         )
@@ -375,6 +417,9 @@ class Learner(SDLoraLearner):
             cumulative_rank=self.args.get("sa_cumulative_rank", None),
             freeze_old_scales=self.args.get("sa_freeze_old_scales", False),
             live_a_history_groups=self.args.get("sa_live_a_history_groups", 1),
+            live_a_coordinate_align=self.args.get(
+                "sa_live_a_coordinate_align", False
+            ),
             resume=self.args.get("sa_resume", False),
         )
         model.out_dim = 768
@@ -426,6 +471,25 @@ class Learner(SDLoraLearner):
                 self._cur_task + 1,
                 self._lrpt_pre_features.shape[0],
             )
+        if (
+            self._coordinate_stable_transport
+            and self._is_main_process()
+            and self._cur_task >= 0
+        ):
+            (
+                self._coordinate_pre_features,
+                self._coordinate_pre_targets,
+            ) = self._extract_current_task_features(
+                data_manager,
+                task_index=self._cur_task + 1,
+                return_targets=True,
+            )
+            logging.info(
+                "[CoordinateStable] pre-update features captured for task "
+                "%d (%d samples)",
+                self._cur_task + 1,
+                self._coordinate_pre_features.shape[0],
+            )
         super().incremental_train(data_manager)
         if self._hbd_teacher is not None:
             for handle in self._hbd_teacher_handles:
@@ -457,6 +521,26 @@ class Learner(SDLoraLearner):
                                     stats["mean_A_norm"],
                                     stats["mean_B_norm"],
                                     stats["scale"],
+                                )
+                            coordinate_stats = getattr(
+                                backbone,
+                                "_last_live_a_coordinate_diagnostics",
+                                None,
+                            )
+                            if coordinate_stats is not None:
+                                logging.info(
+                                    "[CoordinateStable] operator alignment "
+                                    "task %d: branches=%d before=%.6e "
+                                    "after=%.6e max_condition=%.3f",
+                                    self._cur_task,
+                                    coordinate_stats["branches"],
+                                    coordinate_stats[
+                                        "before_relative_error"
+                                    ],
+                                    coordinate_stats[
+                                        "after_relative_error"
+                                    ],
+                                    coordinate_stats["max_condition"],
                                 )
                         elif backbone.cumulative_merge == "union_svd":
                             trunc_error = getattr(
@@ -510,7 +594,14 @@ class Learner(SDLoraLearner):
                             operator_drift,
                             self._sa_operator_stability_lambda,
                         )
-            if self._cur_task == data_manager.nb_tasks - 1:
+            if self._coordinate_stable_transport:
+                self._rebuild_eval_backbone()
+                logging.info(
+                    "[CoordinateStable] rebuilt task %d deployment state "
+                    "before prototype transport",
+                    self._cur_task,
+                )
+            elif self._cur_task == data_manager.nb_tasks - 1:
                 self._rebuild_eval_backbone()
             raw_network = self._raw_network()
             raw_network.backbone.save_merged_lora(self.args["filepath"])
@@ -533,6 +624,13 @@ class Learner(SDLoraLearner):
         if self.args.get("sa_use_prototype_classifier", False):
             if self._is_main_process():
                 if (
+                    self._coordinate_stable_transport
+                    and self._coordinate_pre_features is not None
+                ):
+                    self._apply_coordinate_transport_to_old_prototypes(
+                        data_manager
+                    )
+                elif (
                     self._lrpt_enabled
                     and self._lrpt_pre_features is not None
                 ):
@@ -1210,6 +1308,77 @@ class Learner(SDLoraLearner):
         except Exception:
             logging.exception("[SharedA-SDLoRA] LRPT LoRA-aware transport failed")
             raise
+
+    def _apply_coordinate_transport_to_old_prototypes(self, data_manager):
+        """Move historical prototypes with a gated orthogonal residual map.
+
+        The previous deployment state and the freshly operator-aligned state
+        are evaluated on identical current-task samples.  The fitted map is
+        applied once to old prototypes and then discarded; only scalar
+        diagnostics are persisted.
+        """
+        old_features = self._coordinate_pre_features
+        old_targets = self._coordinate_pre_targets
+        new_features, new_targets = self._extract_current_task_features(
+            data_manager, return_targets=True
+        )
+        self._coordinate_pre_features = None
+        self._coordinate_pre_targets = None
+        if not torch.equal(old_targets, new_targets):
+            raise RuntimeError(
+                "coordinate transport paired-feature targets differ"
+            )
+
+        transport = fit_residual_orthogonal_transport(
+            old_features,
+            new_features,
+            rank=self._coordinate_transport_rank,
+            identity_reg=self._coordinate_transport_reg,
+            min_validation_gain=self._coordinate_transport_min_gain,
+        )
+        path = os.path.join(self.args["filepath"], PROTOTYPES_FILENAME)
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                "coordinate transport requires historical prototypes at {}".format(
+                    path
+                )
+            )
+        old_prototypes = torch.load(
+            path, map_location="cpu", weights_only=True
+        )
+        updated = apply_residual_orthogonal_transport(
+            old_prototypes, transport
+        )
+        torch.save(updated, path)
+
+        scalar_diagnostics = {
+            key: value
+            for key, value in transport.items()
+            if key not in ("basis", "rotation")
+        }
+        scalar_diagnostics["task_id"] = self._cur_task
+        scalar_diagnostics["num_prototypes"] = len(updated)
+        diagnostics_path = os.path.join(
+            self.args["filepath"], COORDINATE_DIAGNOSTICS_FILENAME
+        )
+        diagnostics = []
+        if os.path.exists(diagnostics_path):
+            with open(diagnostics_path, "r", encoding="utf-8") as handle:
+                diagnostics = json.load(handle)
+        diagnostics.append(scalar_diagnostics)
+        with open(diagnostics_path, "w", encoding="utf-8") as handle:
+            json.dump(diagnostics, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        logging.info(
+            "[CoordinateStable] prototype transport task %d: enabled=%s "
+            "rank=%d explained=%.4f val_gain=%.4f old_classes=%d",
+            self._cur_task,
+            transport["enabled"],
+            transport["rank"],
+            transport["explained_drift"],
+            transport["validation_gain"],
+            len(updated),
+        )
 
     def _apply_lrpt_to_old_prototypes(self, data_manager):
         """Fit the low-rank transport from the paired current-task features and

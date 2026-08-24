@@ -1,0 +1,44 @@
+{
+    "prefix": "p7_t20_c100_sdlora_seed3_nccl",
+    "dataset": "cifar224",
+    "memory_size": 0,
+    "memory_per_class": 0,
+    "fixed_memory": false,
+    "shuffle": true,
+    "init_cls": 5,
+    "increment": 5,
+    "model_name": "sdlora",
+    "backbone_type": "vit_base_patch16_224",
+    "device": [
+        "0"
+    ],
+    "seed": [
+        3
+    ],
+    "optimizer": "sgd",
+    "scheduler": "cosine",
+    "min_lr": 0.005,
+    "tuned_epoch": 20,
+    "dist_backend": "nccl",
+    "filepath": "./C100_P7_T20_SDLORA_SEED3_NCCL/",
+    "init_epoch": 20,
+    "init_lr": 0.008,
+    "init_milestones": [
+        60,
+        120,
+        170
+    ],
+    "init_lr_decay": 0.1,
+    "init_weight_decay": 0.0005,
+    "epochs": 20,
+    "lrate": 0.008,
+    "milestones": [
+        40,
+        70
+    ],
+    "lrate_decay": 0,
+    "batch_size": 32,
+    "weight_decay": 0.0002,
+    "sa_deterministic_training": true,
+    "sa_resume": false
+}

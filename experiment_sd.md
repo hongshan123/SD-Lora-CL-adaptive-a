@@ -795,3 +795,10 @@
 - 最小导出验证：C100 与 CUB 各一份，features/fc/proto/fused logits max_abs_diff == 0，
   Final 与训练日志一致（87.02 / 77.84）。
 - 汇总：`p6_efficiency_results.md`。
+## 2026-08-24 P7：T=20 多种子确认实验启动
+
+- 目标：确认 P5 单开发种子中“完整方法相对 SD-LoRA 的 Final 优势随任务长度扩大”的趋势。
+- 矩阵：CIFAR-100/ImageNet-R × 完整方法/SD-LoRA/EXP-009 × seeds 1/2/3，共 18 个运行。
+- 协议：完全复制 P5 T=20 冻结配置，仅修改运行标识、seed 和独立输出目录；不调参。
+- 执行：GPU 0-3，4-rank NCCL，串行 `nohup` 队列，失败即停止，独立 30 分钟监控。
+- 预注册与统计口径：`p7_t20_multiseed_plan.md`。

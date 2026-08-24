@@ -29,7 +29,7 @@ fi
 
 make_config() {
   local base="$1" seed="$2" prefix="$3" filepath="$4" output="$5"
-  jq --arg prefix "$prefix" +    --arg filepath "$filepath" +    --argjson seed "$seed" +    '.prefix = $prefix
+  jq --arg prefix "$prefix" --arg filepath "$filepath" --argjson seed "$seed" '.prefix = $prefix
      | .seed = [$seed]
      | .filepath = $filepath
      | .device = ["0"]
@@ -45,7 +45,7 @@ make_config() {
      | .sa_deterministic_training = true
      | .sa_dual_head = true
      | .sa_dual_head_schedule = "B"
-     | .sa_resume = false' +    "$base" > "$output"
+     | .sa_resume = false' "$base" > "$output"
 }
 
 run_one() {
@@ -63,9 +63,9 @@ run_one() {
 
   make_config "$base" "$seed" "$prefix" "$filepath" "$tmp_config"
   echo "===== $(date '+%F %T') START $prefix dataset=$dataset seed=$seed ====="
-  echo "base=$base filepath=$filepath gpus=DOLLANGPU_IDS nproc=$NPROC"
+  echo "base=$base filepath=$filepath gpus=$GPU_IDS nproc=$NPROC"
   echo "commit=$(git rev-parse HEAD) config_sha=$(sha256sum "$tmp_config" | awk '{print $1}')"
-  torchrun --standalone --nproc_per_node="DOLARNPROC" +    main.py --config="$tmp_config" > "$logfile" 2>&1
+  torchrun --standalone --nproc_per_node="$NPROC" main.py --config="$tmp_config" > "$logfile" 2>&1
   local status="$?"
   echo "===== $(date '+%F %T') END $prefix status=$status ====="
   if [ "$status" -ne 0 ]; then
@@ -78,15 +78,15 @@ echo "CoordinateStable multi-seed queue start: $(date '+%F %T')"
 echo "Existing completed seeds: C100=1993, INR=1995"
 
 for seed in 1 2 3; do
-  run_one c100 "$seed" +    exps/c100_coordinate_stable_seed1993_nccl.json +    "c100_coordinate_stable_seed${seed}_nccl" +    "./C100_COORDINATE_STABLE_SEED${seed}_NCCL/"
+  run_one c100 "$seed" exps/c100_coordinate_stable_seed1993_nccl.json "c100_coordinate_stable_seed${seed}_nccl" "./C100_COORDINATE_STABLE_SEED${seed}_NCCL/"
 done
 
 for seed in 1 2 3; do
-  run_one inr "$seed" +    exps/inr_coordinate_stable_seed1995_nccl.json +    "inr_coordinate_stable_seed${seed}_nccl" +    "./INR_COORDINATE_STABLE_SEED${seed}_NCCL/"
+  run_one inr "$seed" exps/inr_coordinate_stable_seed1995_nccl.json "inr_coordinate_stable_seed${seed}_nccl" "./INR_COORDINATE_STABLE_SEED${seed}_NCCL/"
 done
 
 for seed in 1 2 3; do
-  run_one cub "$seed" +    exps/sa_sdlora_proto_cub_seed1.json +    "cub_coordinate_stable_seed${seed}_nccl" +    "./CUB_COORDINATE_STABLE_SEED${seed}_NCCL/"
+  run_one cub "$seed" exps/sa_sdlora_proto_cub_seed1.json "cub_coordinate_stable_seed${seed}_nccl" "./CUB_COORDINATE_STABLE_SEED${seed}_NCCL/"
 done
 
 echo "CoordinateStable multi-seed queue DONE: $(date '+%F %T')"

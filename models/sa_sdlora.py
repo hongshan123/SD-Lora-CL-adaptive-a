@@ -427,6 +427,9 @@ class Learner(SDLoraLearner):
             live_a_coordinate_align=self.args.get(
                 "sa_live_a_coordinate_align", False
             ),
+            live_a_absorb_mode=self.args.get(
+                "sa_live_a_absorb_mode", "operator_preserving_absorb"
+            ),
             resume=self.args.get("sa_resume", False),
         )
         model.out_dim = 768
@@ -506,6 +509,26 @@ class Learner(SDLoraLearner):
             self._hbd_teacher = None
         if self._is_main_process():
             self._log_post_train_hash(self._cur_task)
+            backbone = self._raw_network().backbone
+            if (
+                backbone.cumulative_state
+                and backbone.cumulative_merge == "live_a_aggregate_b"
+            ):
+                stats = getattr(backbone, "_last_live_a_save_stats", None)
+                if stats is not None:
+                    logging.info(
+                        "[LiveA-SDLoRA] absorption task %d: mode=%s "
+                        "norm_A=%.4e norm_B=%.4e scaling=%.4f gamma=%.4e "
+                        "absorption_relative_error=%.6e mean_G=%.4e",
+                        self._cur_task,
+                        stats["absorb_mode"],
+                        stats["mean_A_norm"],
+                        stats["mean_B_norm"],
+                        stats["scale"],
+                        stats["mean_gamma"],
+                        stats["absorption_relative_error"],
+                        stats["mean_G_norm"],
+                    )
         if self._is_main_process():
             if self._cur_task > 0:
                 with torch.no_grad():
@@ -515,20 +538,6 @@ class Learner(SDLoraLearner):
                             backbone.cumulative_merge
                             == "live_a_aggregate_b"
                         ):
-                            stats = getattr(
-                                backbone, "_last_live_a_save_stats", None
-                            )
-                            if stats is not None:
-                                logging.info(
-                                    "[LiveA-SDLoRA] save task %d: "
-                                    "mean_G=%.4e mean_A=%.4e mean_B=%.4e "
-                                    "scale=%.4f",
-                                    self._cur_task,
-                                    stats["mean_G_norm"],
-                                    stats["mean_A_norm"],
-                                    stats["mean_B_norm"],
-                                    stats["scale"],
-                                )
                             coordinate_stats = getattr(
                                 backbone,
                                 "_last_live_a_coordinate_diagnostics",

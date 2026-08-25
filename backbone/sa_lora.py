@@ -37,6 +37,8 @@ SA_STATE_VERSION_LIVE_A = 4
 SA_MERGE_MODE_GAUGE = "gauge"
 SA_MERGE_MODE_UNION_SVD = "union_svd"
 SA_MERGE_MODE_LIVE_A_AGGREGATE_B = "live_a_aggregate_b"
+SA_ABSORB_MODE_NORMALIZED = "normalized_absorb"
+SA_ABSORB_MODE_OPERATOR_PRESERVING = "operator_preserving_absorb"
 SA_STATE_FILENAME = "sa_state.pt"
 SA_MERGED_FILENAME = "sa_merged_lora.pt"
 
@@ -128,6 +130,50 @@ def _fixed_orthogonal_down(in_dim, target_rank, seed, dtype=torch.float32):
     random_matrix = torch.randn(in_dim, target_rank, generator=generator)
     q, _ = torch.linalg.qr(random_matrix, mode="reduced")
     return q.t().contiguous().to(dtype)
+
+
+def absorb_live_a_current_projection(
+    shared_a,
+    current_b,
+    scale,
+    mode=SA_ABSORB_MODE_OPERATOR_PRESERVING,
+    eps=1e-8,
+):
+    if mode not in (
+        SA_ABSORB_MODE_NORMALIZED,
+        SA_ABSORB_MODE_OPERATOR_PRESERVING,
+    ):
+        raise ValueError("unsupported live-a absorption mode: {}".format(mode))
+    if shared_a.ndim != 2 or current_b.ndim != 2:
+        raise ValueError("shared_a and current_b must be matrices")
+    if current_b.shape[1] != shared_a.shape[0]:
+        raise ValueError("current_b rank must match shared_a rank")
+    if scale.numel() != 1:
+        raise ValueError("scale must be scalar")
+
+    a = shared_a.to(device=current_b.device, dtype=current_b.dtype)
+    s = scale.to(device=current_b.device, dtype=current_b.dtype).reshape(())
+    norm_a = torch.linalg.vector_norm(a) + eps
+    norm_b = torch.linalg.vector_norm(current_b) + eps
+    a_hat = a / norm_a
+    b_hat = current_b / norm_b
+    gamma = s
+    if mode == SA_ABSORB_MODE_OPERATOR_PRESERVING:
+        gamma = s * norm_a * norm_b
+    absorbed_up = gamma * b_hat
+
+    before_operator = s * (current_b @ a)
+    after_operator = absorbed_up @ a_hat
+    relative_error = torch.linalg.vector_norm(
+        after_operator - before_operator
+    ) / (torch.linalg.vector_norm(before_operator) + eps)
+    return absorbed_up, {
+        "norm_A": float(norm_a),
+        "norm_B": float(norm_b),
+        "scaling": float(s),
+        "gamma": float(gamma),
+        "absorption_relative_error": float(relative_error),
+    }
 
 
 def fold_cumulative_up_projection(
@@ -489,6 +535,8 @@ def migrate_sa_state_v1_to_v4(
         "aggregate_up": aggregate_up,
         "shared_a": shared_a,
         "history_groups": 1,
+        "coordinate_aligned": False,
+        "absorb_mode": SA_ABSORB_MODE_NORMALIZED,
         "migrated_from": {"version": SA_STATE_VERSION_LEGACY},
     }
     backup_path = state_path + ".v1"
@@ -705,6 +753,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         freeze_old_scales=False,
         live_a_history_groups=1,
         live_a_coordinate_align=False,
+        live_a_absorb_mode=SA_ABSORB_MODE_OPERATOR_PRESERVING,
         resume=False,
     ):
         super().__init__()
@@ -742,6 +791,15 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.freeze_old_scales = bool(freeze_old_scales)
         self.live_a_history_groups = int(live_a_history_groups)
         self.live_a_coordinate_align = bool(live_a_coordinate_align)
+        if live_a_absorb_mode not in (
+            SA_ABSORB_MODE_NORMALIZED,
+            SA_ABSORB_MODE_OPERATOR_PRESERVING,
+        ):
+            raise ValueError(
+                "sa_live_a_absorb_mode must be normalized_absorb or "
+                "operator_preserving_absorb"
+            )
+        self.live_a_absorb_mode = live_a_absorb_mode
         if (
             self.live_a_coordinate_align
             and cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B
@@ -833,6 +891,9 @@ class SharedALoRA_ViT_timm(nn.Module):
             state_coordinate_aligned = bool(
                 state.get("coordinate_aligned", False)
             )
+            state_absorb_mode = state.get(
+                "absorb_mode", SA_ABSORB_MODE_NORMALIZED
+            )
             if (
                 self.task_id > 0
                 and state_coordinate_aligned != self.live_a_coordinate_align
@@ -842,6 +903,13 @@ class SharedALoRA_ViT_timm(nn.Module):
                     "saved state (saved={}, requested={})".format(
                         state_coordinate_aligned,
                         self.live_a_coordinate_align,
+                    )
+                )
+            if self.task_id > 0 and state_absorb_mode != self.live_a_absorb_mode:
+                raise ValueError(
+                    "live-a absorption mode differs from the saved state "
+                    "(saved={}, requested={})".format(
+                        state_absorb_mode, self.live_a_absorb_mode
                     )
                 )
             self.cumulative_state = True
@@ -1374,12 +1442,13 @@ class SharedALoRA_ViT_timm(nn.Module):
                 if idx < len(self.aggregate_up)
                 else torch.zeros_like(b)
             )
-            folded.append(
-                g_old
-                + scale
-                * b
-                / (torch.linalg.vector_norm(b) + 1e-8)
+            current_up, _ = absorb_live_a_current_projection(
+                self.w_As[idx].weight.detach().cpu().float(),
+                b,
+                scale,
+                mode=self.live_a_absorb_mode,
             )
+            folded.append(g_old + current_up)
         return folded
 
     def build_hbd_teacher(self):
@@ -1608,11 +1677,9 @@ class SharedALoRA_ViT_timm(nn.Module):
     def _save_live_a_state(self, filename: str, task_id) -> None:
         """Save the Live-A Aggregate-B state.
 
-        Writes ``G_next = G_old + s_t B_t / ||B_t||`` plus the current shared
-        A to disk, but deliberately keeps the in-memory ``aggregate_up`` as the
-        *old* G so that non-final evaluation after save still uses the v1
-        semantics ``old G + current raw B``.  The next task's rebuild loads
-        ``G_next`` with a fresh zero B.
+        Folds the current raw operator into the configured fixed-state
+        representation and saves it with the current shared A. The in-memory
+        aggregate remains unchanged until the deployment backbone is rebuilt.
         """
         if task_id != self.task_id:
             raise ValueError(
@@ -1627,6 +1694,8 @@ class SharedALoRA_ViT_timm(nn.Module):
         a_sum = 0.0
         b_sum = 0.0
         scale_value = None
+        gamma_sum = 0.0
+        absorption_error = 0.0
         coordinate_diagnostics = []
         for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
             b = w_b.weight.detach().cpu().float()
@@ -1653,20 +1722,32 @@ class SharedALoRA_ViT_timm(nn.Module):
                     current_a,
                 )
                 coordinate_diagnostics.append(diagnostics)
-            g_new = g_history + s * b / (
-                torch.linalg.vector_norm(b) + 1e-8
+            current_up, absorption = absorb_live_a_current_projection(
+                current_a,
+                b,
+                s,
+                mode=self.live_a_absorb_mode,
             )
+            g_new = g_history + current_up
             aggregate_up.append(g_new)
             g_sum = g_sum + g_new.square().sum().item()
             a_sum = a_sum + w_a.weight.detach().square().sum().item()
             b_sum = b_sum + b.square().sum().item()
             scale_value = float(s)
+            gamma_sum += absorption["gamma"]
+            absorption_error = max(
+                absorption_error,
+                absorption["absorption_relative_error"],
+            )
         n = len(aggregate_up)
         self._last_live_a_save_stats = {
             "mean_G_norm": (g_sum / n) ** 0.5,
             "mean_A_norm": (a_sum / n) ** 0.5,
             "mean_B_norm": (b_sum / n) ** 0.5,
             "scale": scale_value,
+            "mean_gamma": gamma_sum / n,
+            "absorption_relative_error": absorption_error,
+            "absorb_mode": self.live_a_absorb_mode,
         }
         if coordinate_diagnostics:
             self._last_live_a_coordinate_diagnostics = {
@@ -1708,6 +1789,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "shared_a": shared_a,
                 "history_groups": self.live_a_history_groups,
                 "coordinate_aligned": self.live_a_coordinate_align,
+                "absorb_mode": self.live_a_absorb_mode,
             },
             _join_path(filename, SA_STATE_FILENAME),
         )
@@ -1753,9 +1835,13 @@ class SharedALoRA_ViT_timm(nn.Module):
                             if idx < len(self.aggregate_up)
                             else torch.zeros_like(b)
                         )
-                        g_total = g_old + s * b / (
-                            torch.linalg.vector_norm(b) + 1e-8
+                        current_up, _ = absorb_live_a_current_projection(
+                            self.w_As[idx].weight.detach().cpu().float(),
+                            b,
+                            s,
+                            mode=self.live_a_absorb_mode,
                         )
+                        g_total = g_old + current_up
                         aggregate_total.append(g_total)
                 shared_a = [
                     w.weight.detach().cpu().float() for w in self.w_As
@@ -1772,6 +1858,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                         "merged_b": merged_b,
                         "aggregate_up": aggregate_total,
                         "task_id": current_task,
+                        "absorb_mode": self.live_a_absorb_mode,
                     },
                     _join_path(filename, SA_MERGED_FILENAME),
                 )

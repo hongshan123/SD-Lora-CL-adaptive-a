@@ -63,6 +63,9 @@ def get_backbone(args, pretrained=False):
                 live_a_coordinate_align=args.get(
                     "sa_live_a_coordinate_align", False
                 ),
+                live_a_absorb_mode=args.get(
+                    "sa_live_a_absorb_mode", "operator_preserving_absorb"
+                ),
                 resume=args.get("sa_resume", False),
             )
         else:

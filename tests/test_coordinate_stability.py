@@ -1,3 +1,4 @@
+import copy
 import math
 import sys
 from pathlib import Path
@@ -20,6 +21,7 @@ from backbone.sa_lora import (
     SA_MERGED_FILENAME,
     SA_STATE_FILENAME,
     SharedALoRA_ViT_timm,
+    absorb_live_a_current_projection,
 )
 from models.sa_sdlora import validate_coordinate_transport_config
 
@@ -85,6 +87,99 @@ def test_live_a_alignment_preserves_same_row_space_operator():
     assert diagnostics["after_relative_error"] < diagnostics[
         "before_relative_error"
     ]
+
+
+def test_operator_preserving_absorption_matches_current_operator():
+    torch.manual_seed(9)
+    rank, dim = 4, 12
+    shared_a = torch.randn(rank, dim, dtype=torch.float32)
+    current_b = torch.randn(dim, rank, dtype=torch.float32)
+    scale = torch.tensor(0.73, dtype=torch.float32)
+
+    absorbed_up, diagnostics = absorb_live_a_current_projection(
+        shared_a,
+        current_b,
+        scale,
+        mode="operator_preserving_absorb",
+    )
+    before = scale * (current_b @ shared_a)
+    after = absorbed_up @ (
+        shared_a / (torch.linalg.vector_norm(shared_a) + 1e-8)
+    )
+    relative_error = torch.linalg.vector_norm(after - before) / (
+        torch.linalg.vector_norm(before) + 1e-8
+    )
+
+    assert relative_error < 1e-6
+    assert diagnostics["absorption_relative_error"] < 1e-6
+
+
+def test_normalized_absorption_reproduces_legacy_rule():
+    torch.manual_seed(91)
+    shared_a = torch.randn(3, 8)
+    current_b = torch.randn(8, 3)
+    scale = torch.tensor(-0.42)
+
+    absorbed_up, diagnostics = absorb_live_a_current_projection(
+        shared_a,
+        current_b,
+        scale,
+        mode="normalized_absorb",
+    )
+    expected = scale * current_b / (
+        torch.linalg.vector_norm(current_b) + 1e-8
+    )
+
+    assert torch.allclose(absorbed_up, expected, atol=1e-7, rtol=1e-7)
+    assert diagnostics["absorption_relative_error"] > 1e-2
+
+
+def test_operator_preserving_absorption_survives_backbone_rebuild(tmp_path):
+    torch.manual_seed(10)
+    dim, rank = 8, 3
+    run = tmp_path / "absorption-rebuild"
+    pristine = _TinyViT(dim)
+    before_model = SharedALoRA_ViT_timm(
+        copy.deepcopy(pristine),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="live_a_aggregate_b",
+        live_a_absorb_mode="operator_preserving_absorb",
+    )
+    with torch.no_grad():
+        for weight in before_model.w_Bs:
+            weight.weight.copy_(torch.randn_like(weight.weight))
+        before_model.wrapped_param[0].param.fill_(0.83)
+    inputs = torch.randn(2, 5, dim)
+    with torch.no_grad():
+        before_output = before_model(inputs)
+    before_model.save_lora_parameters(str(run), task_id=0)
+
+    rebuilt_model = SharedALoRA_ViT_timm(
+        copy.deepcopy(pristine),
+        r=rank,
+        filepath=str(run),
+        cur_task_index=1,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="live_a_aggregate_b",
+        live_a_absorb_mode="operator_preserving_absorb",
+    )
+    with torch.no_grad():
+        rebuilt_output = rebuilt_model(inputs)
+    relative_error = torch.linalg.vector_norm(
+        rebuilt_output - before_output
+    ) / (torch.linalg.vector_norm(before_output) + 1e-8)
+    max_abs_diff = (rebuilt_output - before_output).abs().max()
+
+    assert relative_error < 1e-6, (
+        "pre-save/post-rebuild relative error={:.3e}, max_abs_diff={:.3e}".format(
+            float(relative_error), float(max_abs_diff)
+        )
+    )
 
 
 def test_residual_transport_recovers_low_rank_rotation_and_unit_norms():
@@ -203,9 +298,13 @@ def test_coordinate_aligned_live_a_state_roundtrip(tmp_path):
     )
     assert new_state["coordinate_aligned"] is True
     for index, new_aggregate in enumerate(new_state["aggregate_up"]):
-        current_term = current_scale * current_b[index] / (
-            torch.linalg.vector_norm(current_b[index]) + 1e-8
+        current_term, absorption = absorb_live_a_current_projection(
+            new_state["shared_a"][index],
+            current_b[index],
+            current_scale,
+            mode="operator_preserving_absorb",
         )
+        assert absorption["absorption_relative_error"] < 1e-6
         aligned_history = new_aggregate - current_term
         old_operator = normalized_effective_operator(
             old_state["aggregate_up"][index], old_state["shared_a"][index]
@@ -256,8 +355,10 @@ def test_backbone_factory_preserves_coordinate_alignment_flag(
     )
 
     assert backbone.live_a_coordinate_align is True
+    assert backbone.live_a_absorb_mode == "operator_preserving_absorb"
     backbone.save_lora_parameters(str(run), task_id=0)
     state = torch.load(
         run / SA_STATE_FILENAME, map_location="cpu", weights_only=True
     )
     assert state["coordinate_aligned"] is True
+    assert state["absorb_mode"] == "operator_preserving_absorb"

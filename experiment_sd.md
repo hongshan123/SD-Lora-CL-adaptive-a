@@ -810,3 +810,14 @@
 - 理论边界：不同于已有 generic affine/class-mean/JVP LRPT，本实验先在 LoRA 算子层消除可解释坐标变化，再只允许观测漂移子空间内的等距旋转，禁止自由缩放、偏置和持久映射网络。
 - 配置：`c100_coordinate_stable_seed1993_nccl.json`、`inr_coordinate_stable_seed1995_nccl.json`；完整协议与对应 Live-A + Dual-B 开发运行一致。
 - 预注册门槛与状态边界：见 `coordinate_stability_plan.md`。
+
+## 2026-08-25：CoordinateStable 核心组件消融启动
+
+- 实验标题：Effective-operator Coordinate Alignment 与 Gated Residual Orthogonal Prototype Transport 的 2x2 因果拆分。
+- 理论依据：Alignment 处理共享 A 更新导致的 LoRA 有效算子坐标变化；Transport 处理剩余特征空间与历史 prototype 的失配。两者分别位于参数空间和表征空间，必须独立开关以验证互补性。
+- 已有对照：A0 Live-A+Dual-B 与 A3 完整 CoordinateStable 的三个数据集三种子结果均已完成。本轮仅运行 A1（alignment-only）和 A2（transport-only）。
+- 实验矩阵：CUB-200、ImageNet-R、CIFAR-100 × A1/A2 × seeds 1/2/3，共18个严格同协议运行。
+- 训练协议：继承 `p5_cub_livea_dual_b_*`、`p3_inr_livea_dual_b_*`、`p3_c100_livea_dual_b_*`；SGD、batch32、4卡NCCL、确定性训练。除两个消融开关外不改超参数。
+- 执行入口：`run_coordinate_stable_core_ablations_queue.sh`；队列日志 `coordinate_stable_core_ablations_queue.log`；30分钟监控 `monitor_coordinate_stable_core_ablations.sh`。
+- 防污染：每次运行记录 commit/config SHA，完成后在 artifact 内保存 `effective_config.json`；已有完整结果自动跳过，发现不完整目录则停止且不覆盖。
+- 状态：待提交启动；结果完成后回填 Final、AAA、Forgetting、配对差值和 transport gate 诊断。

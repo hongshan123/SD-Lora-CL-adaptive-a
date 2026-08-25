@@ -982,3 +982,11 @@
 - 风险一：A 的行空间若真实变化，闭式 G 对齐只能最小二乘保持旧算子；必须记录对齐前后残差和条件数。
 - 风险二：当前任务的特征旋转未必迁移到旧类别；使用 rank-10 等距子空间旋转和固定 held-out gate 限制破坏，不进行 damping/rank 扫描。
 - P7 正占用 cuda6 的全部 0-3 号 GPU，代码在独立 worktree/分支修改，实验以 nohup 等待队列启动，避免污染 P7 的冻结提交。
+
+## 2026-08-25 CoordinateStable 消融启动前判断
+
+- cuda6 GPU 0-3 空闲，仓库 `codex/coordinate-stable-prototype` 干净；A0/A3 已完成，无需重复消耗算力。
+- CUB 完整方法相对 A0 的变化最大（Final +5.12、AAA +1.94、Forgetting -5.27），故先运行 CUB seed1 的 alignment-only 与 transport-only，约一小时内获得首个机制判断。
+- 不能根据 CUB seed1 中途结果终止其余预注册运行；完整结论使用相同 seeds 1-3 的配对均值。
+- 纯 prototype 头可由现有三模式日志离线得到：C100 AAA约持平、INR约-0.65、CUB约+1.47，Final均不变；该项不需要重训，也不与参数/transport消融混跑。
+- 风险：transport-only 若显著弱于完整方法，说明 effective-operator 对齐是历史坐标稳定的前置条件；若 alignment-only 已接近完整方法，则 transport 应降为辅助模块而非并列主贡献。

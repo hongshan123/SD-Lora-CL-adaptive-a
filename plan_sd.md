@@ -181,3 +181,12 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 当前冻结方法：无 HBD 的 **Live-A Aggregate-B + Dual-B**；严格 n=5 主结果（seed1-5）即最终主结果，不再重复训练。
 - 论文定位：固定 O(1) 状态的 Final-参数 Pareto（C100 AAA/Forgetting 代价如实报告）。
 - 后续：P4 消融矩阵（A 完整方法、B 纯 prototype、C 冻结/关闭 Live-A、D EXP-009 bank 同 prototype 口径、E 去 HBD=control、F 同轨迹头生命周期）+ **SD-LoRA rank1 + 同 Dual-B 头**同预算基线（≥3 预注册种子）；P5 任务长度 N=5/10/20、第三数据集（CUB-200 或同等标准 CIL）、强基线（InfLoRA/CL-LoRA 等官方实现，分栏报告）、效率实测与最小导出验证。
+
+## 11. CoordinateStable 核心因果消融（2026-08-25）
+
+- 冻结四格矩阵：A0=`Live-A+Dual-B`，A1=`A0+Coordinate Alignment`，A2=`A0+Prototype Transport`，A3=`A0+Alignment+Transport`。
+- A0 与 A3 已有 CIFAR-100、ImageNet-R、CUB-200 seeds 1/2/3 完整结果，本阶段只补 A1/A2，禁止重复训练 A0/A3。
+- 协议完全继承 P3/P5 冻结配置；仅切换 `sa_live_a_coordinate_align` 与 `sa_coordinate_stable_transport`。保持 rank10、Dual-B Schedule B、确定性训练、batch32、4-rank NCCL 和相同任务顺序。
+- 顺序：CUB seed1 A1/A2 快速定位最大收益来源，随后 CUB seeds2/3、INR seeds1-3、C100 seeds1-3，共18个运行。
+- 验收：报告每个模块相对 A0 的 Final/AAA/Forgetting，以及 A3 相对 `max(A1,A2)` 的互补收益；不以单 seed 选择模块或调参。
+- 推理头离线消融复用现有日志：纯 prototype 的 Final 与 A3 一致；AAA 为 C100 91.78、INR 83.06、CUB 87.77，不重复训练。

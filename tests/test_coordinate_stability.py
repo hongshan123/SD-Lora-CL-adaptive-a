@@ -2,6 +2,7 @@ import math
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 from torch.nn import functional as F
 from torch import nn
@@ -20,6 +21,7 @@ from backbone.sa_lora import (
     SA_STATE_FILENAME,
     SharedALoRA_ViT_timm,
 )
+from models.sa_sdlora import validate_coordinate_transport_config
 
 
 class _TinyAttention(nn.Module):
@@ -125,6 +127,29 @@ def test_residual_transport_validation_gate_returns_identity():
 
     assert not transport["enabled"]
     assert torch.allclose(moved[0], prototype[0], atol=1e-6)
+
+
+def test_coordinate_transport_config_allows_transport_without_alignment():
+    args = {
+        "sa_cumulative_merge": "live_a_aggregate_b",
+        "sa_live_a_coordinate_align": False,
+    }
+
+    validate_coordinate_transport_config(
+        args,
+        use_prototypes=True,
+        lrpt_enabled=False,
+        transport_rank=10,
+    )
+
+    args["sa_cumulative_merge"] = "gauge"
+    with pytest.raises(ValueError, match="live_a_aggregate_b"):
+        validate_coordinate_transport_config(
+            args,
+            use_prototypes=True,
+            lrpt_enabled=False,
+            transport_rank=10,
+        )
 
 
 def test_coordinate_aligned_live_a_state_roundtrip(tmp_path):

@@ -26,6 +26,14 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
+report_queue_exit() {
+  local status="$?"
+  if [ "$status" -ne 0 ]; then
+    echo "Core ablation queue FAIL: status=$status at $(date '+%F %T')"
+  fi
+}
+trap report_queue_exit EXIT
+
 make_config() {
   local base="$1" seed="$2" prefix="$3" filepath="$4"
   local coordinate_align="$5" prototype_transport="$6" output="$7"

@@ -990,3 +990,10 @@
 - 不能根据 CUB seed1 中途结果终止其余预注册运行；完整结论使用相同 seeds 1-3 的配对均值。
 - 纯 prototype 头可由现有三模式日志离线得到：C100 AAA约持平、INR约-0.65、CUB约+1.47，Final均不变；该项不需要重训，也不与参数/transport消融混跑。
 - 风险：transport-only 若显著弱于完整方法，说明 effective-operator 对齐是历史坐标稳定的前置条件；若 alignment-only 已接近完整方法，则 transport 应降为辅助模块而非并列主贡献。
+
+## 2026-08-25 CoordinateStable 消融首次队列中止与修复
+
+- A1 CUB seed1（alignment-only）正常完成；A2 在构造阶段被旧校验 `transport requires alignment=true` 拒绝，队列因 `set -e` 在 status=1 后停止。
+- 代码审计确认 transport 仅使用训练前后配对特征、已有 prototype 和重建部署态，不读取 alignment 的诊断或中间状态；该校验是设计耦合而非计算依赖，会使预注册的2x2消融不可识别。
+- 修复：允许 transport-only；仍保留 prototype、`live_a_aggregate_b`、rank和与generic LRPT互斥等真实约束。新增回归测试，且队列/监控现在会明确识别非零退出。
+- 恢复原则：保留已完成A1；失败A2移入忽略目录归档；重启后自动跳过A1并从A2继续，不覆盖任何有效结果。

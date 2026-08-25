@@ -56,6 +56,29 @@ P0_HASHES_FILENAME = "p0_hashes.json"
 COORDINATE_DIAGNOSTICS_FILENAME = "sa_coordinate_diagnostics.json"
 
 
+def validate_coordinate_transport_config(
+    args, use_prototypes, lrpt_enabled, transport_rank
+):
+    """Validate transport requirements without coupling it to alignment."""
+    if not use_prototypes:
+        raise ValueError(
+            "sa_coordinate_stable_transport requires "
+            "sa_use_prototype_classifier=true"
+        )
+    if args.get("sa_cumulative_merge") != "live_a_aggregate_b":
+        raise ValueError(
+            "sa_coordinate_stable_transport requires "
+            "sa_cumulative_merge=live_a_aggregate_b"
+        )
+    if lrpt_enabled:
+        raise ValueError(
+            "sa_coordinate_stable_transport and lrpt_enabled are "
+            "mutually exclusive"
+        )
+    if transport_rank <= 0:
+        raise ValueError("sa_coordinate_transport_rank must be positive")
+
+
 def collective_device():
     """Return the tensor device required by the current process group backend.
 
@@ -330,28 +353,12 @@ class Learner(SDLoraLearner):
         self._coordinate_pre_features = None
         self._coordinate_pre_targets = None
         if self._coordinate_stable_transport:
-            if not use_prototypes:
-                raise ValueError(
-                    "sa_coordinate_stable_transport requires "
-                    "sa_use_prototype_classifier=true"
-                )
-            if args.get("sa_cumulative_merge") != "live_a_aggregate_b":
-                raise ValueError(
-                    "sa_coordinate_stable_transport requires "
-                    "sa_cumulative_merge=live_a_aggregate_b"
-                )
-            if not args.get("sa_live_a_coordinate_align", False):
-                raise ValueError(
-                    "sa_coordinate_stable_transport requires "
-                    "sa_live_a_coordinate_align=true"
-                )
-            if self._lrpt_enabled:
-                raise ValueError(
-                    "sa_coordinate_stable_transport and lrpt_enabled are "
-                    "mutually exclusive"
-                )
-            if self._coordinate_transport_rank <= 0:
-                raise ValueError("sa_coordinate_transport_rank must be positive")
+            validate_coordinate_transport_config(
+                args,
+                use_prototypes=use_prototypes,
+                lrpt_enabled=self._lrpt_enabled,
+                transport_rank=self._coordinate_transport_rank,
+            )
         self._sa_operator_stability_lambda = float(
             args.get("sa_operator_stability_lambda", 0.0)
         )
@@ -1312,10 +1319,11 @@ class Learner(SDLoraLearner):
     def _apply_coordinate_transport_to_old_prototypes(self, data_manager):
         """Move historical prototypes with a gated orthogonal residual map.
 
-        The previous deployment state and the freshly operator-aligned state
-        are evaluated on identical current-task samples.  The fitted map is
-        applied once to old prototypes and then discarded; only scalar
-        diagnostics are persisted.
+        The previous and freshly rebuilt deployment states are evaluated on
+        identical current-task samples. Coordinate alignment is an independent
+        option so this transport can be measured as a standalone ablation. The
+        fitted map is applied once to old prototypes and then discarded; only
+        scalar diagnostics are persisted.
         """
         old_features = self._coordinate_pre_features
         old_targets = self._coordinate_pre_targets

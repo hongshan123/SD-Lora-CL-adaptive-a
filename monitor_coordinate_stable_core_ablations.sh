@@ -25,5 +25,9 @@ while true; do
     echo "Core ablation monitor detected FAIL"
     exit 1
   fi
+  if grep -Eq "END .* status=[1-9][0-9]*" "$QUEUE_LOG" 2>/dev/null; then
+    echo "Core ablation monitor detected non-zero run status"
+    exit 1
+  fi
   sleep "$INTERVAL_SECONDS"
 done

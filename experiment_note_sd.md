@@ -997,3 +997,13 @@
 - 代码审计确认 transport 仅使用训练前后配对特征、已有 prototype 和重建部署态，不读取 alignment 的诊断或中间状态；该校验是设计耦合而非计算依赖，会使预注册的2x2消融不可识别。
 - 修复：允许 transport-only；仍保留 prototype、`live_a_aggregate_b`、rank和与generic LRPT互斥等真实约束。新增回归测试，且队列/监控现在会明确识别非零退出。
 - 恢复原则：保留已完成A1；失败A2移入忽略目录归档；重启后自动跳过A1并从A2继续，不覆盖任何有效结果。
+
+## 2026-08-26 Bounded Norm-Calibrated Consolidation 实现前判断
+
+- 观察：operator-preserving 相对 normalized 在 C100/INR 的 Final 分别下降 0.70/0.44，但 CUB 提升 0.95；差异跨三个 seed 方向一致。
+- 机制证据：修改后 C100/INR 最新任务更强、历史类更弱；CUB 历史类更强、最新任务略弱。该方向与旧版范数增益在前两者小于 1、CUB 大于 2 完全一致。
+- 判断：不能恢复未声明的算子不一致；将其定义为显式 consolidation projection，并用上界 1 禁止放大。该规则由三个数据集共同决定，不能按数据集切换。
+- 风险：C100/INR 的收益可能依赖完整 legacy discontinuity，而非单纯增益；若新模式未恢复结果，停止阈值扫描，转向训练期历史稳定约束。
+- 下一步：单元测试、4卡 task0/1 冒烟后提交；再启动 9-run nohup 队列及 30 分钟监控。
+- 验证结果：`38 passed`；两任务四卡 smoke exit=0。Task1 Final 87.51，state rebuild、prototype transport、Dual-B、rank consistency、RNG/tensor hash 均通过；增益范围 Task0 `[0.4175,1.0000]`、Task1 `[0.6082,1.0000]`。
+- 判断：实现符合“只衰减、不放大”，可以进入预注册多种子实验；smoke 指标不用于方法选择。

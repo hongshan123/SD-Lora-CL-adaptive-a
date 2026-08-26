@@ -821,3 +821,15 @@
 - 执行入口：`run_coordinate_stable_core_ablations_queue.sh`；队列日志 `coordinate_stable_core_ablations_queue.log`；30分钟监控 `monitor_coordinate_stable_core_ablations.sh`。
 - 防污染：每次运行记录 commit/config SHA，完成后在 artifact 内保存 `effective_config.json`；已有完整结果自动跳过，发现不完整目录则停止且不覆盖。
 - 状态：待提交启动；结果完成后回填 Final、AAA、Forgetting、配对差值和 transport gate 诊断。
+
+## 2026-08-26：Bounded Norm-Calibrated Consolidation 多种子预注册
+
+- 实验标题：将旧版隐式范数缩放转化为有界、显式的任务边界校准机制。
+- 尝试方法：新增 `bounded_norm_calibrated_absorb`。令 `p_t=||A_t||_F||B_t||_F`、`alpha_t=min(1,1/p_t)`，持久化当前项为 `alpha_t s_t B_t A_t`。当 `p_t>1` 时复现旧版衰减；当 `p_t<1` 时使用 operator-preserving absorption，禁止放大。
+- 理论依据：旧版与修复版形成自然消融。C100/INR 的 `p_t` 平均为 1.164/1.207，旧版分别衰减约 13%/17%；CUB 的 `p_t` 为 0.433，旧版放大约 2.33 倍。三数据集符号相反，支持“衰减有利、放大有害”的有界 consolidation 假设。
+- 参数与状态：校准系数立即折叠入 `G`，不保存任务 bank 或额外标量，持久状态和推理成本不变。
+- 实验矩阵：CIFAR-100、ImageNet-R、CUB-200 × seeds 1/2/3，共 9 个运行；batch32、4-rank NCCL、原任务顺序及 Dual-B/transport 配置不变。
+- 对照：复用同 seed 的 `normalized_absorb` 和 `operator_preserving_absorb` 完整结果。禁止根据数据集选择不同模式或继续扫描阈值。
+- 运行：`run_coordinate_stable_normcap_multiseed_queue.sh`，GPU 0-3，nohup 串行；`monitor_coordinate_stable_normcap_multiseed.sh` 每 30 分钟记录一次。
+- 验证：单元测试 `38 passed`；C100 两任务四卡冒烟 exit=0，Task1 Final 87.51，alignment/transport/Dual-B/RNG hash 全部通过。Task0/1 平均 consolidation gain 为 0.8663/0.9129，分支最大值均为 1.0，无放大。
+- 状态：实现与冒烟完成，提交后启动正式 9-run 队列，结果待回填。

@@ -39,6 +39,9 @@ SA_MERGE_MODE_UNION_SVD = "union_svd"
 SA_MERGE_MODE_LIVE_A_AGGREGATE_B = "live_a_aggregate_b"
 SA_ABSORB_MODE_NORMALIZED = "normalized_absorb"
 SA_ABSORB_MODE_OPERATOR_PRESERVING = "operator_preserving_absorb"
+SA_ABSORB_MODE_BOUNDED_NORM_CALIBRATED = (
+    "bounded_norm_calibrated_absorb"
+)
 SA_STATE_FILENAME = "sa_state.pt"
 SA_MERGED_FILENAME = "sa_merged_lora.pt"
 
@@ -142,6 +145,7 @@ def absorb_live_a_current_projection(
     if mode not in (
         SA_ABSORB_MODE_NORMALIZED,
         SA_ABSORB_MODE_OPERATOR_PRESERVING,
+        SA_ABSORB_MODE_BOUNDED_NORM_CALIBRATED,
     ):
         raise ValueError("unsupported live-a absorption mode: {}".format(mode))
     if shared_a.ndim != 2 or current_b.ndim != 2:
@@ -157,9 +161,21 @@ def absorb_live_a_current_projection(
     norm_b = torch.linalg.vector_norm(current_b) + eps
     a_hat = a / norm_a
     b_hat = current_b / norm_b
+    norm_product = norm_a * norm_b
     gamma = s
     if mode == SA_ABSORB_MODE_OPERATOR_PRESERVING:
-        gamma = s * norm_a * norm_b
+        consolidation_gain = torch.ones_like(norm_product)
+        gamma = s * norm_product
+    elif mode == SA_ABSORB_MODE_BOUNDED_NORM_CALIBRATED:
+        # Turn the legacy task-boundary normalization into an explicit,
+        # bounded consolidation rule: attenuate oversized current operators
+        # but never amplify operators whose factor norms are below one.
+        consolidation_gain = torch.clamp(
+            torch.reciprocal(norm_product), max=1.0
+        )
+        gamma = s * norm_product * consolidation_gain
+    else:
+        consolidation_gain = torch.reciprocal(norm_product)
     absorbed_up = gamma * b_hat
 
     before_operator = s * (current_b @ a)
@@ -172,6 +188,8 @@ def absorb_live_a_current_projection(
         "norm_B": float(norm_b),
         "scaling": float(s),
         "gamma": float(gamma),
+        "norm_product": float(norm_product),
+        "consolidation_gain": float(consolidation_gain),
         "absorption_relative_error": float(relative_error),
     }
 
@@ -794,10 +812,12 @@ class SharedALoRA_ViT_timm(nn.Module):
         if live_a_absorb_mode not in (
             SA_ABSORB_MODE_NORMALIZED,
             SA_ABSORB_MODE_OPERATOR_PRESERVING,
+            SA_ABSORB_MODE_BOUNDED_NORM_CALIBRATED,
         ):
             raise ValueError(
-                "sa_live_a_absorb_mode must be normalized_absorb or "
-                "operator_preserving_absorb"
+                "sa_live_a_absorb_mode must be normalized_absorb, "
+                "operator_preserving_absorb, or "
+                "bounded_norm_calibrated_absorb"
             )
         self.live_a_absorb_mode = live_a_absorb_mode
         if (
@@ -1695,6 +1715,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         b_sum = 0.0
         scale_value = None
         gamma_sum = 0.0
+        norm_product_sum = 0.0
+        consolidation_gain_sum = 0.0
+        consolidation_gain_min = float("inf")
+        consolidation_gain_max = 0.0
         absorption_error = 0.0
         coordinate_diagnostics = []
         for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
@@ -1735,6 +1759,16 @@ class SharedALoRA_ViT_timm(nn.Module):
             b_sum = b_sum + b.square().sum().item()
             scale_value = float(s)
             gamma_sum += absorption["gamma"]
+            norm_product_sum += absorption["norm_product"]
+            consolidation_gain_sum += absorption["consolidation_gain"]
+            consolidation_gain_min = min(
+                consolidation_gain_min,
+                absorption["consolidation_gain"],
+            )
+            consolidation_gain_max = max(
+                consolidation_gain_max,
+                absorption["consolidation_gain"],
+            )
             absorption_error = max(
                 absorption_error,
                 absorption["absorption_relative_error"],
@@ -1746,6 +1780,10 @@ class SharedALoRA_ViT_timm(nn.Module):
             "mean_B_norm": (b_sum / n) ** 0.5,
             "scale": scale_value,
             "mean_gamma": gamma_sum / n,
+            "mean_norm_product": norm_product_sum / n,
+            "mean_consolidation_gain": consolidation_gain_sum / n,
+            "min_consolidation_gain": consolidation_gain_min,
+            "max_consolidation_gain": consolidation_gain_max,
             "absorption_relative_error": absorption_error,
             "absorb_mode": self.live_a_absorb_mode,
         }

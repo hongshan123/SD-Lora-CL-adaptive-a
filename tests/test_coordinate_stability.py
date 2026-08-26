@@ -134,6 +134,54 @@ def test_normalized_absorption_reproduces_legacy_rule():
     assert diagnostics["absorption_relative_error"] > 1e-2
 
 
+def test_bounded_norm_calibration_attenuates_oversized_operator():
+    shared_a = torch.eye(3) * 2.0
+    current_b = torch.eye(3)
+    scale = torch.tensor(0.7)
+
+    absorbed_up, diagnostics = absorb_live_a_current_projection(
+        shared_a,
+        current_b,
+        scale,
+        mode="bounded_norm_calibrated_absorb",
+    )
+    expected = scale * current_b / (
+        torch.linalg.vector_norm(current_b) + 1e-8
+    )
+    expected_gain = 1.0 / (
+        torch.linalg.vector_norm(shared_a)
+        * torch.linalg.vector_norm(current_b)
+    )
+
+    assert torch.allclose(absorbed_up, expected, atol=1e-7, rtol=1e-7)
+    assert diagnostics["consolidation_gain"] == pytest.approx(
+        float(expected_gain), rel=1e-6
+    )
+    assert diagnostics["consolidation_gain"] < 1.0
+
+
+def test_bounded_norm_calibration_never_amplifies_small_operator():
+    shared_a = torch.eye(3) * 0.2
+    current_b = torch.eye(3) * 0.2
+    scale = torch.tensor(0.7)
+
+    absorbed_up, diagnostics = absorb_live_a_current_projection(
+        shared_a,
+        current_b,
+        scale,
+        mode="bounded_norm_calibrated_absorb",
+    )
+    before = scale * (current_b @ shared_a)
+    after = absorbed_up @ (
+        shared_a / (torch.linalg.vector_norm(shared_a) + 1e-8)
+    )
+
+    assert diagnostics["norm_product"] < 1.0
+    assert diagnostics["consolidation_gain"] == pytest.approx(1.0)
+    assert torch.allclose(after, before, atol=1e-7, rtol=1e-6)
+    assert diagnostics["absorption_relative_error"] < 1e-6
+
+
 def test_operator_preserving_absorption_survives_backbone_rebuild(tmp_path):
     torch.manual_seed(10)
     dim, rank = 8, 3

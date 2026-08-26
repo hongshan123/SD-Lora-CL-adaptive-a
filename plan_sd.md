@@ -190,3 +190,12 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 顺序：CUB seed1 A1/A2 快速定位最大收益来源，随后 CUB seeds2/3、INR seeds1-3、C100 seeds1-3，共18个运行。
 - 验收：报告每个模块相对 A0 的 Final/AAA/Forgetting，以及 A3 相对 `max(A1,A2)` 的互补收益；不以单 seed 选择模块或调参。
 - 推理头离线消融复用现有日志：纯 prototype 的 Final 与 A3 一致；AAA 为 C100 91.78、INR 83.06、CUB 87.77，不重复训练。
+
+## 12. Bounded Norm-Calibrated Consolidation（2026-08-26）
+
+- 目标：把旧版 current-to-persistent 范数不一致产生的有效正则化转化为显式任务边界机制，同时避免 CUB 上的异常放大。
+- 规则：`alpha_t=min(1, 1/(||A_t||_F ||B_t||_F))`，吸收项为 `alpha_t s_t B_t A_t`；只允许衰减，不允许放大。
+- 状态：`alpha_t` 当场折叠进累计 `G`，不增加 per-task persistent state，仍保持 O(1) LoRA 状态。
+- 对照：已有 `normalized_absorb` 与 `operator_preserving_absorb` 三种子结果，不重复运行；新模式仅运行 C100/INR/CUB seeds 1/2/3。
+- 验收：C100/INR 是否恢复 normalized 版本的 Final/历史类保持，同时 CUB 不低于 operator-preserving 版本；AAA、Forgetting 和新旧类分解必须完整报告。
+- 论文边界：该模式是显式 consolidation projection，不宣称 task-boundary operator equivalence；必须报告 `consolidation_gain` 和边界相对变化。

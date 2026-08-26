@@ -519,6 +519,8 @@ class Learner(SDLoraLearner):
                     logging.info(
                         "[LiveA-SDLoRA] absorption task %d: mode=%s "
                         "norm_A=%.4e norm_B=%.4e scaling=%.4f gamma=%.4e "
+                        "norm_product=%.4e consolidation_gain=%.4f "
+                        "gain_range=[%.4f,%.4f] "
                         "absorption_relative_error=%.6e mean_G=%.4e",
                         self._cur_task,
                         stats["absorb_mode"],
@@ -526,6 +528,10 @@ class Learner(SDLoraLearner):
                         stats["mean_B_norm"],
                         stats["scale"],
                         stats["mean_gamma"],
+                        stats["mean_norm_product"],
+                        stats["mean_consolidation_gain"],
+                        stats["min_consolidation_gain"],
+                        stats["max_consolidation_gain"],
                         stats["absorption_relative_error"],
                         stats["mean_G_norm"],
                     )

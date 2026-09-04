@@ -1,11 +1,13 @@
 """Tests for Adaptive-A coordinate-plasticity gradient gating."""
 
 import sys
+import logging
 from pathlib import Path
 
 import pytest
 import torch
 from torch import nn
+from torch import optim
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -16,6 +18,12 @@ from backbone.sa_lora import (
     canonical_down_projection,
     low_rank_product_frobenius_norm,
 )
+from models.sdlora import Learner as SDLoraLearner
+from models.sa_sdlora import (
+    Learner as SharedALearner,
+    validate_adaptive_a_config,
+)
+from utils.inc_net import get_backbone
 
 
 class _TinyAttention(nn.Module):
@@ -289,3 +297,285 @@ def test_disabled_adaptive_a_hook_is_a_noop(tmp_path):
     assert model.apply_adaptive_a_gradients() is None
     assert torch.equal(model.w_As[0].weight.grad, raw)
     assert model.adaptive_a_diagnostics() is None
+
+
+class _TrainingNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = nn.Linear(2, 2)
+
+    def forward(self, inputs, ortho_loss=False):
+        logits = self.weight(inputs)
+        output = {"logits": logits, "features": logits}
+        if ortho_loss:
+            return output, torch.zeros((), device=inputs.device)
+        return output
+
+
+class _SingleBatchLoader:
+    sampler = None
+
+    def __init__(self):
+        self.batch = (
+            torch.tensor([0, 1]),
+            torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
+            torch.tensor([0, 1]),
+        )
+
+    def __iter__(self):
+        return iter([self.batch])
+
+
+class _LoopBackbone(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lora_vit = nn.Module()
+        self.lora_vit.patch_embed = nn.Identity()
+        self.lora_vit.pos_drop = nn.Identity()
+
+
+class _RecordingSGD(optim.SGD):
+    def __init__(self, params, events):
+        super().__init__(params, lr=0.1)
+        self.events = events
+
+    def step(self, closure=None):
+        self.events.append("step")
+        return super().step(closure)
+
+
+def _loop_learner(events):
+    learner = object.__new__(SDLoraLearner)
+    learner.args = {
+        "init_epoch": 1,
+        "epochs": 1,
+    }
+    learner._network = _TrainingNet()
+    learner._device = torch.device("cpu")
+    learner._cur_task = 0
+    learner._known_classes = 0
+    learner._is_main_process = lambda: False
+    learner._barrier = lambda: None
+    learner._sync_sum = lambda value: float(value)
+    learner._additional_training_losses = lambda *args, **kwargs: {}
+    learner._after_backward = lambda: events.append("hook")
+    learner._raw_network = lambda: _BackboneHolder(_LoopBackbone())
+    return learner
+
+
+@pytest.mark.parametrize("loop_name", ["_init_train", "_update_representation"])
+def test_training_loops_run_post_backward_hook_before_optimizer_step(loop_name):
+    """Removing the hook call between backward and step must fail this test."""
+    events = []
+    learner = _loop_learner(events)
+    optimizer = _RecordingSGD(learner._network.parameters(), events)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=1)
+    loader = _SingleBatchLoader()
+
+    getattr(learner, loop_name)(loader, loader, optimizer, scheduler)
+
+    assert events == ["hook", "step"]
+
+
+def test_base_post_backward_hook_leaves_gradients_unchanged():
+    """Changing the base hook from a no-op would alter regular SD-LoRA."""
+    learner = object.__new__(SDLoraLearner)
+    gradient = torch.tensor([1.0, -2.0])
+
+    assert learner._after_backward() is None
+    assert torch.equal(gradient, torch.tensor([1.0, -2.0]))
+
+
+class _AdaptiveBackbone(nn.Module):
+    def __init__(self, events=None):
+        super().__init__()
+        self.events = events if events is not None else []
+
+    def apply_adaptive_a_gradients(self):
+        self.events.append("adaptive")
+
+    def adaptive_a_diagnostics(self):
+        self.events.append("diagnostics")
+        return {
+            "observations": 2,
+            "mean_gate": 0.4,
+            "min_gate": 0.2,
+            "max_gate": 0.7,
+            "fraction_gate_below_0_1": 0.0,
+            "fraction_gate_above_0_9": 0.0,
+            "mean_current_impact": 1.5,
+            "mean_historical_impact": 3.0,
+            "mean_perpendicular_retention": 0.4,
+            "per_layer_mean_gate": [0.3, 0.5],
+        }
+
+
+class _BackboneHolder(nn.Module):
+    def __init__(self, backbone):
+        super().__init__()
+        self.backbone = backbone
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_shared_a_hook_reaches_backbone_through_local_network_wrappers(wrapped):
+    """Bypassing raw-network unwrapping would skip DataParallel backbones."""
+    events = []
+    learner = object.__new__(SharedALearner)
+    learner._sa_adaptive_a_enabled = True
+    holder = _BackboneHolder(_AdaptiveBackbone(events))
+    learner._network = nn.DataParallel(holder) if wrapped else holder
+
+    assert learner._after_backward() is None
+    assert events == ["adaptive"]
+
+
+@pytest.mark.parametrize(
+    "settings, message",
+    [
+        ({"sa_train_a_all_tasks": False}, "sa_train_a_all_tasks"),
+        ({"sa_cumulative_state": False}, "sa_cumulative_state"),
+        ({"sa_cumulative_merge": "gauge"}, "live_a_aggregate_b"),
+        ({"sa_live_a_coordinate_align": False}, "coordinate_align"),
+        ({"sa_adaptive_a_gate_floor": 1.1}, "gate_floor"),
+    ],
+)
+def test_learner_validates_enabled_adaptive_a_configuration(settings, message):
+    """Dropping learner validation would allow an unsupported training path."""
+    args = {
+        "sa_adaptive_a_enabled": True,
+        "sa_train_a_all_tasks": True,
+        "sa_cumulative_state": True,
+        "sa_cumulative_merge": "live_a_aggregate_b",
+        "sa_live_a_coordinate_align": True,
+    }
+    args.update(settings)
+
+    with pytest.raises(ValueError, match=message):
+        validate_adaptive_a_config(args)
+
+
+def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
+    """Omitting a setting must preserve disabled defaults in both constructors."""
+    defaults = validate_adaptive_a_config({})
+    assert defaults == {
+        "adaptive_a_enabled": False,
+        "adaptive_a_stability_weight": 1.0,
+        "adaptive_a_gate_floor": 0.05,
+        "adaptive_a_gate_momentum": 0.9,
+        "adaptive_a_eps": 1e-8,
+    }
+
+    monkeypatch.setattr(
+        "utils.inc_net.timm.create_model", lambda *args, **kwargs: _TinyViT(4)
+    )
+    backbone = get_backbone(
+        {
+            "backbone_type": "vit_base_patch16_224",
+            "model_name": "sa_sdlora",
+            "lora_rank": 2,
+            "increment": 2,
+            "filepath": str(tmp_path / "factory"),
+            "sa_train_a_all_tasks": True,
+            "sa_cumulative_state": True,
+            "sa_cumulative_merge": "live_a_aggregate_b",
+            "sa_live_a_coordinate_align": True,
+            "sa_adaptive_a_enabled": True,
+            "sa_adaptive_a_stability_weight": 2.5,
+            "sa_adaptive_a_gate_floor": 0.2,
+            "sa_adaptive_a_gate_momentum": 0.6,
+            "sa_adaptive_a_eps": 1e-6,
+        }
+    )
+
+    assert backbone.adaptive_a_enabled is True
+    assert backbone.adaptive_a_stability_weight == pytest.approx(2.5)
+    assert backbone.adaptive_a_gate_floor == pytest.approx(0.2)
+    assert backbone.adaptive_a_gate_momentum == pytest.approx(0.6)
+    assert backbone.adaptive_a_eps == pytest.approx(1e-6)
+
+
+def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
+    """Removing direct-constructor forwarding would silently disable the rule."""
+    captured = {}
+
+    class _CapturedBackbone:
+        out_dim = 768
+
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    learner = object.__new__(SharedALearner)
+    learner.args = {
+        "lora_rank": 2,
+        "increment": 2,
+        "filepath": "run",
+        "sa_adaptive_a_enabled": True,
+        "sa_adaptive_a_stability_weight": 2.5,
+        "sa_adaptive_a_gate_floor": 0.2,
+        "sa_adaptive_a_gate_momentum": 0.6,
+        "sa_adaptive_a_eps": 1e-6,
+        "sa_train_a_all_tasks": True,
+        "sa_cumulative_state": True,
+        "sa_cumulative_merge": "live_a_aggregate_b",
+        "sa_live_a_coordinate_align": True,
+    }
+    learner._cur_task = 3
+    monkeypatch.setattr(
+        "models.sa_sdlora.timm.create_model", lambda *args, **kwargs: nn.Identity()
+    )
+    monkeypatch.setattr("models.sa_sdlora.SharedALoRA_ViT_timm", _CapturedBackbone)
+
+    learner.update_network()
+
+    assert {
+        key: captured[key]
+        for key in (
+            "adaptive_a_enabled",
+            "adaptive_a_stability_weight",
+            "adaptive_a_gate_floor",
+            "adaptive_a_gate_momentum",
+            "adaptive_a_eps",
+        )
+    } == {
+        "adaptive_a_enabled": True,
+        "adaptive_a_stability_weight": 2.5,
+        "adaptive_a_gate_floor": 0.2,
+        "adaptive_a_gate_momentum": 0.6,
+        "adaptive_a_eps": 1e-6,
+    }
+
+
+def test_adaptive_a_diagnostics_log_immediately_after_training_boundary(
+    monkeypatch, caplog
+):
+    """Moving diagnostics before training completes would report stale gates."""
+    events = []
+    learner = object.__new__(SharedALearner)
+    learner.args = {"sa_use_prototype_classifier": False, "filepath": "run"}
+    learner._cur_task = 0
+    learner._dual_head = False
+    learner._hbd_enabled = False
+    learner._hbd_teacher = None
+    learner._hbd_teacher_handles = []
+    learner._coordinate_stable_transport = False
+    learner._lrpt_enabled = False
+    learner._coordinate_pre_features = None
+    learner._is_main_process = lambda: True
+    backbone = _AdaptiveBackbone(events)
+    backbone.cumulative_state = False
+    holder = _BackboneHolder(backbone)
+    backbone.save_merged_lora = lambda filepath: events.append("saved")
+    learner._raw_network = lambda: holder
+    learner._log_post_train_hash = lambda task_id: None
+    monkeypatch.setattr(
+        SDLoraLearner,
+        "incremental_train",
+        lambda self, data_manager: events.append("training_boundary"),
+    )
+
+    caplog.set_level(logging.INFO)
+    learner.incremental_train(type("DataManager", (), {"nb_tasks": 2})())
+
+    assert events[:2] == ["training_boundary", "diagnostics"]
+    assert "AdaptiveA-SDLoRA" in caplog.text
+    assert "per_layer_mean_gate=[0.3, 0.5]" in caplog.text

@@ -66,6 +66,15 @@ def get_backbone(args, pretrained=False):
                 live_a_absorb_mode=args.get(
                     "sa_live_a_absorb_mode", "operator_preserving_absorb"
                 ),
+                adaptive_a_enabled=args.get("sa_adaptive_a_enabled", False),
+                adaptive_a_stability_weight=args.get(
+                    "sa_adaptive_a_stability_weight", 1.0
+                ),
+                adaptive_a_gate_floor=args.get("sa_adaptive_a_gate_floor", 0.05),
+                adaptive_a_gate_momentum=args.get(
+                    "sa_adaptive_a_gate_momentum", 0.9
+                ),
+                adaptive_a_eps=args.get("sa_adaptive_a_eps", 1e-8),
                 resume=args.get("sa_resume", False),
             )
         else:

@@ -79,6 +79,50 @@ def validate_coordinate_transport_config(
         raise ValueError("sa_coordinate_transport_rank must be positive")
 
 
+def validate_adaptive_a_config(args):
+    """Validate Adaptive-A settings and return backbone constructor kwargs."""
+    settings = {
+        "adaptive_a_enabled": bool(args.get("sa_adaptive_a_enabled", False)),
+        "adaptive_a_stability_weight": float(
+            args.get("sa_adaptive_a_stability_weight", 1.0)
+        ),
+        "adaptive_a_gate_floor": float(args.get("sa_adaptive_a_gate_floor", 0.05)),
+        "adaptive_a_gate_momentum": float(
+            args.get("sa_adaptive_a_gate_momentum", 0.9)
+        ),
+        "adaptive_a_eps": float(args.get("sa_adaptive_a_eps", 1e-8)),
+    }
+    if settings["adaptive_a_stability_weight"] < 0:
+        raise ValueError("sa_adaptive_a_stability_weight must be non-negative")
+    if not 0.0 <= settings["adaptive_a_gate_floor"] <= 1.0:
+        raise ValueError("sa_adaptive_a_gate_floor must be in [0, 1]")
+    if not 0.0 <= settings["adaptive_a_gate_momentum"] < 1.0:
+        raise ValueError("sa_adaptive_a_gate_momentum must be in [0, 1)")
+    if settings["adaptive_a_eps"] <= 0:
+        raise ValueError("sa_adaptive_a_eps must be positive")
+    if not settings["adaptive_a_enabled"]:
+        return settings
+    if not args.get("sa_train_a_all_tasks", False):
+        raise ValueError(
+            "sa_adaptive_a_enabled requires sa_train_a_all_tasks=True"
+        )
+    if not args.get("sa_cumulative_state", False):
+        raise ValueError(
+            "sa_adaptive_a_enabled requires sa_cumulative_state=True"
+        )
+    if args.get("sa_cumulative_merge", "gauge") != "live_a_aggregate_b":
+        raise ValueError(
+            "sa_adaptive_a_enabled requires "
+            "sa_cumulative_merge=live_a_aggregate_b"
+        )
+    if not args.get("sa_live_a_coordinate_align", False):
+        raise ValueError(
+            "sa_adaptive_a_enabled requires "
+            "sa_live_a_coordinate_align=True"
+        )
+    return settings
+
+
 def collective_device():
     """Return the tensor device required by the current process group backend.
 
@@ -280,6 +324,9 @@ class Learner(SDLoraLearner):
 
     def __init__(self, args):
         super().__init__(args)
+        self._sa_adaptive_a_enabled = validate_adaptive_a_config(args)[
+            "adaptive_a_enabled"
+        ]
         use_cosine = args.get("sa_use_cosine_head", False)
         use_prototypes = args.get("sa_use_prototype_classifier", False)
         if use_cosine and use_prototypes:
@@ -407,6 +454,7 @@ class Learner(SDLoraLearner):
             "vit_base_patch16_224", pretrained=True, num_classes=0
         )
         cur_task_index = self._cur_task if task_index is None else task_index
+        adaptive_a_settings = validate_adaptive_a_config(self.args)
         model = SharedALoRA_ViT_timm(
             vit_model=model.eval(),
             r=self.args.get("lora_rank", 10),
@@ -430,10 +478,42 @@ class Learner(SDLoraLearner):
             live_a_absorb_mode=self.args.get(
                 "sa_live_a_absorb_mode", "operator_preserving_absorb"
             ),
+            **adaptive_a_settings,
             resume=self.args.get("sa_resume", False),
         )
         model.out_dim = 768
         return model
+
+    def _after_backward(self):
+        """Apply Adaptive-A only after DDP has synchronized shared-A grads."""
+        if not self._sa_adaptive_a_enabled:
+            return None
+        self._raw_network().backbone.apply_adaptive_a_gradients()
+        return None
+
+    def _log_adaptive_a_diagnostics(self):
+        """Log task-local Adaptive-A aggregates without serializing them."""
+        diagnostics = self._raw_network().backbone.adaptive_a_diagnostics()
+        if diagnostics is None:
+            return
+        logging.info(
+            "[AdaptiveA-SDLoRA] task %d: observations=%d mean_gate=%.6f "
+            "min_gate=%.6f max_gate=%.6f fraction_gate_below_0_1=%.6f "
+            "fraction_gate_above_0_9=%.6f mean_current_impact=%.6e "
+            "mean_historical_impact=%.6e mean_perpendicular_retention=%.6f "
+            "per_layer_mean_gate=%s",
+            self._cur_task,
+            diagnostics["observations"],
+            diagnostics["mean_gate"],
+            diagnostics["min_gate"],
+            diagnostics["max_gate"],
+            diagnostics["fraction_gate_below_0_1"],
+            diagnostics["fraction_gate_above_0_9"],
+            diagnostics["mean_current_impact"],
+            diagnostics["mean_historical_impact"],
+            diagnostics["mean_perpendicular_retention"],
+            diagnostics["per_layer_mean_gate"],
+        )
 
     def incremental_train(self, data_manager):
         self._dual_num_tasks = data_manager.nb_tasks
@@ -501,6 +581,8 @@ class Learner(SDLoraLearner):
                 self._coordinate_pre_features.shape[0],
             )
         super().incremental_train(data_manager)
+        if self._is_main_process():
+            self._log_adaptive_a_diagnostics()
         if self._hbd_teacher is not None:
             for handle in self._hbd_teacher_handles:
                 handle.remove()

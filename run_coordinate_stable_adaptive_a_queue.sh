@@ -91,13 +91,23 @@ export CUBLAS_WORKSPACE_CONFIG=:4096:8 TORCH_DETERMINISTIC=1
 
 run_one() {
   local config="$1"
-  local name
+  local name log_file status
   name="$(basename "$config" .json)"
-  echo "===== $(date '+%F %T') START $name GPUs=$GPU_IDS ====="
-  echo "commit=$(git rev-parse HEAD) config_sha=$(sha256sum "$config" | awk '{print $1}')"
-  torchrun --standalone --nproc_per_node="$NPROC" main.py \
-    --config="./$config" > "$PROJECT_ROOT/${name}.log" 2>&1
-  echo "===== $(date '+%F %T') END $name status=0 ====="
+  log_file="$PROJECT_ROOT/${name}.log"
+  echo "===== $(date '+%F %T') START $name GPUs=$GPU_IDS log=$log_file ====="
+  {
+    echo "===== $(date '+%F %T') START $name GPUs=$GPU_IDS ====="
+    echo "commit=$(git rev-parse HEAD) config_sha=$(sha256sum "$config" | awk '{print $1}')"
+    if torchrun --standalone --nproc_per_node="$NPROC" main.py \
+      --config="./$config"; then
+      status=0
+    else
+      status=$?
+    fi
+    echo "===== $(date '+%F %T') END $name status=$status ====="
+  } > "$log_file" 2>&1
+  echo "===== $(date '+%F %T') END $name status=$status ====="
+  return "$status"
 }
 
 for config in "${configs[@]}"; do

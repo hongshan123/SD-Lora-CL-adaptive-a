@@ -1,7 +1,9 @@
 """Protocol checks for the four-GPU Adaptive-A experiment queue."""
 
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
@@ -90,6 +92,62 @@ def test_adaptive_a_queue_is_portable_four_gpu_fail_fast_and_nohup_safe():
 
     for _, _, prefix in CONFIGS:
         assert f'"exps/{prefix}.json"' in source
+
+
+def test_adaptive_a_queue_runs_three_four_gpu_experiments_with_complete_logs(tmp_path):
+    project_root = tmp_path / "project"
+    bin_dir = tmp_path / "bin"
+    project_root.mkdir()
+    bin_dir.mkdir()
+    shutil.copy2(ROOT / "run_coordinate_stable_adaptive_a_queue.sh", project_root)
+
+    for _, _, prefix in CONFIGS:
+        config_dir = project_root / "exps"
+        config_dir.mkdir(exist_ok=True)
+        shutil.copy2(ROOT / "exps" / f"{prefix}.json", config_dir)
+
+    conda_sh = tmp_path / "conda.sh"
+    conda_sh.write_text("conda() { :; }\n")
+    calls_file = tmp_path / "torchrun-calls.jsonl"
+    (bin_dir / "pgrep").write_text("#!/usr/bin/env bash\nexit 1\n")
+    (bin_dir / "git").write_text("#!/usr/bin/env bash\necho deadbeef\n")
+    (bin_dir / "torchrun").write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*|CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES\" >> \"$TORCHRUN_CALLS\"\n"
+        "echo \"torchrun output: $*\"\n"
+    )
+    for command in bin_dir.iterdir():
+        command.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", "run_coordinate_stable_adaptive_a_queue.sh"],
+        cwd=project_root,
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "GPU_IDS": "0,1,2,3",
+            "CONDA_SH": str(conda_sh),
+            "TORCHRUN_CALLS": str(calls_file),
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    calls = calls_file.read_text().splitlines()
+    assert [call.split("--config=./")[1].split("|")[0] for call in calls] == [
+        f"exps/{prefix}.json" for _, _, prefix in CONFIGS
+    ]
+    assert all("--nproc_per_node=4" in call for call in calls)
+    assert all("CUDA_VISIBLE_DEVICES=0,1,2,3" in call for call in calls)
+    assert "ADAPTIVE-A QUEUE DONE" in result.stdout
+
+    for _, _, prefix in CONFIGS:
+        log = (project_root / f"{prefix}.log").read_text()
+        assert f"START {prefix} GPUs=0,1,2,3" in log
+        assert "commit=deadbeef config_sha=" in log
+        assert "torchrun output:" in log
+        assert f"END {prefix} status=0" in log
+        assert not (project_root / prefix.upper()).exists()
 
 
 @pytest.mark.parametrize("gpu_ids", ("0,1,2", "0,1,2,3,4"))

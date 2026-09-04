@@ -289,6 +289,139 @@ def canonical_down_projection(shared_a: Tensor) -> tuple[Tensor, Tensor]:
     return q.t().to(shared_a.dtype), r.to(shared_a.dtype)
 
 
+def low_rank_product_frobenius_norm(
+    up: Tensor, down: Tensor, eps: float = 1e-8
+) -> Tensor:
+    """Return ``||up @ down||_F`` without forming the dense product."""
+    if up.ndim != 2 or down.ndim != 2:
+        raise ValueError("up and down must be matrices")
+    if up.shape[1] != down.shape[0]:
+        raise ValueError("up and down inner dimensions must match")
+    if eps <= 0:
+        raise ValueError("eps must be positive")
+    up_gram = up.t() @ up
+    down_gram = down @ down.t()
+    squared_norm = torch.sum(up_gram * down_gram)
+    return torch.sqrt(torch.clamp_min(squared_norm, 0.0))
+
+
+def adaptive_a_layer_gradient(
+    *,
+    gradient_q: Tensor,
+    gradient_v: Tensor,
+    shared_a_q: Tensor,
+    shared_a_v: Tensor,
+    current_up_q: Tensor,
+    current_up_v: Tensor,
+    historical_up_q: Tensor | None,
+    historical_up_v: Tensor | None,
+    scale: Tensor,
+    stability_weight: float,
+    gate_floor: float,
+    momentum: float,
+    eps: float = 1e-8,
+    previous_gate: Tensor | float | None = None,
+) -> dict[str, Tensor]:
+    """Gate one Q/V layer's coordinate-changing shared-A gradients."""
+    if not 0.0 <= gate_floor <= 1.0:
+        raise ValueError("gate_floor must be in [0, 1]")
+    if not 0.0 <= momentum < 1.0:
+        raise ValueError("momentum must be in [0, 1)")
+    if stability_weight < 0:
+        raise ValueError("stability_weight must be non-negative")
+    if eps <= 0:
+        raise ValueError("eps must be positive")
+    if scale.numel() != 1:
+        raise ValueError("scale must be scalar")
+    if (historical_up_q is None) != (historical_up_v is None):
+        raise ValueError("historical Q and V projections must be supplied together")
+
+    def _decompose(gradient, shared_a):
+        q_t, _ = canonical_down_projection(shared_a.detach())
+        q_t = q_t.to(device=gradient.device, dtype=gradient.dtype)
+        parallel = (gradient @ q_t.t()) @ q_t
+        return parallel, gradient - parallel
+
+    parallel_q, perpendicular_q = _decompose(gradient_q, shared_a_q)
+    parallel_v, perpendicular_v = _decompose(gradient_v, shared_a_v)
+    zero_perpendicular = bool(
+        torch.linalg.vector_norm(perpendicular_q).detach() <= eps
+        and torch.linalg.vector_norm(perpendicular_v).detach() <= eps
+    )
+    has_history = historical_up_q is not None
+    one = gradient_q.new_ones(())
+    if not has_history or zero_perpendicular:
+        return {
+            "gradient_q": gradient_q,
+            "gradient_v": gradient_v,
+            "parallel_q_gradient": parallel_q,
+            "parallel_v_gradient": parallel_v,
+            "perpendicular_q_gradient": perpendicular_q,
+            "perpendicular_v_gradient": perpendicular_v,
+            "current_impact": gradient_q.new_zeros(()),
+            "historical_impact": gradient_q.new_zeros(()),
+            "raw_gate": one,
+            "gate": one,
+            "perpendicular_retention": one,
+        }
+
+    scalar_scale = scale.detach().to(
+        device=gradient_q.device, dtype=gradient_q.dtype
+    ).reshape(())
+    current_q = scalar_scale * current_up_q.to(
+        device=gradient_q.device, dtype=gradient_q.dtype
+    )
+    current_v = scalar_scale * current_up_v.to(
+        device=gradient_v.device, dtype=gradient_v.dtype
+    )
+    historical_q = historical_up_q.to(
+        device=gradient_q.device, dtype=gradient_q.dtype
+    ) / (torch.linalg.vector_norm(shared_a_q.detach()) + eps)
+    historical_v = historical_up_v.to(
+        device=gradient_v.device, dtype=gradient_v.dtype
+    ) / (torch.linalg.vector_norm(shared_a_v.detach()) + eps)
+    current_impact = torch.sqrt(
+        low_rank_product_frobenius_norm(current_q, perpendicular_q, eps).square()
+        + low_rank_product_frobenius_norm(current_v, perpendicular_v, eps).square()
+    )
+    historical_impact = torch.sqrt(
+        low_rank_product_frobenius_norm(
+            historical_q, perpendicular_q, eps
+        ).square()
+        + low_rank_product_frobenius_norm(
+            historical_v, perpendicular_v, eps
+        ).square()
+    )
+    raw_gate = torch.clamp(
+        current_impact
+        / (current_impact + stability_weight * historical_impact + eps),
+        min=gate_floor,
+        max=1.0,
+    )
+    if previous_gate is None:
+        gate = raw_gate
+    else:
+        previous_gate = torch.as_tensor(
+            previous_gate, device=raw_gate.device, dtype=raw_gate.dtype
+        )
+        gate = momentum * previous_gate + (
+            1.0 - momentum
+        ) * raw_gate
+    return {
+        "gradient_q": parallel_q + gate * perpendicular_q,
+        "gradient_v": parallel_v + gate * perpendicular_v,
+        "parallel_q_gradient": parallel_q,
+        "parallel_v_gradient": parallel_v,
+        "perpendicular_q_gradient": perpendicular_q,
+        "perpendicular_v_gradient": perpendicular_v,
+        "current_impact": current_impact,
+        "historical_impact": historical_impact,
+        "raw_gate": raw_gate,
+        "gate": gate,
+        "perpendicular_retention": gate,
+    }
+
+
 def canonicalize_effective_up_projection(
     up_raw: Tensor, triangular_r: Tensor
 ) -> Tensor:
@@ -772,6 +905,11 @@ class SharedALoRA_ViT_timm(nn.Module):
         live_a_history_groups=1,
         live_a_coordinate_align=False,
         live_a_absorb_mode=SA_ABSORB_MODE_OPERATOR_PRESERVING,
+        adaptive_a_enabled=False,
+        adaptive_a_stability_weight=1.0,
+        adaptive_a_gate_floor=0.05,
+        adaptive_a_gate_momentum=0.9,
+        adaptive_a_eps=1e-8,
         resume=False,
     ):
         super().__init__()
@@ -820,6 +958,40 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "bounded_norm_calibrated_absorb"
             )
         self.live_a_absorb_mode = live_a_absorb_mode
+        self.adaptive_a_enabled = bool(adaptive_a_enabled)
+        self.adaptive_a_stability_weight = float(adaptive_a_stability_weight)
+        self.adaptive_a_gate_floor = float(adaptive_a_gate_floor)
+        self.adaptive_a_gate_momentum = float(adaptive_a_gate_momentum)
+        self.adaptive_a_eps = float(adaptive_a_eps)
+        if self.adaptive_a_stability_weight < 0:
+            raise ValueError("sa_adaptive_a_stability_weight must be non-negative")
+        if not 0.0 <= self.adaptive_a_gate_floor <= 1.0:
+            raise ValueError("sa_adaptive_a_gate_floor must be in [0, 1]")
+        if not 0.0 <= self.adaptive_a_gate_momentum < 1.0:
+            raise ValueError("sa_adaptive_a_gate_momentum must be in [0, 1)")
+        if self.adaptive_a_eps <= 0:
+            raise ValueError("sa_adaptive_a_eps must be positive")
+        if self.adaptive_a_enabled and not train_a_all_tasks:
+            raise ValueError(
+                "sa_adaptive_a_enabled requires sa_train_a_all_tasks=True"
+            )
+        if self.adaptive_a_enabled and not cumulative_state:
+            raise ValueError(
+                "sa_adaptive_a_enabled requires sa_cumulative_state=True"
+            )
+        if (
+            self.adaptive_a_enabled
+            and cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+        ):
+            raise ValueError(
+                "sa_adaptive_a_enabled requires "
+                "sa_cumulative_merge=live_a_aggregate_b"
+            )
+        if self.adaptive_a_enabled and not live_a_coordinate_align:
+            raise ValueError(
+                "sa_adaptive_a_enabled requires "
+                "sa_live_a_coordinate_align=True"
+            )
         if (
             self.live_a_coordinate_align
             and cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B
@@ -1054,6 +1226,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._last_live_a_save_stats = None
         # HBD teacher lifecycle (plain attributes; never enter state_dict).
         self._hbd_capture_list = None
+        # These values are deliberately task-local and are not buffers or
+        # modules, so deployment state remains the existing (A, G) artifact.
+        self._adaptive_a_gate_ema = {}
+        self._adaptive_a_observations = []
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -1366,6 +1542,99 @@ class SharedALoRA_ViT_timm(nn.Module):
         return self._compute_gauge_diagnostics_between(
             self.cumulative_up, self.canonical_down, q_t_list
         )
+
+    def apply_adaptive_a_gradients(self) -> dict | None:
+        """Apply the synchronized Adaptive-A gate to current shared-A grads."""
+        if not self.adaptive_a_enabled:
+            return None
+        layer_gradients = []
+        for block in self.lora_vit.blocks:
+            wrapper = block.attn.qkv
+            if not isinstance(wrapper, _LiveAAggregateQKV):
+                continue
+            gradient_q = wrapper.a_q.weight.grad
+            gradient_v = wrapper.a_v.weight.grad
+            if gradient_q is None or gradient_v is None:
+                continue
+            has_history = self.task_id > 0
+            result = adaptive_a_layer_gradient(
+                gradient_q=gradient_q,
+                gradient_v=gradient_v,
+                shared_a_q=wrapper.a_q.weight,
+                shared_a_v=wrapper.a_v.weight,
+                current_up_q=wrapper.b_q.weight,
+                current_up_v=wrapper.b_v.weight,
+                historical_up_q=(wrapper.aggregate_q if has_history else None),
+                historical_up_v=(wrapper.aggregate_v if has_history else None),
+                scale=self.wrapped_param[0].param,
+                stability_weight=self.adaptive_a_stability_weight,
+                gate_floor=self.adaptive_a_gate_floor,
+                momentum=self.adaptive_a_gate_momentum,
+                eps=self.adaptive_a_eps,
+                previous_gate=self._adaptive_a_gate_ema.get(
+                    wrapper.layer_index
+                ),
+            )
+            with torch.no_grad():
+                if has_history:
+                    gradient_q.copy_(result["gradient_q"])
+                    gradient_v.copy_(result["gradient_v"])
+            gate = float(result["gate"].detach())
+            self._adaptive_a_gate_ema[wrapper.layer_index] = gate
+            self._adaptive_a_observations.append(
+                {
+                    "layer": wrapper.layer_index,
+                    "gate": gate,
+                    "current_impact": float(result["current_impact"].detach()),
+                    "historical_impact": float(
+                        result["historical_impact"].detach()
+                    ),
+                    "perpendicular_retention": float(
+                        result["perpendicular_retention"].detach()
+                    ),
+                }
+            )
+            layer_gradients.append(result)
+        diagnostics = self.adaptive_a_diagnostics()
+        if diagnostics is None:
+            return None
+        return {**diagnostics, "layer_gradients": layer_gradients}
+
+    def adaptive_a_diagnostics(self) -> dict | None:
+        """Return aggregate task-local Adaptive-A gate diagnostics."""
+        if not self.adaptive_a_enabled or not self._adaptive_a_observations:
+            return None
+        observations = self._adaptive_a_observations
+        gates = [item["gate"] for item in observations]
+        per_layer = {}
+        for item in observations:
+            per_layer.setdefault(item["layer"], []).append(item["gate"])
+        return {
+            "observations": len(observations),
+            "mean_gate": sum(gates) / len(gates),
+            "min_gate": min(gates),
+            "max_gate": max(gates),
+            "fraction_gate_below_0_1": sum(gate < 0.1 for gate in gates)
+            / len(gates),
+            "fraction_gate_above_0_9": sum(gate > 0.9 for gate in gates)
+            / len(gates),
+            "mean_current_impact": sum(
+                item["current_impact"] for item in observations
+            )
+            / len(observations),
+            "mean_historical_impact": sum(
+                item["historical_impact"] for item in observations
+            )
+            / len(observations),
+            "mean_perpendicular_retention": sum(
+                item["perpendicular_retention"] for item in observations
+            )
+            / len(observations),
+            "per_layer_mean_gate": [
+                sum(per_layer[layer]) / len(per_layer[layer])
+                for layer in sorted(per_layer)
+            ],
+        }
 
     def live_a_gradient_diagnostics(self, x) -> dict | None:
         """First-batch Live-A training-path diagnostics.

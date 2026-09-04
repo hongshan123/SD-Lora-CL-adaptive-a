@@ -1230,6 +1230,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         # modules, so deployment state remains the existing (A, G) artifact.
         self._adaptive_a_gate_ema = {}
         self._adaptive_a_observations = []
+        self._adaptive_a_statistics_task_id = None
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -1547,6 +1548,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         """Apply the synchronized Adaptive-A gate to current shared-A grads."""
         if not self.adaptive_a_enabled:
             return None
+        if self._adaptive_a_statistics_task_id != self.task_id:
+            self._adaptive_a_gate_ema = {}
+            self._adaptive_a_observations = []
+            self._adaptive_a_statistics_task_id = self.task_id
         layer_gradients = []
         for block in self.lora_vit.blocks:
             wrapper = block.attn.qkv

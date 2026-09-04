@@ -234,6 +234,39 @@ def test_adaptive_model_reports_task_local_diagnostics_without_state(tmp_path):
     assert not any("adaptive" in key for key in state)
 
 
+def test_adaptive_model_resets_statistics_when_task_id_changes(tmp_path):
+    model = _adaptive_model(tmp_path, adaptive_a_gate_floor=0.05)
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+    task_zero_q = torch.tensor(
+        [[0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+    )
+    task_zero_v = torch.tensor(
+        [[0.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 0.0]]
+    )
+    model.w_As[0].weight.grad = task_zero_q.clone()
+    model.w_As[1].weight.grad = task_zero_v.clone()
+
+    model.apply_adaptive_a_gradients()
+
+    assert torch.equal(model.w_As[0].weight.grad, task_zero_q)
+    assert torch.equal(model.w_As[1].weight.grad, task_zero_v)
+
+    model.task_id = 1
+    with torch.no_grad():
+        wrapper.aggregate_q.fill_(20.0)
+        wrapper.aggregate_v.fill_(20.0)
+    model.w_As[0].weight.grad = task_zero_q.clone()
+    model.w_As[1].weight.grad = task_zero_v.clone()
+
+    applied = model.apply_adaptive_a_gradients()
+
+    layer = applied["layer_gradients"][0]
+    diagnostics = model.adaptive_a_diagnostics()
+    assert layer["gate"].item() == pytest.approx(layer["raw_gate"].item())
+    assert diagnostics["observations"] == 1
+    assert diagnostics["mean_gate"] == pytest.approx(layer["gate"].item())
+
+
 @pytest.mark.parametrize(
     "settings, message",
     [

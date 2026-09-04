@@ -3,11 +3,14 @@
 import sys
 import logging
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 import torch
+import torch.distributed as dist
 from torch import nn
 from torch import optim
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -377,15 +380,6 @@ def test_training_loops_run_post_backward_hook_before_optimizer_step(loop_name):
     assert events == ["hook", "step"]
 
 
-def test_base_post_backward_hook_leaves_gradients_unchanged():
-    """Changing the base hook from a no-op would alter regular SD-LoRA."""
-    learner = object.__new__(SDLoraLearner)
-    gradient = torch.tensor([1.0, -2.0])
-
-    assert learner._after_backward() is None
-    assert torch.equal(gradient, torch.tensor([1.0, -2.0]))
-
-
 class _AdaptiveBackbone(nn.Module):
     def __init__(self, events=None):
         super().__init__()
@@ -415,6 +409,38 @@ class _BackboneHolder(nn.Module):
         super().__init__()
         self.backbone = backbone
 
+    def forward(self, inputs):
+        return self.backbone(inputs)
+
+
+class _GradientBearingAdaptiveBackbone(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = nn.Parameter(torch.tensor([[2.0, -1.0]]))
+        self.apply_calls = 0
+
+    def forward(self, inputs):
+        return inputs @ self.weight.t()
+
+    def apply_adaptive_a_gradients(self):
+        self.apply_calls += 1
+        self.weight.grad.zero_()
+
+
+def test_disabled_shared_a_hook_leaves_actual_backbone_gradient_unchanged():
+    """Disabled Adaptive-A must not invoke or mutate the learner backbone hook."""
+    learner = object.__new__(SharedALearner)
+    learner._sa_adaptive_a_enabled = False
+    backbone = _GradientBearingAdaptiveBackbone()
+    learner._network = _BackboneHolder(backbone)
+
+    learner._network(torch.tensor([[3.0, -2.0]])).sum().backward()
+    gradient_before_hook = backbone.weight.grad.detach().clone()
+
+    assert learner._after_backward() is None
+    assert backbone.apply_calls == 0
+    assert torch.equal(backbone.weight.grad, gradient_before_hook)
+
 
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_shared_a_hook_reaches_backbone_through_local_network_wrappers(wrapped):
@@ -427,6 +453,38 @@ def test_shared_a_hook_reaches_backbone_through_local_network_wrappers(wrapped):
 
     assert learner._after_backward() is None
     assert events == ["adaptive"]
+
+
+@pytest.mark.skipif(
+    not dist.is_available() or not dist.is_gloo_available(),
+    reason="torch.distributed Gloo is unavailable",
+)
+def test_shared_a_hook_unwraps_real_single_rank_gloo_ddp(tmp_path):
+    """The post-backward hook must reach the real module inside CPU DDP."""
+    init_file = tmp_path / "adaptive-a-ddp-{}.init".format(uuid4().hex)
+    dist.init_process_group(
+        backend="gloo",
+        init_method="file://{}".format(init_file),
+        rank=0,
+        world_size=1,
+    )
+    try:
+        learner = object.__new__(SharedALearner)
+        learner._sa_adaptive_a_enabled = True
+        backbone = _GradientBearingAdaptiveBackbone()
+        learner._network = DDP(_BackboneHolder(backbone))
+
+        learner._network(torch.tensor([[3.0, -2.0]])).sum().backward()
+        gradient_before_hook = backbone.weight.grad.detach().clone()
+
+        assert learner._raw_network() is learner._network.module
+        assert learner._after_backward() is None
+        assert backbone.apply_calls == 1
+        assert not torch.equal(backbone.weight.grad, gradient_before_hook)
+        assert torch.count_nonzero(backbone.weight.grad) == 0
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
 @pytest.mark.parametrize(

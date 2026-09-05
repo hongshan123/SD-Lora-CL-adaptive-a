@@ -90,4 +90,3 @@
 - [ ] Inspect `git diff --check`, `git status`, and the commit history.
 - [ ] Verify no `adaptive_normcap`, `adaptive_operator_budget`, or AOB state/config appears in the implementation branch.
 - [ ] Run a one-task smoke if a compatible GPU is free; otherwise provide the exact `nohup` launch command without occupying active experiments.
-

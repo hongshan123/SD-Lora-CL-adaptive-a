@@ -151,4 +151,3 @@ batch size, optimizer, learning rate, epochs, seed, task order, and DDP world
 size as the no-AOB baseline. Compare against fully trainable `A` and frozen
 `A`. Promote to seeds 1-3 only if the gate is non-degenerate and at least two
 datasets do not regress in both Final and AAA.
-

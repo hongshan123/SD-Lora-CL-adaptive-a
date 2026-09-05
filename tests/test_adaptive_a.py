@@ -1,8 +1,11 @@
 """Tests for Adaptive-A coordinate-plasticity gradient gating."""
 
+from datetime import timedelta
+import multiprocessing as mp
 import sys
 import logging
 from pathlib import Path
+import traceback
 from uuid import uuid4
 
 import pytest
@@ -153,6 +156,31 @@ def test_adaptive_layer_gradient_keeps_no_history_gradient_exactly():
     assert torch.equal(result["gradient_v"], gradient_v)
     assert result["raw_gate"].item() == 1.0
     assert result["gate"].item() == 1.0
+
+
+def test_adaptive_layer_gradient_emas_history_zero_perpendicular_drift():
+    """Removing the history EMA on gauge-only updates must fail this test."""
+    a_q = torch.tensor([[1.0, 0.0]])
+    a_v = torch.tensor([[1.0, 0.0]])
+    gradient_q = torch.tensor([[3.0, 0.0]])
+    gradient_v = torch.tensor([[-2.0, 0.0]])
+    up = torch.ones(2, 1)
+    history = torch.full((2, 1), 5.0)
+
+    first = _layer_gradient(
+        gradient_q, gradient_v, a_q, a_v, up, up, history, history,
+    )
+    result = _layer_gradient(
+        gradient_q, gradient_v, a_q, a_v, up, up, history, history,
+        momentum=0.9, previous_gate=0.2,
+    )
+
+    assert first["raw_gate"].item() == 1.0
+    assert first["gate"].item() == 1.0
+    assert result["raw_gate"].item() == 1.0
+    assert result["gate"].item() == pytest.approx(0.28)
+    assert torch.equal(result["gradient_q"], gradient_q)
+    assert torch.equal(result["gradient_v"], gradient_v)
 
 
 def test_adaptive_layer_gradient_applies_floor_and_ema_limits():
@@ -427,6 +455,71 @@ class _GradientBearingAdaptiveBackbone(nn.Module):
         self.weight.grad.zero_()
 
 
+def _two_rank_adaptive_a_ddp_worker(rank, init_file, result_queue):
+    """Exercise DDP reduction before the real learner post-backward hook."""
+    try:
+        dist.init_process_group(
+            backend="gloo",
+            init_method="file://{}".format(init_file),
+            rank=rank,
+            world_size=2,
+            timeout=timedelta(seconds=20),
+        )
+        torch.manual_seed(29)
+        model = _adaptive_model(
+            Path(init_file).parent / "rank-{}".format(rank),
+            adaptive_a_gate_momentum=0.9,
+        )
+        model.task_id = 1
+        wrapper = model.lora_vit.blocks[0].attn.qkv
+        with torch.no_grad():
+            wrapper.aggregate_q.fill_(3.0)
+            wrapper.aggregate_v.fill_(2.0)
+            wrapper.b_q.weight.fill_(1.0)
+            wrapper.b_v.weight.fill_(0.5)
+
+        learner = object.__new__(SharedALearner)
+        learner._sa_adaptive_a_enabled = True
+        learner._network = DDP(
+            _BackboneHolder(model),
+            broadcast_buffers=False,
+            find_unused_parameters=True,
+        )
+        optimizer = optim.SGD(learner._network.parameters(), lr=0.05)
+        inputs = torch.tensor(
+            [[[1.0 + rank, -2.0, 0.5, 3.0 - rank]]]
+        )
+        output_weight = torch.linspace(0.25, 1.5, 12).reshape(1, 1, 12)
+        local_loss = (learner._network(inputs) * output_weight).sum()
+        local_loss.backward()
+        raw_q = model.w_As[0].weight.grad.detach().clone()
+        raw_v = model.w_As[1].weight.grad.detach().clone()
+
+        assert learner._after_backward() is None
+        gated_q = model.w_As[0].weight.grad.detach().clone()
+        gated_v = model.w_As[1].weight.grad.detach().clone()
+        gate = model._adaptive_a_gate_ema[wrapper.layer_index]
+        optimizer.step()
+        result_queue.put(
+            {
+                "rank": rank,
+                "local_loss": float(local_loss.detach()),
+                "raw_q": raw_q.tolist(),
+                "raw_v": raw_v.tolist(),
+                "gated_q": gated_q.tolist(),
+                "gated_v": gated_v.tolist(),
+                "a_q": model.w_As[0].weight.detach().tolist(),
+                "a_v": model.w_As[1].weight.detach().tolist(),
+                "gate": gate,
+            }
+        )
+    except Exception:
+        result_queue.put({"rank": rank, "error": traceback.format_exc()})
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+
+
 def test_disabled_shared_a_hook_leaves_actual_backbone_gradient_unchanged():
     """Disabled Adaptive-A must not invoke or mutate the learner backbone hook."""
     learner = object.__new__(SharedALearner)
@@ -485,6 +578,44 @@ def test_shared_a_hook_unwraps_real_single_rank_gloo_ddp(tmp_path):
     finally:
         if dist.is_initialized():
             dist.destroy_process_group()
+
+
+@pytest.mark.skipif(
+    not dist.is_available() or not dist.is_gloo_available(),
+    reason="torch.distributed Gloo is unavailable",
+)
+def test_shared_a_hook_gates_synchronized_gradients_on_two_gloo_ranks(tmp_path):
+    """Different local losses must yield equal gated Shared-A updates on DDP."""
+    init_file = tmp_path / "adaptive-a-ddp-two-rank-{}.init".format(uuid4().hex)
+    context = mp.get_context("spawn")
+    result_queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_two_rank_adaptive_a_ddp_worker,
+            args=(rank, str(init_file), result_queue),
+        )
+        for rank in range(2)
+    ]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=30)
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5)
+    assert all(not process.is_alive() for process in processes)
+    assert all(process.exitcode == 0 for process in processes)
+
+    results = [result_queue.get(timeout=5) for _ in processes]
+    assert not [result["error"] for result in results if "error" in result]
+    results.sort(key=lambda result: result["rank"])
+    assert results[0]["local_loss"] != pytest.approx(results[1]["local_loss"])
+    for key in ("raw_q", "raw_v", "gated_q", "gated_v", "a_q", "a_v"):
+        assert torch.equal(
+            torch.tensor(results[0][key]), torch.tensor(results[1][key])
+        )
+    assert results[0]["gate"] == pytest.approx(results[1]["gate"])
 
 
 @pytest.mark.parametrize(

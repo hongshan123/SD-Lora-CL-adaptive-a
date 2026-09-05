@@ -350,7 +350,7 @@ def adaptive_a_layer_gradient(
     )
     has_history = historical_up_q is not None
     one = gradient_q.new_ones(())
-    if not has_history or zero_perpendicular:
+    if not has_history:
         return {
             "gradient_q": gradient_q,
             "gradient_v": gradient_v,
@@ -363,6 +363,30 @@ def adaptive_a_layer_gradient(
             "raw_gate": one,
             "gate": one,
             "perpendicular_retention": one,
+        }
+    if zero_perpendicular:
+        raw_gate = one
+        if previous_gate is None:
+            gate = raw_gate
+        else:
+            previous_gate = torch.as_tensor(
+                previous_gate, device=raw_gate.device, dtype=raw_gate.dtype
+            )
+            gate = momentum * previous_gate + (
+                1.0 - momentum
+            ) * raw_gate
+        return {
+            "gradient_q": gradient_q,
+            "gradient_v": gradient_v,
+            "parallel_q_gradient": parallel_q,
+            "parallel_v_gradient": parallel_v,
+            "perpendicular_q_gradient": perpendicular_q,
+            "perpendicular_v_gradient": perpendicular_v,
+            "current_impact": gradient_q.new_zeros(()),
+            "historical_impact": gradient_q.new_zeros(()),
+            "raw_gate": raw_gate,
+            "gate": gate,
+            "perpendicular_retention": gate,
         }
 
     scalar_scale = scale.detach().to(

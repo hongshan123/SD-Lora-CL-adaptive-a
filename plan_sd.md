@@ -199,3 +199,11 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 对照：已有 `normalized_absorb` 与 `operator_preserving_absorb` 三种子结果，不重复运行；新模式仅运行 C100/INR/CUB seeds 1/2/3。
 - 验收：C100/INR 是否恢复 normalized 版本的 Final/历史类保持，同时 CUB 不低于 operator-preserving 版本；AAA、Forgetting 和新旧类分解必须完整报告。
 - 论文边界：该模式是显式 consolidation projection，不宣称 task-boundary operator equivalence；必须报告 `consolidation_gain` 和边界相对变化。
+
+## 13. Adaptive-A 严格三路诊断（2026-09-06）
+
+- 目标：在同一代码和协议下比较 `Live-A`、Task0 后冻结 A、Adaptive-A，验证 Adaptive-A 是否同时保留 C100/CUB 稳定性与 INR 塑性。
+- 矩阵：CIFAR-100 seed1993、ImageNet-R seed1995、CUB-200 seed1，每个数据集三种 A 策略，共 9 个单 seed 运行。
+- 控制变量：CoordinateStable alignment、bounded NormCap、prototype transport、Dual-B、rank10、20 epoch、任务顺序均不变。
+- 资源协议：cuda6 GPU 2,3；每卡 batch64，双卡有效 batch128；全部由单个 nohup 串行队列运行，失败即停止。
+- 判定：先比较 Final/AAA/Forgetting，再检查 gate 与旧类下降、当前类增益的关系；不依据单数据集结果调整 gate 超参数。

@@ -833,3 +833,11 @@
 - 运行：`run_coordinate_stable_normcap_multiseed_queue.sh`，GPU 0-3，nohup 串行；`monitor_coordinate_stable_normcap_multiseed.sh` 每 30 分钟记录一次。
 - 验证：单元测试 `38 passed`；C100 两任务四卡冒烟 exit=0，Task1 Final 87.51，alignment/transport/Dual-B/RNG hash 全部通过。Task0/1 平均 consolidation gain 为 0.8663/0.9129，分支最大值均为 1.0，无放大。
 - 状态：实现与冒烟完成，提交后启动正式 9-run 队列，结果待回填。
+
+## 2026-09-06：Adaptive-A 三路同协议诊断
+
+- 实验标题：Live-A、冻结 A、Adaptive-A 的两卡严格配对。
+- 理论依据：旧消融显示冻结 A 在 C100 上更稳、在 INR 上损失约 0.5 Final；Adaptive-A 试图只抑制改变共享 A 行空间且历史影响较大的梯度分量。
+- 配置：三个数据集各使用既定开发 seed；SGD、20 epoch、rank10、CoordinateStable、bounded NormCap、transport、Dual-B 均保持不变。两卡每卡 batch64，等效 batch128。
+- 三组：`live_a=(train_a=true, adaptive=false)`；`frozen_a=(false,false)`；`adaptive_a=(true,true)`。
+- 执行：`run_adaptive_a_three_way_2gpu_queue.sh` 动态生成 9 份可审计 JSON，独立日志和输出目录；结果待回填。

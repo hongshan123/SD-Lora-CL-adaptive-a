@@ -1007,3 +1007,10 @@
 - 下一步：单元测试、4卡 task0/1 冒烟后提交；再启动 9-run nohup 队列及 30 分钟监控。
 - 验证结果：`38 passed`；两任务四卡 smoke exit=0。Task1 Final 87.51，state rebuild、prototype transport、Dual-B、rank consistency、RNG/tensor hash 均通过；增益范围 Task0 `[0.4175,1.0000]`、Task1 `[0.6082,1.0000]`。
 - 判断：实现符合“只衰减、不放大”，可以进入预注册多种子实验；smoke 指标不用于方法选择。
+
+## 2026-09-06 18:06 Adaptive-A 三路队列启动前判断
+
+- 观察：C100 Adaptive-A 单 seed 为 88.47/92.351/5.922，相对最近 no-Adaptive-A 对照仅 +0.13/+0.011/-0.448；INR 旧队列在 Task0 Epoch2 外部中断，CUB 未启动。
+- 判断：当前证据只能说明 C100 小幅正收益，不能判断跨数据集效果。需要同一提交下的 Live-A、冻结 A、Adaptive-A 三路配对。
+- 风险：新任务 B 从零初始化使 Adaptive-A 初始 current impact 为零；累计 G 又使后期 gate 偏小。队列完成后优先检查 gate 是否预测真实旧类下降，而不是直接扫描超参数。
+- 动作：新增双卡 batch64 的九运行 fail-fast 队列及回归测试；同步到 cuda6 独立目录后使用 GPU 2,3 nohup 启动。

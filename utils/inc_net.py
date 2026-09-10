@@ -81,6 +81,9 @@ def get_backbone(args, pretrained=False):
                 adaptive_a_risk_budget=args.get(
                     "sa_adaptive_a_risk_budget", 0.05
                 ),
+                adaptive_a_risk_budget_mode=args.get(
+                    "sa_adaptive_a_risk_budget_mode", "absolute"
+                ),
                 resume=args.get("sa_resume", False),
             )
         else:

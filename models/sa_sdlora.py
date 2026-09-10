@@ -97,6 +97,9 @@ def validate_adaptive_a_config(args):
         "adaptive_a_risk_budget": float(
             args.get("sa_adaptive_a_risk_budget", 0.05)
         ),
+        "adaptive_a_risk_budget_mode": str(
+            args.get("sa_adaptive_a_risk_budget_mode", "absolute")
+        ),
     }
     if settings["adaptive_a_stability_weight"] < 0:
         raise ValueError("sa_adaptive_a_stability_weight must be non-negative")
@@ -112,6 +115,10 @@ def validate_adaptive_a_config(args):
         )
     if settings["adaptive_a_risk_budget"] < 0:
         raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
+    if settings["adaptive_a_risk_budget_mode"] not in ("absolute", "relative"):
+        raise ValueError(
+            "sa_adaptive_a_risk_budget_mode must be absolute or relative"
+        )
     if not settings["adaptive_a_enabled"]:
         return settings
     if not args.get("sa_train_a_all_tasks", False):
@@ -564,13 +571,17 @@ class Learner(SDLoraLearner):
             logging.info(
                 "[RiskBudgeted-AdaptiveA] task %d: mode_counts=%s "
                 "mode_fractions=%s mean_signed_utility=%.6e "
-                "mean_operator_risk=%.6e risk_budget=%.6e",
+                "mean_operator_risk=%.6e configured_budget=%.6e "
+                "effective_budget=%.6e budget_mode=%s live_risk=%.6e",
                 self._cur_task,
                 diagnostics["mode_counts"],
                 diagnostics["mode_fractions"],
                 diagnostics["mean_selected_utility"],
                 diagnostics["mean_selected_risk"],
                 float(self.args.get("sa_adaptive_a_risk_budget", 0.05)),
+                diagnostics["effective_risk_budget"],
+                diagnostics["risk_budget_mode"],
+                diagnostics["live_risk_reference"],
             )
 
     def incremental_train(self, data_manager):

@@ -377,6 +377,26 @@ def weighted_operator_risk(
     return drift.square() / (reference.square() + eps)
 
 
+def effective_risk_budget(
+    layer_candidates: list[dict[str, dict[str, float]]],
+    configured_budget: float,
+    risk_budget_mode: str = "absolute",
+) -> float:
+    """Resolve an absolute budget or a fraction of the all-live risk."""
+    if configured_budget < 0:
+        raise ValueError("configured_budget must be non-negative")
+    if risk_budget_mode not in ("absolute", "relative"):
+        raise ValueError(
+            "risk_budget_mode must be absolute or relative"
+        )
+    if risk_budget_mode == "absolute":
+        return float(configured_budget)
+    live_risk = sum(
+        float(layer["live"]["risk"]) for layer in layer_candidates
+    )
+    return float(configured_budget) * live_risk
+
+
 def choose_risk_budgeted_modes(
     layer_candidates: list[dict[str, dict[str, float]]],
     risk_budget: float,
@@ -1104,6 +1124,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         adaptive_a_eps=1e-8,
         adaptive_a_strategy="impact_ratio",
         adaptive_a_risk_budget=0.05,
+        adaptive_a_risk_budget_mode="absolute",
         resume=False,
     ):
         super().__init__()
@@ -1159,12 +1180,17 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.adaptive_a_eps = float(adaptive_a_eps)
         self.adaptive_a_strategy = str(adaptive_a_strategy)
         self.adaptive_a_risk_budget = float(adaptive_a_risk_budget)
+        self.adaptive_a_risk_budget_mode = str(adaptive_a_risk_budget_mode)
         if self.adaptive_a_strategy not in ("impact_ratio", "risk_budgeted"):
             raise ValueError(
                 "sa_adaptive_a_strategy must be impact_ratio or risk_budgeted"
             )
         if self.adaptive_a_risk_budget < 0:
             raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
+        if self.adaptive_a_risk_budget_mode not in ("absolute", "relative"):
+            raise ValueError(
+                "sa_adaptive_a_risk_budget_mode must be absolute or relative"
+            )
         if self.adaptive_a_stability_weight < 0:
             raise ValueError("sa_adaptive_a_stability_weight must be non-negative")
         if not 0.0 <= self.adaptive_a_gate_floor <= 1.0:
@@ -1437,6 +1463,8 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._adaptive_a_statistics_task_id = None
         self._adaptive_a_last_modes = {}
         self._adaptive_a_previous_gradients = None
+        self._adaptive_a_last_effective_budget = None
+        self._adaptive_a_last_live_risk = None
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -1780,6 +1808,8 @@ class SharedALoRA_ViT_timm(nn.Module):
             self._adaptive_a_statistics_task_id = self.task_id
             self._adaptive_a_last_modes = {}
             self._adaptive_a_previous_gradients = None
+            self._adaptive_a_last_effective_budget = None
+            self._adaptive_a_last_live_risk = None
         if self.adaptive_a_strategy == "risk_budgeted":
             if control_gradients is None:
                 control_gradients = self._adaptive_a_previous_gradients
@@ -1949,7 +1979,20 @@ class SharedALoRA_ViT_timm(nn.Module):
             tensor_candidates.append(
                 (wrapper, q_candidates, v_candidates, momentum_q, momentum_v)
             )
-        budget = float("inf") if not has_history else self.adaptive_a_risk_budget
+        live_risk = sum(
+            layer["live"]["risk"] for layer in candidates_by_layer
+        )
+        budget = (
+            float("inf")
+            if not has_history
+            else effective_risk_budget(
+                candidates_by_layer,
+                self.adaptive_a_risk_budget,
+                self.adaptive_a_risk_budget_mode,
+            )
+        )
+        self._adaptive_a_last_effective_budget = budget
+        self._adaptive_a_last_live_risk = live_risk
         if not has_history:
             selection = {
                 "modes": ["live"] * len(candidates_by_layer),
@@ -2044,6 +2087,9 @@ class SharedALoRA_ViT_timm(nn.Module):
                         item["selected_risk"] for item in observations
                     )
                     / len(observations),
+                    "risk_budget_mode": self.adaptive_a_risk_budget_mode,
+                    "effective_risk_budget": self._adaptive_a_last_effective_budget,
+                    "live_risk_reference": self._adaptive_a_last_live_risk,
                 }
             )
         return diagnostics

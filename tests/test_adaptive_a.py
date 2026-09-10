@@ -24,6 +24,7 @@ from backbone.sa_lora import (
     canonical_down_projection,
     choose_risk_budgeted_modes,
     decompose_adaptive_a_gradient,
+    effective_risk_budget,
     low_rank_product_frobenius_norm,
     signed_gradient_utility,
     weighted_operator_risk,
@@ -474,6 +475,29 @@ def test_risk_budgeted_model_can_select_exact_frozen_gradient(tmp_path):
     assert result["mode_fractions"]["frozen"] == pytest.approx(1.0)
 
 
+def test_relative_risk_budget_scales_with_live_candidate_risk():
+    layers = [
+        {
+            "frozen": {"risk": 0.0},
+            "tangent": {"risk": 0.01},
+            "live": {"risk": 0.04},
+        },
+        {
+            "frozen": {"risk": 0.0},
+            "tangent": {"risk": 0.02},
+            "live": {"risk": 0.06},
+        },
+    ]
+
+    assert effective_risk_budget(layers, 0.25, "absolute") == pytest.approx(0.25)
+    assert effective_risk_budget(layers, 0.25, "relative") == pytest.approx(0.025)
+
+
+def test_relative_risk_budget_requires_supported_mode():
+    with pytest.raises(ValueError, match="risk_budget_mode"):
+        effective_risk_budget([], 0.5, "unknown")
+
+
 def test_risk_budgeted_model_uses_previous_minibatch_update_as_control(tmp_path):
     model = _adaptive_model(
         tmp_path,
@@ -864,6 +888,7 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
         "adaptive_a_eps": 1e-8,
         "adaptive_a_strategy": "impact_ratio",
         "adaptive_a_risk_budget": 0.05,
+        "adaptive_a_risk_budget_mode": "absolute",
     }
 
     monkeypatch.setattr(
@@ -887,6 +912,7 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
             "sa_adaptive_a_eps": 1e-6,
             "sa_adaptive_a_strategy": "risk_budgeted",
             "sa_adaptive_a_risk_budget": 0.025,
+            "sa_adaptive_a_risk_budget_mode": "relative",
         }
     )
 
@@ -897,6 +923,7 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
     assert backbone.adaptive_a_eps == pytest.approx(1e-6)
     assert backbone.adaptive_a_strategy == "risk_budgeted"
     assert backbone.adaptive_a_risk_budget == pytest.approx(0.025)
+    assert backbone.adaptive_a_risk_budget_mode == "relative"
 
 
 def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
@@ -921,6 +948,7 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
         "sa_adaptive_a_eps": 1e-6,
         "sa_adaptive_a_strategy": "risk_budgeted",
         "sa_adaptive_a_risk_budget": 0.025,
+        "sa_adaptive_a_risk_budget_mode": "relative",
         "sa_train_a_all_tasks": True,
         "sa_cumulative_state": True,
         "sa_cumulative_merge": "live_a_aggregate_b",
@@ -944,6 +972,7 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
             "adaptive_a_eps",
             "adaptive_a_strategy",
             "adaptive_a_risk_budget",
+            "adaptive_a_risk_budget_mode",
         )
     } == {
         "adaptive_a_enabled": True,
@@ -953,6 +982,7 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
         "adaptive_a_eps": 1e-6,
         "adaptive_a_strategy": "risk_budgeted",
         "adaptive_a_risk_budget": 0.025,
+        "adaptive_a_risk_budget_mode": "relative",
     }
 
 

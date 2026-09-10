@@ -11,6 +11,21 @@ import os
 import numpy as np
 
 
+def task_count_to_run(args, available_tasks):
+    """Return the task count for a run, optionally truncating calibration jobs."""
+    if available_tasks < 0:
+        raise ValueError("available_tasks must be non-negative")
+    max_tasks = args.get("max_tasks")
+    if max_tasks is None:
+        return available_tasks
+    if isinstance(max_tasks, bool):
+        raise ValueError("max_tasks must be a positive integer")
+    max_tasks = int(max_tasks)
+    if max_tasks <= 0:
+        raise ValueError("max_tasks must be a positive integer")
+    return min(max_tasks, available_tasks)
+
+
 def train(args):
     seed_list = copy.deepcopy(args["seed"])
     device = copy.deepcopy(args["device"])
@@ -76,7 +91,7 @@ def _train(args):
     cnn_curve, nme_curve = {"top1": [], "top5": []}, {"top1": [], "top5": []}
     cnn_matrix, nme_matrix = [], []
 
-    for task in range(data_manager.nb_tasks):
+    for task in range(task_count_to_run(args, data_manager.nb_tasks)):
         # task = 9
         if _is_main_process(args):
             print('task',task)

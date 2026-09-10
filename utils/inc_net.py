@@ -75,6 +75,12 @@ def get_backbone(args, pretrained=False):
                     "sa_adaptive_a_gate_momentum", 0.9
                 ),
                 adaptive_a_eps=args.get("sa_adaptive_a_eps", 1e-8),
+                adaptive_a_strategy=args.get(
+                    "sa_adaptive_a_strategy", "impact_ratio"
+                ),
+                adaptive_a_risk_budget=args.get(
+                    "sa_adaptive_a_risk_budget", 0.05
+                ),
                 resume=args.get("sa_resume", False),
             )
         else:

@@ -78,7 +78,7 @@ class Learner(BaseLearner):
         """Optional learner-specific loss terms for incremental tasks."""
         return {}
 
-    def _after_backward(self):
+    def _after_backward(self, inputs=None, targets=None, optimizer=None):
         """Optional post-backward gradient processing before the optimizer step."""
         return None
 
@@ -329,7 +329,7 @@ class Learner(BaseLearner):
                     )
                 optimizer.zero_grad()
                 loss.backward()
-                self._after_backward()
+                self._after_backward(inputs, targets, optimizer)
                 optimizer.step()
                 losses += loss.item()
                 num_batches += 1
@@ -446,7 +446,7 @@ class Learner(BaseLearner):
 
                 optimizer.zero_grad()
                 loss.backward()
-                self._after_backward()
+                self._after_backward(inputs, targets, optimizer)
                 optimizer.step()
                 losses += loss.item()
                 num_batches += 1

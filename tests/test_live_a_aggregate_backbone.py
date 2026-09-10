@@ -174,6 +174,7 @@ def test_live_a_multi_task_aggregate_matches_explicit_g(tmp_path):
             train_a_all_tasks=True,
             cumulative_state=True,
             cumulative_merge="live_a_aggregate_b",
+            live_a_absorb_mode="normalized_absorb",
         )
         with torch.no_grad():
             for w in model.w_Bs:
@@ -199,6 +200,7 @@ def test_live_a_multi_task_aggregate_matches_explicit_g(tmp_path):
         train_a_all_tasks=True,
         cumulative_state=True,
         cumulative_merge="live_a_aggregate_b",
+        live_a_absorb_mode="normalized_absorb",
     )
     # Historical-only forward (current B = 0) equals explicit G A / ||A||.
     x = torch.randn(4, 6, dim)

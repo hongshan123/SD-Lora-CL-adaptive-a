@@ -16,6 +16,7 @@ from collections.abc import Sequence
 
 import timm
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.vision_transformer import VisionTransformer as timm_ViT
@@ -303,6 +304,119 @@ def low_rank_product_frobenius_norm(
     down_gram = down @ down.t()
     squared_norm = torch.sum(up_gram * down_gram)
     return torch.sqrt(torch.clamp_min(squared_norm, 0.0))
+
+
+ADAPTIVE_A_MODES = ("frozen", "tangent", "live")
+
+
+def decompose_adaptive_a_gradient(
+    gradient: Tensor, shared_a: Tensor
+) -> dict[str, Tensor]:
+    """Return the exact Frozen/Tangent/Live shared-A candidates."""
+    if gradient.shape != shared_a.shape:
+        raise ValueError("gradient and shared_a must have the same shape")
+    q_t, _ = canonical_down_projection(shared_a.detach())
+    q_t = q_t.to(device=gradient.device, dtype=gradient.dtype)
+    tangent = (gradient @ q_t.t()) @ q_t
+    perpendicular = gradient - tangent
+    return {
+        "frozen": torch.zeros_like(gradient),
+        "tangent": tangent,
+        "live": gradient,
+        "perpendicular": perpendicular,
+    }
+
+
+def signed_gradient_utility(
+    candidate: Tensor, control_gradient: Tensor, eps: float = 1e-8
+) -> Tensor:
+    """Cosine agreement between a candidate update and held-out gradient."""
+    if candidate.shape != control_gradient.shape:
+        raise ValueError("candidate and control_gradient must have the same shape")
+    if eps <= 0:
+        raise ValueError("eps must be positive")
+    numerator = torch.sum(candidate * control_gradient)
+    denominator = (
+        torch.linalg.vector_norm(candidate)
+        * torch.linalg.vector_norm(control_gradient)
+    )
+    if bool(denominator.detach() <= eps):
+        return numerator.new_zeros(())
+    return numerator / (denominator + eps)
+
+
+def weighted_operator_risk(
+    historical_up: Tensor,
+    shared_a: Tensor,
+    delta_a: Tensor,
+    input_rms: Tensor,
+    eps: float = 1e-8,
+) -> Tensor:
+    """Exact one-step normalized historical-operator drift under a sketch."""
+    if shared_a.shape != delta_a.shape:
+        raise ValueError("shared_a and delta_a must have the same shape")
+    if historical_up.shape[1] != shared_a.shape[0]:
+        raise ValueError("historical_up and shared_a ranks must match")
+    if input_rms.ndim != 1 or input_rms.shape[0] != shared_a.shape[1]:
+        raise ValueError("input_rms must match the shared-A input dimension")
+    if eps <= 0:
+        raise ValueError("eps must be positive")
+    dtype = shared_a.dtype
+    device = shared_a.device
+    historical_up = historical_up.to(device=device, dtype=dtype)
+    input_rms = input_rms.to(device=device, dtype=dtype)
+    a_hat = shared_a / (torch.linalg.vector_norm(shared_a) + eps)
+    updated_a = shared_a - delta_a
+    updated_a_hat = updated_a / (torch.linalg.vector_norm(updated_a) + eps)
+    weighted_delta = (updated_a_hat - a_hat) * input_rms.unsqueeze(0)
+    weighted_reference = a_hat * input_rms.unsqueeze(0)
+    drift = low_rank_product_frobenius_norm(historical_up, weighted_delta, eps)
+    reference = low_rank_product_frobenius_norm(
+        historical_up, weighted_reference, eps
+    )
+    return drift.square() / (reference.square() + eps)
+
+
+def choose_risk_budgeted_modes(
+    layer_candidates: list[dict[str, dict[str, float]]],
+    risk_budget: float,
+    eps: float = 1e-12,
+) -> dict:
+    """Solve the small multiple-choice risk budget via Pareto pruning."""
+    if risk_budget < 0:
+        raise ValueError("risk_budget must be non-negative")
+    frontier = [(0.0, 0.0, ())]
+    for layer in layer_candidates:
+        missing = set(ADAPTIVE_A_MODES) - set(layer)
+        if missing:
+            raise ValueError("missing Adaptive-A modes: {}".format(sorted(missing)))
+        expanded = []
+        for total_risk, total_utility, modes in frontier:
+            for mode in ADAPTIVE_A_MODES:
+                risk = float(layer[mode]["risk"])
+                utility = float(layer[mode]["utility"])
+                if risk < 0:
+                    raise ValueError("candidate risk must be non-negative")
+                next_risk = total_risk + risk
+                if next_risk <= risk_budget + eps:
+                    expanded.append(
+                        (next_risk, total_utility + utility, modes + (mode,))
+                    )
+        expanded.sort(key=lambda item: (item[0], -item[1], item[2]))
+        frontier = []
+        best_utility = float("-inf")
+        for state in expanded:
+            if state[1] > best_utility + eps:
+                frontier.append(state)
+                best_utility = state[1]
+        if not frontier:
+            raise RuntimeError("no Adaptive-A candidate satisfies the risk budget")
+    selected = max(frontier, key=lambda item: (item[1], -item[0], item[2]))
+    return {
+        "modes": list(selected[2]),
+        "selected_risk": selected[0],
+        "selected_utility": selected[1],
+    }
 
 
 def adaptive_a_layer_gradient(
@@ -861,6 +975,9 @@ class _LiveAAggregateQKV(nn.Module):
         scaling_cur,
         layer_index,
         history_groups=1,
+        historical_input_rms=None,
+        historical_input_count=0.0,
+        capture_input_sketch=False,
     ):
         super().__init__()
         self.qkv = qkv
@@ -872,6 +989,23 @@ class _LiveAAggregateQKV(nn.Module):
         self.layer_index = layer_index
         self.dim = qkv.in_features
         self.history_groups = int(history_groups)
+        self.capture_input_sketch = bool(capture_input_sketch)
+        if historical_input_rms is None:
+            historical_input_rms = torch.ones(self.dim)
+        self.register_buffer(
+            "historical_input_rms",
+            historical_input_rms.detach().clone().float(),
+            persistent=False,
+        )
+        self.historical_input_count = float(historical_input_count)
+        self.register_buffer(
+            "task_input_square_sum", torch.zeros(self.dim), persistent=False
+        )
+        self.task_input_count = 0.0
+        self.register_buffer(
+            "pending_input_square_sum", torch.zeros(self.dim), persistent=False
+        )
+        self.pending_input_count = 0.0
         self.register_buffer(
             "aggregate_q", aggregate_q.clone(), persistent=False
         )
@@ -884,6 +1018,11 @@ class _LiveAAggregateQKV(nn.Module):
         return F.linear(F.linear(x, a_weight), aggregate / denom)
 
     def forward(self, x):
+        if self.training and self.capture_input_sketch:
+            with torch.no_grad():
+                flat = x.detach().float().reshape(-1, self.dim)
+                self.pending_input_square_sum.add_(flat.square().sum(dim=0))
+                self.pending_input_count += float(flat.shape[0])
         new_q = self._norm_live_a(x, self.a_q.weight, self.aggregate_q)
         new_v = self._norm_live_a(x, self.a_v.weight, self.aggregate_v)
         new_q = new_q + self.scaling_cur[0](self.b_q(self.a_q(x)))
@@ -892,6 +1031,35 @@ class _LiveAAggregateQKV(nn.Module):
         qkv[:, :, : self.dim] += new_q
         qkv[:, :, -self.dim :] += new_v
         return qkv
+
+    def consume_input_sketch(self):
+        """Synchronize one pending minibatch and add it to task statistics."""
+        if self.pending_input_count <= 0:
+            return
+        square_sum = self.pending_input_square_sum
+        count = square_sum.new_tensor(self.pending_input_count)
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            dist.all_reduce(square_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(count, op=dist.ReduceOp.SUM)
+        self.task_input_square_sum.add_(square_sum)
+        self.task_input_count += float(count)
+        square_sum.zero_()
+        self.pending_input_count = 0.0
+
+    def merged_input_sketch(self):
+        self.consume_input_sketch()
+        historical_sum = (
+            self.historical_input_rms.square() * self.historical_input_count
+        )
+        count = self.historical_input_count + self.task_input_count
+        if count <= 0:
+            return torch.ones_like(self.historical_input_rms), 0.0
+        rms = torch.sqrt(
+            torch.clamp_min(
+                (historical_sum + self.task_input_square_sum) / count, 0.0
+            )
+        )
+        return rms, count
 
     def historical_output(self, x):
         return (
@@ -934,6 +1102,8 @@ class SharedALoRA_ViT_timm(nn.Module):
         adaptive_a_gate_floor=0.05,
         adaptive_a_gate_momentum=0.9,
         adaptive_a_eps=1e-8,
+        adaptive_a_strategy="impact_ratio",
+        adaptive_a_risk_budget=0.05,
         resume=False,
     ):
         super().__init__()
@@ -987,6 +1157,14 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.adaptive_a_gate_floor = float(adaptive_a_gate_floor)
         self.adaptive_a_gate_momentum = float(adaptive_a_gate_momentum)
         self.adaptive_a_eps = float(adaptive_a_eps)
+        self.adaptive_a_strategy = str(adaptive_a_strategy)
+        self.adaptive_a_risk_budget = float(adaptive_a_risk_budget)
+        if self.adaptive_a_strategy not in ("impact_ratio", "risk_budgeted"):
+            raise ValueError(
+                "sa_adaptive_a_strategy must be impact_ratio or risk_budgeted"
+            )
+        if self.adaptive_a_risk_budget < 0:
+            raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
         if self.adaptive_a_stability_weight < 0:
             raise ValueError("sa_adaptive_a_stability_weight must be non-negative")
         if not 0.0 <= self.adaptive_a_gate_floor <= 1.0:
@@ -1138,6 +1316,8 @@ class SharedALoRA_ViT_timm(nn.Module):
             )
 
         shared_a = state.get("shared_a", [])
+        adaptive_a_input_rms = state.get("adaptive_a_input_rms", [])
+        adaptive_a_input_counts = state.get("adaptive_a_input_counts", [])
         if self.cumulative_state:
             expected_branches = 2 * len(self.lora_layer)
             if self.cumulative_merge == SA_MERGE_MODE_LIVE_A_AGGREGATE_B:
@@ -1255,6 +1435,8 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._adaptive_a_gate_ema = {}
         self._adaptive_a_observations = []
         self._adaptive_a_statistics_task_id = None
+        self._adaptive_a_last_modes = {}
+        self._adaptive_a_previous_gradients = None
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -1346,6 +1528,20 @@ class SharedALoRA_ViT_timm(nn.Module):
                         self.wrapped_param,
                         layer_index,
                         history_groups=self.live_a_history_groups,
+                        historical_input_rms=(
+                            adaptive_a_input_rms[offset // 2]
+                            if len(adaptive_a_input_rms) > offset // 2
+                            else None
+                        ),
+                        historical_input_count=(
+                            float(adaptive_a_input_counts[offset // 2])
+                            if len(adaptive_a_input_counts) > offset // 2
+                            else 0.0
+                        ),
+                        capture_input_sketch=(
+                            self.adaptive_a_enabled
+                            and self.adaptive_a_strategy == "risk_budgeted"
+                        ),
                     )
                 else:
                     if offset < len(self.cumulative_up):
@@ -1568,7 +1764,13 @@ class SharedALoRA_ViT_timm(nn.Module):
             self.cumulative_up, self.canonical_down, q_t_list
         )
 
-    def apply_adaptive_a_gradients(self) -> dict | None:
+    def apply_adaptive_a_gradients(
+        self,
+        control_gradients: list[Tensor | None] | None = None,
+        step_size: float = 1.0,
+        momentum_buffers: list[Tensor | None] | None = None,
+        momentum: float = 0.0,
+    ) -> dict | None:
         """Apply the synchronized Adaptive-A gate to current shared-A grads."""
         if not self.adaptive_a_enabled:
             return None
@@ -1576,6 +1778,17 @@ class SharedALoRA_ViT_timm(nn.Module):
             self._adaptive_a_gate_ema = {}
             self._adaptive_a_observations = []
             self._adaptive_a_statistics_task_id = self.task_id
+            self._adaptive_a_last_modes = {}
+            self._adaptive_a_previous_gradients = None
+        if self.adaptive_a_strategy == "risk_budgeted":
+            if control_gradients is None:
+                control_gradients = self._adaptive_a_previous_gradients
+            return self._apply_risk_budgeted_adaptive_a(
+                control_gradients,
+                step_size=step_size,
+                momentum_buffers=momentum_buffers,
+                momentum=momentum,
+            )
         layer_gradients = []
         for block in self.lora_vit.blocks:
             wrapper = block.attn.qkv
@@ -1629,6 +1842,152 @@ class SharedALoRA_ViT_timm(nn.Module):
             return None
         return {**diagnostics, "layer_gradients": layer_gradients}
 
+    def _apply_risk_budgeted_adaptive_a(
+        self, control_gradients, step_size, momentum_buffers, momentum
+    ):
+        """Select exact Frozen/Tangent/Live gradients under one global budget."""
+        if step_size < 0:
+            raise ValueError("step_size must be non-negative")
+        if not 0.0 <= momentum < 1.0:
+            raise ValueError("momentum must be in [0, 1)")
+        if momentum_buffers is not None and len(momentum_buffers) != len(self.w_As):
+            raise ValueError("momentum_buffers must match shared-A branches")
+        wrappers = [
+            block.attn.qkv
+            for block in self.lora_vit.blocks
+            if isinstance(block.attn.qkv, _LiveAAggregateQKV)
+        ]
+        if control_gradients is not None and len(control_gradients) != len(self.w_As):
+            raise ValueError("control_gradients must match shared-A branches")
+        candidates_by_layer = []
+        tensor_candidates = []
+        raw_gradients = []
+        has_history = self.task_id > 0
+        for wrapper_index, wrapper in enumerate(wrappers):
+            wrapper.consume_input_sketch()
+            gradient_q = wrapper.a_q.weight.grad
+            gradient_v = wrapper.a_v.weight.grad
+            if gradient_q is None or gradient_v is None:
+                continue
+            momentum_q = (
+                momentum_buffers[2 * wrapper_index]
+                if momentum_buffers is not None
+                else None
+            )
+            momentum_v = (
+                momentum_buffers[2 * wrapper_index + 1]
+                if momentum_buffers is not None
+                else None
+            )
+            proposed_q = gradient_q + (
+                momentum * momentum_q if momentum_q is not None else 0.0
+            )
+            proposed_v = gradient_v + (
+                momentum * momentum_v if momentum_v is not None else 0.0
+            )
+            raw_gradients.extend(
+                [proposed_q.detach().clone(), proposed_v.detach().clone()]
+            )
+            q_candidates = decompose_adaptive_a_gradient(
+                proposed_q, wrapper.a_q.weight
+            )
+            v_candidates = decompose_adaptive_a_gradient(
+                proposed_v, wrapper.a_v.weight
+            )
+            control_q = (
+                control_gradients[2 * wrapper_index]
+                if control_gradients is not None
+                else None
+            )
+            control_v = (
+                control_gradients[2 * wrapper_index + 1]
+                if control_gradients is not None
+                else None
+            )
+            layer = {}
+            input_rms = wrapper.historical_input_rms.to(
+                device=gradient_q.device, dtype=gradient_q.dtype
+            )
+            for mode in ADAPTIVE_A_MODES:
+                if not has_history:
+                    utility = 1.0 if mode == "live" else 0.0
+                    risk = 0.0
+                else:
+                    utility = 0.0
+                    if control_q is not None:
+                        utility += float(
+                            signed_gradient_utility(
+                                q_candidates[mode], control_q, self.adaptive_a_eps
+                            ).detach()
+                        )
+                    if control_v is not None:
+                        utility += float(
+                            signed_gradient_utility(
+                                v_candidates[mode], control_v, self.adaptive_a_eps
+                            ).detach()
+                        )
+                    risk = float(
+                        (
+                            weighted_operator_risk(
+                                wrapper.aggregate_q,
+                                wrapper.a_q.weight,
+                                step_size * q_candidates[mode],
+                                input_rms,
+                                self.adaptive_a_eps,
+                            )
+                            + weighted_operator_risk(
+                                wrapper.aggregate_v,
+                                wrapper.a_v.weight,
+                                step_size * v_candidates[mode],
+                                input_rms,
+                                self.adaptive_a_eps,
+                            )
+                        ).detach()
+                    )
+                layer[mode] = {"utility": utility, "risk": risk}
+            candidates_by_layer.append(layer)
+            tensor_candidates.append(
+                (wrapper, q_candidates, v_candidates, momentum_q, momentum_v)
+            )
+        budget = float("inf") if not has_history else self.adaptive_a_risk_budget
+        if not has_history:
+            selection = {
+                "modes": ["live"] * len(candidates_by_layer),
+                "selected_risk": 0.0,
+                "selected_utility": float(len(candidates_by_layer)),
+            }
+        else:
+            selection = choose_risk_budgeted_modes(candidates_by_layer, budget)
+        for mode, layer, tensors in zip(
+            selection["modes"], candidates_by_layer, tensor_candidates
+        ):
+            wrapper, q_candidates, v_candidates, momentum_q, momentum_v = tensors
+            with torch.no_grad():
+                q_gradient = q_candidates[mode]
+                v_gradient = v_candidates[mode]
+                if momentum_q is not None:
+                    q_gradient = q_gradient - momentum * momentum_q
+                if momentum_v is not None:
+                    v_gradient = v_gradient - momentum * momentum_v
+                wrapper.a_q.weight.grad.copy_(q_gradient)
+                wrapper.a_v.weight.grad.copy_(v_gradient)
+            self._adaptive_a_last_modes[wrapper.layer_index] = mode
+            self._adaptive_a_observations.append(
+                {
+                    "layer": wrapper.layer_index,
+                    "mode": mode,
+                    "gate": {"frozen": 0.0, "tangent": 0.5, "live": 1.0}[mode],
+                    "current_impact": layer[mode]["utility"],
+                    "historical_impact": layer[mode]["risk"],
+                    "perpendicular_retention": float(mode == "live"),
+                    "selected_utility": layer[mode]["utility"],
+                    "selected_risk": layer[mode]["risk"],
+                }
+            )
+        self._adaptive_a_previous_gradients = raw_gradients
+        diagnostics = self.adaptive_a_diagnostics()
+        return {**diagnostics, "selection": selection} if diagnostics else None
+
     def adaptive_a_diagnostics(self) -> dict | None:
         """Return aggregate task-local Adaptive-A gate diagnostics."""
         if not self.adaptive_a_enabled or not self._adaptive_a_observations:
@@ -1638,7 +1997,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         per_layer = {}
         for item in observations:
             per_layer.setdefault(item["layer"], []).append(item["gate"])
-        return {
+        diagnostics = {
             "observations": len(observations),
             "mean_gate": sum(gates) / len(gates),
             "min_gate": min(gates),
@@ -1664,6 +2023,30 @@ class SharedALoRA_ViT_timm(nn.Module):
                 for layer in sorted(per_layer)
             ],
         }
+        if self.adaptive_a_strategy == "risk_budgeted":
+            mode_counts = {
+                mode: sum(item.get("mode") == mode for item in observations)
+                for mode in ADAPTIVE_A_MODES
+            }
+            diagnostics.update(
+                {
+                    "strategy": "risk_budgeted",
+                    "mode_counts": mode_counts,
+                    "mode_fractions": {
+                        mode: mode_counts[mode] / len(observations)
+                        for mode in ADAPTIVE_A_MODES
+                    },
+                    "mean_selected_utility": sum(
+                        item["selected_utility"] for item in observations
+                    )
+                    / len(observations),
+                    "mean_selected_risk": sum(
+                        item["selected_risk"] for item in observations
+                    )
+                    / len(observations),
+                }
+            )
+        return diagnostics
 
     def live_a_gradient_diagnostics(self, x) -> dict | None:
         """First-batch Live-A training-path diagnostics.
@@ -2115,8 +2498,13 @@ class SharedALoRA_ViT_timm(nn.Module):
         shared_a = [
             w_a.weight.detach().cpu().float() for w_a in self.w_As
         ]
-        torch.save(
-            {
+        wrappers = [
+            block.attn.qkv
+            for block in self.lora_vit.blocks
+            if isinstance(block.attn.qkv, _LiveAAggregateQKV)
+        ]
+        input_sketches = [wrapper.merged_input_sketch() for wrapper in wrappers]
+        state = {
                 "version": SA_STATE_VERSION_LIVE_A,
                 "task_id": self.task_id,
                 "rank": self.rank,
@@ -2126,7 +2514,20 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "history_groups": self.live_a_history_groups,
                 "coordinate_aligned": self.live_a_coordinate_align,
                 "absorb_mode": self.live_a_absorb_mode,
-            },
+            }
+        if self.adaptive_a_strategy == "risk_budgeted":
+            state.update(
+                {
+                "adaptive_a_input_rms": [
+                    rms.detach().cpu().float() for rms, _ in input_sketches
+                ],
+                "adaptive_a_input_counts": torch.tensor(
+                    [count for _, count in input_sketches], dtype=torch.float64
+                ),
+                }
+            )
+        torch.save(
+            state,
             _join_path(filename, SA_STATE_FILENAME),
         )
         self.save_merged_lora(filename)

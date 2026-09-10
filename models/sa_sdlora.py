@@ -91,6 +91,12 @@ def validate_adaptive_a_config(args):
             args.get("sa_adaptive_a_gate_momentum", 0.9)
         ),
         "adaptive_a_eps": float(args.get("sa_adaptive_a_eps", 1e-8)),
+        "adaptive_a_strategy": str(
+            args.get("sa_adaptive_a_strategy", "impact_ratio")
+        ),
+        "adaptive_a_risk_budget": float(
+            args.get("sa_adaptive_a_risk_budget", 0.05)
+        ),
     }
     if settings["adaptive_a_stability_weight"] < 0:
         raise ValueError("sa_adaptive_a_stability_weight must be non-negative")
@@ -100,6 +106,12 @@ def validate_adaptive_a_config(args):
         raise ValueError("sa_adaptive_a_gate_momentum must be in [0, 1)")
     if settings["adaptive_a_eps"] <= 0:
         raise ValueError("sa_adaptive_a_eps must be positive")
+    if settings["adaptive_a_strategy"] not in ("impact_ratio", "risk_budgeted"):
+        raise ValueError(
+            "sa_adaptive_a_strategy must be impact_ratio or risk_budgeted"
+        )
+    if settings["adaptive_a_risk_budget"] < 0:
+        raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
     if not settings["adaptive_a_enabled"]:
         return settings
     if not args.get("sa_train_a_all_tasks", False):
@@ -120,6 +132,11 @@ def validate_adaptive_a_config(args):
             "sa_adaptive_a_enabled requires "
             "sa_live_a_coordinate_align=True"
         )
+    if (
+        settings["adaptive_a_strategy"] == "risk_budgeted"
+        and args.get("optimizer", "sgd").lower() != "sgd"
+    ):
+        raise ValueError("risk_budgeted Adaptive-A currently requires SGD")
     return settings
 
 
@@ -327,6 +344,9 @@ class Learner(SDLoraLearner):
         self._sa_adaptive_a_enabled = validate_adaptive_a_config(args)[
             "adaptive_a_enabled"
         ]
+        self._sa_adaptive_a_strategy = validate_adaptive_a_config(args)[
+            "adaptive_a_strategy"
+        ]
         use_cosine = args.get("sa_use_cosine_head", False)
         use_prototypes = args.get("sa_use_prototype_classifier", False)
         if use_cosine and use_prototypes:
@@ -484,11 +504,37 @@ class Learner(SDLoraLearner):
         model.out_dim = 768
         return model
 
-    def _after_backward(self):
+    def _after_backward(self, inputs=None, targets=None, optimizer=None):
         """Apply Adaptive-A only after DDP has synchronized shared-A grads."""
         if not self._sa_adaptive_a_enabled:
             return None
-        self._raw_network().backbone.apply_adaptive_a_gradients()
+        raw_network = self._raw_network()
+        backbone = raw_network.backbone
+        strategy = getattr(self, "_sa_adaptive_a_strategy", "impact_ratio")
+        if strategy == "risk_budgeted":
+            step_size = (
+                float(optimizer.param_groups[0]["lr"])
+                if optimizer is not None
+                else 1.0
+            )
+            momentum = (
+                float(optimizer.param_groups[0].get("momentum", 0.0))
+                if optimizer is not None
+                else 0.0
+            )
+            momentum_buffers = None
+            if optimizer is not None:
+                momentum_buffers = [
+                    optimizer.state.get(module.weight, {}).get("momentum_buffer")
+                    for module in backbone.w_As
+                ]
+            backbone.apply_adaptive_a_gradients(
+                step_size=step_size,
+                momentum_buffers=momentum_buffers,
+                momentum=momentum,
+            )
+        else:
+            backbone.apply_adaptive_a_gradients()
         return None
 
     def _log_adaptive_a_diagnostics(self):
@@ -514,6 +560,18 @@ class Learner(SDLoraLearner):
             diagnostics["mean_perpendicular_retention"],
             diagnostics["per_layer_mean_gate"],
         )
+        if diagnostics.get("strategy") == "risk_budgeted":
+            logging.info(
+                "[RiskBudgeted-AdaptiveA] task %d: mode_counts=%s "
+                "mode_fractions=%s mean_signed_utility=%.6e "
+                "mean_operator_risk=%.6e risk_budget=%.6e",
+                self._cur_task,
+                diagnostics["mode_counts"],
+                diagnostics["mode_fractions"],
+                diagnostics["mean_selected_utility"],
+                diagnostics["mean_selected_risk"],
+                float(self.args.get("sa_adaptive_a_risk_budget", 0.05)),
+            )
 
     def incremental_train(self, data_manager):
         self._dual_num_tasks = data_manager.nb_tasks

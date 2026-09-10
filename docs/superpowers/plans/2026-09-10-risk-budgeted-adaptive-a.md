@@ -4,7 +4,7 @@
 
 **Goal:** Add an endpoint-capable, signed-utility and globally risk-budgeted Adaptive-A strategy without changing the established CoordinateStable method outside shared-A gradient processing.
 
-**Architecture:** Pure tensor helpers implement gradient decomposition, operator risk, and global three-mode selection. The Shared-A backbone owns fixed-size historical input sketches and applies selected gradients. The learner creates a deterministic minibatch control split and computes control gradients only for shared A.
+**Architecture:** Pure tensor helpers implement gradient decomposition, operator risk, and global three-mode selection. The Shared-A backbone owns fixed-size historical input sketches and applies optimizer-aware selected updates using cross-minibatch signed agreement.
 
 **Tech Stack:** Python, PyTorch, timm, pytest, torch.distributed.
 
@@ -42,17 +42,17 @@
 4. Apply globally selected modes using supplied control gradients.
 5. Add tests for task-0 Live behavior, state shape, reload, and no task growth.
 
-### Task 3: Integrate Held-Out Control Gradients
+### Task 3: Integrate Cross-Minibatch Control Updates
 
 **Files:**
 - Modify: `models/sdlora.py`
 - Modify: `models/sa_sdlora.py`
 - Modify: `tests/test_adaptive_a.py`
 
-1. Add backward-compatible training-batch and post-backward hooks.
-2. Split only risk-budgeted batches into disjoint train/control subsets.
-3. Obtain control gradients with `torch.autograd.grad` and DDP averaging.
-4. Verify other parameter gradients are unchanged by the control pass.
+1. Pass optimizer step size through the backward-compatible hook.
+2. Cache the preceding synchronized raw shared-A update per layer.
+3. Compensate SGD momentum so selected endpoints are exact updates.
+4. Verify other parameter gradients and effective batch are unchanged.
 5. Add config validation and constructor-forwarding tests.
 
 ### Task 4: Diagnostics, Config, And Verification

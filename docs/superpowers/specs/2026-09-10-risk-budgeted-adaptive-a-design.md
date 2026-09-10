@@ -25,8 +25,10 @@ Tangent: D' = D_parallel
 Live:    D' = D
 ```
 
-A held-out control split from the same minibatch supplies `D_control`. The
-signed utility of candidate `k` is the normalized gradient agreement:
+The already synchronized raw update from the preceding independently
+shuffled minibatch supplies `D_control`. This preserves the original batch
+and sample count while measuring cross-minibatch update agreement. The
+signed utility of candidate `k` is the normalized update agreement:
 
 ```
 U_k = <D_k, D_control> / (||D_k|| ||D_control|| + eps).
@@ -36,7 +38,10 @@ Historical risk is measured in effective-operator space and weighted by a
 fixed-size diagonal activation sketch `S`:
 
 ```
-R_k = ||G D_k S||_F^2 / (||G A_hat S||_F^2 + eps).
+delta_A_k = -learning_rate * D_k
+A_hat_new = normalize(A + delta_A_k)
+R_k = ||G (A_hat_new - A_hat) S||_F^2
+      / (||G A_hat S||_F^2 + eps).
 ```
 
 Q and V utility/risk are summed per layer. A deterministic Lagrangian search
@@ -57,14 +62,18 @@ true Frozen endpoint.
 
 ## Training Integration
 
-Only risk-budgeted Adaptive-A splits each minibatch deterministically into a
-training subset and a disjoint control subset. The ordinary backward pass is
-performed on the training subset. A second `autograd.grad` call obtains only
-the shared-A control gradients; it does not mutate classifier, B, scale, or
-prototype gradients. Under DDP, control gradients are explicitly averaged.
+Risk-budgeted Adaptive-A caches only the preceding minibatch's synchronized
+raw shared-A update. It performs no additional forward/backward, does not
+change the effective batch or sample order, and cannot mutate classifier, B,
+scale, or prototype gradients. Task 0 uses Live; the first minibatch of each
+later task keeps A frozen while establishing its control update. Risk uses
+the actual optimizer displacement `delta_A = -learning_rate * D`. With SGD
+momentum,
+candidates are formed from `momentum * buffer + gradient`, and the written
+gradient compensates the old buffer so `optimizer.step()` applies the exact
+selected Frozen, Tangent, or Live update.
 
 ## Diagnostics
 
 Log per-task mode fractions, selected/available risk, signed utility, and
 per-layer dominant mode. Existing impact-ratio diagnostics remain unchanged.
-

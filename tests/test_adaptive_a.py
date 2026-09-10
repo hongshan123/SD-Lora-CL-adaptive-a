@@ -22,7 +22,11 @@ from backbone.sa_lora import (
     SharedALoRA_ViT_timm,
     adaptive_a_layer_gradient,
     canonical_down_projection,
+    choose_risk_budgeted_modes,
+    decompose_adaptive_a_gradient,
     low_rank_product_frobenius_norm,
+    signed_gradient_utility,
+    weighted_operator_risk,
 )
 from models.sdlora import Learner as SDLoraLearner
 from models.sa_sdlora import (
@@ -113,8 +117,106 @@ def test_low_rank_product_frobenius_norm_matches_dense_product():
 
     actual = low_rank_product_frobenius_norm(up, down)
 
-    assert torch.allclose(actual, torch.linalg.matrix_norm(up @ down))
+    assert actual.item() == pytest.approx(
+        torch.linalg.matrix_norm(up @ down).item()
+    )
 
+
+def test_risk_budgeted_candidates_are_exact_frozen_tangent_and_live():
+    shared_a = torch.tensor(
+        [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]
+    )
+    gradient = torch.tensor(
+        [[2.0, -1.0, 3.0, 4.0], [0.5, 1.5, -2.0, 1.0]]
+    )
+
+    candidates = decompose_adaptive_a_gradient(gradient, shared_a)
+
+    assert torch.count_nonzero(candidates["frozen"]) == 0
+    assert torch.equal(
+        candidates["tangent"],
+        torch.tensor([[2.0, -1.0, 0.0, 0.0], [0.5, 1.5, 0.0, 0.0]]),
+    )
+    assert torch.equal(candidates["live"], gradient)
+    assert torch.allclose(
+        candidates["live"],
+        candidates["tangent"] + candidates["perpendicular"],
+    )
+
+
+def test_signed_utility_preserves_helpful_and_harmful_gradient_direction():
+    candidate = torch.tensor([[1.0, -2.0], [0.5, 3.0]])
+
+    assert signed_gradient_utility(candidate, candidate).item() == pytest.approx(
+        1.0
+    )
+    assert signed_gradient_utility(candidate, -candidate).item() == pytest.approx(
+        -1.0
+    )
+    assert (
+        signed_gradient_utility(torch.zeros_like(candidate), candidate).item()
+        == 0.0
+    )
+
+
+def test_weighted_operator_risk_is_scale_invariant_in_historical_up():
+    torch.manual_seed(17)
+    historical_up = torch.randn(5, 2)
+    shared_a = torch.randn(2, 4)
+    delta_a = torch.randn(2, 4)
+    input_rms = torch.tensor([0.25, 0.5, 1.0, 2.0])
+
+    risk = weighted_operator_risk(
+        historical_up, shared_a, delta_a, input_rms
+    )
+    scaled_risk = weighted_operator_risk(
+        13.0 * historical_up, shared_a, delta_a, input_rms
+    )
+
+    assert risk.item() > 0
+    assert scaled_risk.item() == pytest.approx(risk.item(), rel=1e-6)
+
+
+def test_global_selector_uses_true_frozen_endpoint_for_negative_utility():
+    layers = [
+        {
+            "frozen": {"utility": 0.0, "risk": 0.0},
+            "tangent": {"utility": -0.2, "risk": 0.01},
+            "live": {"utility": -0.5, "risk": 0.02},
+        },
+        {
+            "frozen": {"utility": 0.0, "risk": 0.0},
+            "tangent": {"utility": 0.4, "risk": 0.03},
+            "live": {"utility": 0.9, "risk": 0.20},
+        },
+    ]
+
+    selected = choose_risk_budgeted_modes(layers, risk_budget=0.05)
+
+    assert selected["modes"] == ["frozen", "tangent"]
+    assert selected["selected_risk"] <= 0.05 + 1e-8
+
+
+def test_global_selector_selects_live_when_budget_and_utility_support_it():
+    layers = [
+        {
+            "frozen": {"utility": 0.0, "risk": 0.0},
+            "tangent": {"utility": 0.2, "risk": 0.01},
+            "live": {"utility": 0.8, "risk": 0.04},
+        },
+        {
+            "frozen": {"utility": 0.0, "risk": 0.0},
+            "tangent": {"utility": 0.1, "risk": 0.01},
+            "live": {"utility": 0.7, "risk": 0.03},
+        },
+    ]
+
+    first = choose_risk_budgeted_modes(layers, risk_budget=0.08)
+    second = choose_risk_budgeted_modes(layers, risk_budget=0.08)
+
+    assert first == second
+    assert first["modes"] == ["live", "live"]
+    assert first["selected_risk"] == pytest.approx(0.07)
 
 def test_adaptive_layer_gradient_decomposes_each_gradient_orthogonally():
     torch.manual_seed(2)
@@ -330,6 +432,112 @@ def test_disabled_adaptive_a_hook_is_a_noop(tmp_path):
     assert model.adaptive_a_diagnostics() is None
 
 
+def test_risk_budgeted_model_can_select_exact_frozen_gradient(tmp_path):
+    model = _adaptive_model(
+        tmp_path,
+        adaptive_a_strategy="risk_budgeted",
+        adaptive_a_risk_budget=1.0,
+    )
+    model.task_id = 1
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+    with torch.no_grad():
+        wrapper.aggregate_q.fill_(1.0)
+        wrapper.aggregate_v.fill_(1.0)
+    raw_q = torch.tensor(
+        [[1.0, 0.0, 2.0, 0.0], [0.0, 1.0, 0.0, 2.0]]
+    )
+    raw_v = torch.tensor(
+        [[0.5, 0.0, 1.0, 0.0], [0.0, 0.5, 0.0, 1.0]]
+    )
+    model.w_As[0].weight.grad = raw_q.clone()
+    model.w_As[1].weight.grad = raw_v.clone()
+    momentum_q = torch.full_like(raw_q, 0.25)
+    momentum_v = torch.full_like(raw_v, -0.5)
+    proposed_q = raw_q + 0.9 * momentum_q
+    proposed_v = raw_v + 0.9 * momentum_v
+
+    result = model.apply_adaptive_a_gradients(
+        [-proposed_q, -proposed_v],
+        momentum_buffers=[momentum_q, momentum_v],
+        momentum=0.9,
+    )
+
+    assert result["selection"]["modes"] == ["frozen"]
+    assert torch.allclose(
+        0.9 * momentum_q + model.w_As[0].weight.grad,
+        torch.zeros_like(raw_q),
+    )
+    assert torch.allclose(
+        0.9 * momentum_v + model.w_As[1].weight.grad,
+        torch.zeros_like(raw_v),
+    )
+    assert result["mode_fractions"]["frozen"] == pytest.approx(1.0)
+
+
+def test_risk_budgeted_model_uses_previous_minibatch_update_as_control(tmp_path):
+    model = _adaptive_model(
+        tmp_path,
+        adaptive_a_strategy="risk_budgeted",
+        adaptive_a_risk_budget=1.0,
+    )
+    model.task_id = 1
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+    with torch.no_grad():
+        wrapper.aggregate_q.fill_(1.0)
+        wrapper.aggregate_v.fill_(1.0)
+    first_q = torch.randn_like(model.w_As[0].weight)
+    first_v = torch.randn_like(model.w_As[1].weight)
+    model.w_As[0].weight.grad = first_q.clone()
+    model.w_As[1].weight.grad = first_v.clone()
+
+    warmup = model.apply_adaptive_a_gradients()
+    assert warmup["selection"]["modes"] == ["frozen"]
+
+    model.w_As[0].weight.grad = -first_q
+    model.w_As[1].weight.grad = -first_v
+    selected = model.apply_adaptive_a_gradients()
+
+    assert selected["selection"]["modes"] == ["frozen"]
+    assert torch.count_nonzero(model.w_As[0].weight.grad) == 0
+    assert torch.count_nonzero(model.w_As[1].weight.grad) == 0
+
+
+def test_risk_budgeted_input_sketch_is_fixed_size_and_reloaded(tmp_path):
+    run_dir = tmp_path / "run"
+    model = _adaptive_model(
+        tmp_path,
+        adaptive_a_strategy="risk_budgeted",
+    )
+    model.train()
+    model(torch.randn(2, 3, 4))
+    model.save_lora_parameters(str(run_dir), task_id=0)
+
+    state = torch.load(
+        run_dir / SA_STATE_FILENAME, map_location="cpu", weights_only=True
+    )
+    assert len(state["adaptive_a_input_rms"]) == 1
+    assert state["adaptive_a_input_rms"][0].shape == (4,)
+    assert state["adaptive_a_input_counts"].shape == (1,)
+    assert state["adaptive_a_input_counts"][0].item() == 6
+
+    restored = SharedALoRA_ViT_timm(
+        _TinyViT(4),
+        r=2,
+        filepath=str(run_dir),
+        cur_task_index=1,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="live_a_aggregate_b",
+        live_a_coordinate_align=True,
+        adaptive_a_enabled=True,
+        adaptive_a_strategy="risk_budgeted",
+    )
+    wrapper = restored.lora_vit.blocks[0].attn.qkv
+    assert torch.allclose(
+        wrapper.historical_input_rms.cpu(), state["adaptive_a_input_rms"][0]
+    )
+
+
 class _TrainingNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -389,7 +597,9 @@ def _loop_learner(events):
     learner._barrier = lambda: None
     learner._sync_sum = lambda value: float(value)
     learner._additional_training_losses = lambda *args, **kwargs: {}
-    learner._after_backward = lambda: events.append("hook")
+    learner._after_backward = (
+        lambda inputs=None, targets=None, optimizer=None: events.append("hook")
+    )
     learner._raw_network = lambda: _BackboneHolder(_LoopBackbone())
     return learner
 
@@ -652,6 +862,8 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
         "adaptive_a_gate_floor": 0.05,
         "adaptive_a_gate_momentum": 0.9,
         "adaptive_a_eps": 1e-8,
+        "adaptive_a_strategy": "impact_ratio",
+        "adaptive_a_risk_budget": 0.05,
     }
 
     monkeypatch.setattr(
@@ -673,6 +885,8 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
             "sa_adaptive_a_gate_floor": 0.2,
             "sa_adaptive_a_gate_momentum": 0.6,
             "sa_adaptive_a_eps": 1e-6,
+            "sa_adaptive_a_strategy": "risk_budgeted",
+            "sa_adaptive_a_risk_budget": 0.025,
         }
     )
 
@@ -681,6 +895,8 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
     assert backbone.adaptive_a_gate_floor == pytest.approx(0.2)
     assert backbone.adaptive_a_gate_momentum == pytest.approx(0.6)
     assert backbone.adaptive_a_eps == pytest.approx(1e-6)
+    assert backbone.adaptive_a_strategy == "risk_budgeted"
+    assert backbone.adaptive_a_risk_budget == pytest.approx(0.025)
 
 
 def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
@@ -703,6 +919,8 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
         "sa_adaptive_a_gate_floor": 0.2,
         "sa_adaptive_a_gate_momentum": 0.6,
         "sa_adaptive_a_eps": 1e-6,
+        "sa_adaptive_a_strategy": "risk_budgeted",
+        "sa_adaptive_a_risk_budget": 0.025,
         "sa_train_a_all_tasks": True,
         "sa_cumulative_state": True,
         "sa_cumulative_merge": "live_a_aggregate_b",
@@ -724,6 +942,8 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
             "adaptive_a_gate_floor",
             "adaptive_a_gate_momentum",
             "adaptive_a_eps",
+            "adaptive_a_strategy",
+            "adaptive_a_risk_budget",
         )
     } == {
         "adaptive_a_enabled": True,
@@ -731,6 +951,8 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
         "adaptive_a_gate_floor": 0.2,
         "adaptive_a_gate_momentum": 0.6,
         "adaptive_a_eps": 1e-6,
+        "adaptive_a_strategy": "risk_budgeted",
+        "adaptive_a_risk_budget": 0.025,
     }
 
 

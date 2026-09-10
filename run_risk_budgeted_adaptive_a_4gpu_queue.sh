@@ -110,10 +110,15 @@ for config in "${configs[@]}"; do
   {
     echo "===== $(date '+%F %T') START $name GPUs=$GPU_IDS ====="
     echo "commit=$(git rev-parse HEAD) config_sha=$(sha256sum "$config" | awk '{print $1}')"
-    torchrun --standalone --nproc_per_node=4 main.py --config="./$config"
-    status=$?
+    if torchrun --standalone --nproc_per_node=4 main.py --config="./$config"; then
+      status=0
+    else
+      status=$?
+    fi
     echo "===== $(date '+%F %T') END $name status=$status ====="
-    exit "$status"
+    if [ "$status" -ne 0 ]; then
+      exit "$status"
+    fi
   } > "$log_file" 2>&1
   echo "===== $(date '+%F %T') END $name log=$log_file ====="
 done

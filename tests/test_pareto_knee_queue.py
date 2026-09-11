@@ -18,6 +18,7 @@ def test_pareto_knee_queue_is_nohup_safe_and_preserves_calibration_protocol():
     assert 'max_tasks": 3' in source
     assert 'sa_dual_head": False' in source
     assert 'sa_adaptive_a_strategy": "pareto_knee"' in source
+    assert 'sa_adaptive_a_crossfit_interval": 4' in source
     assert 'sa_resume": False' in source
     assert "PYTHONUNBUFFERED=1" in source
     assert "CUBLAS_WORKSPACE_CONFIG=:4096:8" in source

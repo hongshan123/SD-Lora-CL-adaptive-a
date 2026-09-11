@@ -1896,6 +1896,8 @@ class SharedALoRA_ViT_timm(nn.Module):
         step_size: float = 1.0,
         momentum_buffers: list[Tensor | None] | None = None,
         momentum: float = 0.0,
+        cached_modes: list[str] | None = None,
+        cached_utilities: list[float] | None = None,
     ) -> dict | None:
         """Apply the synchronized Adaptive-A gate to current shared-A grads."""
         if not self.adaptive_a_enabled:
@@ -1913,9 +1915,17 @@ class SharedALoRA_ViT_timm(nn.Module):
             self._adaptive_a_risk_ratios = []
             self._adaptive_a_pareto_point_counts = []
         if self.adaptive_a_strategy == "pareto_knee":
-            if crossfit_gradients is None:
+            if (cached_modes is None) != (cached_utilities is None):
                 raise ValueError(
-                    "pareto_knee Adaptive-A requires explicit crossfit gradients"
+                    "cached Pareto modes and utilities must be provided together"
+                )
+            if crossfit_gradients is not None and cached_modes is not None:
+                raise ValueError(
+                    "crossfit gradients and cached Pareto modes are mutually exclusive"
+                )
+            if self.task_id > 0 and crossfit_gradients is None and cached_modes is None:
+                raise ValueError(
+                    "pareto_knee Adaptive-A requires crossfit gradients or cached modes"
                 )
             return self._apply_risk_budgeted_adaptive_a(
                 control_gradients,
@@ -1923,6 +1933,8 @@ class SharedALoRA_ViT_timm(nn.Module):
                 momentum_buffers=momentum_buffers,
                 momentum=momentum,
                 crossfit_gradients=crossfit_gradients,
+                cached_modes=cached_modes,
+                cached_utilities=cached_utilities,
             )
         if self.adaptive_a_strategy == "risk_budgeted":
             if control_gradients is None:
@@ -1993,6 +2005,8 @@ class SharedALoRA_ViT_timm(nn.Module):
         momentum_buffers,
         momentum,
         crossfit_gradients=None,
+        cached_modes=None,
+        cached_utilities=None,
     ):
         """Select exact Frozen/Tangent/Live gradients under one global budget."""
         if step_size < 0:
@@ -2013,6 +2027,8 @@ class SharedALoRA_ViT_timm(nn.Module):
                 raise ValueError("crossfit gradients must contain two folds")
             if any(len(fold) != len(self.w_As) for fold in crossfit_gradients):
                 raise ValueError("crossfit gradients must match shared-A branches")
+        if (cached_modes is None) != (cached_utilities is None):
+            raise ValueError("cached Pareto modes and utilities must be provided together")
         candidates_by_layer = []
         tensor_candidates = []
         raw_gradients = []
@@ -2195,6 +2211,36 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "implied_risk_ratio": 1.0,
                 "pareto_points": 1,
             }
+        elif cached_modes is not None:
+            if len(cached_modes) != len(candidates_by_layer):
+                raise ValueError("cached Pareto modes must match adaptive-A layers")
+            if len(cached_utilities) != len(candidates_by_layer):
+                raise ValueError(
+                    "cached Pareto utilities must match adaptive-A layers"
+                )
+            invalid_modes = set(cached_modes) - set(ADAPTIVE_A_MODES)
+            if invalid_modes:
+                raise ValueError(
+                    "invalid cached Adaptive-A modes: {}".format(
+                        sorted(invalid_modes)
+                    )
+                )
+            selected_risk = sum(
+                layer[mode]["risk"]
+                for mode, layer in zip(cached_modes, candidates_by_layer)
+            )
+            selection = {
+                "modes": list(cached_modes),
+                "selected_risk": selected_risk,
+                "selected_utility": sum(cached_utilities),
+                "implied_risk_ratio": (
+                    selected_risk / live_risk
+                    if live_risk > self.adaptive_a_eps
+                    else 0.0
+                ),
+                "pareto_points": None,
+                "selected_utilities": list(cached_utilities),
+            }
         elif self.adaptive_a_strategy == "pareto_knee":
             selection = choose_pareto_knee_modes(candidates_by_layer)
         else:
@@ -2211,8 +2257,16 @@ class SharedALoRA_ViT_timm(nn.Module):
             self._adaptive_a_pareto_point_counts.append(
                 self._adaptive_a_last_pareto_points
             )
-        for mode, layer, tensors in zip(
-            selection["modes"], candidates_by_layer, tensor_candidates
+        if "selected_utilities" not in selection:
+            selection["selected_utilities"] = [
+                layer[mode]["utility"]
+                for mode, layer in zip(selection["modes"], candidates_by_layer)
+            ]
+        for mode, selected_utility, layer, tensors in zip(
+            selection["modes"],
+            selection["selected_utilities"],
+            candidates_by_layer,
+            tensor_candidates,
         ):
             wrapper, q_candidates, v_candidates, momentum_q, momentum_v = tensors
             with torch.no_grad():
@@ -2230,10 +2284,10 @@ class SharedALoRA_ViT_timm(nn.Module):
                     "layer": wrapper.layer_index,
                     "mode": mode,
                     "gate": {"frozen": 0.0, "tangent": 0.5, "live": 1.0}[mode],
-                    "current_impact": layer[mode]["utility"],
+                    "current_impact": selected_utility,
                     "historical_impact": layer[mode]["risk"],
                     "perpendicular_retention": float(mode == "live"),
-                    "selected_utility": layer[mode]["utility"],
+                    "selected_utility": selected_utility,
                     "selected_risk": layer[mode]["risk"],
                 }
             )

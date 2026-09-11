@@ -4,6 +4,7 @@ import json
 import math
 import os
 from contextlib import nullcontext
+from numbers import Integral
 
 import numpy as np
 import timm
@@ -149,6 +150,25 @@ def validate_adaptive_a_config(args):
     ):
         raise ValueError("discrete Adaptive-A strategies currently require SGD")
     return settings
+
+
+def validate_pareto_crossfit_interval(args):
+    """Return the positive minibatch cadence for Pareto cross-fit refreshes."""
+    interval = args.get("sa_adaptive_a_crossfit_interval", 4)
+    if isinstance(interval, bool) or not isinstance(interval, Integral):
+        raise ValueError("sa_adaptive_a_crossfit_interval must be a positive integer")
+    if interval <= 0:
+        raise ValueError("sa_adaptive_a_crossfit_interval must be a positive integer")
+    return int(interval)
+
+
+def should_refresh_pareto_crossfit(task_id, step, interval, has_cache):
+    """Refresh on the first historical step and then at the configured cadence."""
+    if task_id <= 0:
+        return False
+    if interval <= 0:
+        raise ValueError("sa_adaptive_a_crossfit_interval must be positive")
+    return not has_cache or step % interval == 0
 
 
 def crossfit_classification_gradients(
@@ -391,6 +411,16 @@ class Learner(SDLoraLearner):
         self._sa_adaptive_a_strategy = validate_adaptive_a_config(args)[
             "adaptive_a_strategy"
         ]
+        self._sa_adaptive_a_crossfit_interval = validate_pareto_crossfit_interval(
+            args
+        )
+        self._sa_pareto_schedule_task_id = None
+        self._sa_pareto_step = 0
+        self._sa_pareto_cached_modes = None
+        self._sa_pareto_cached_utilities = None
+        self._sa_pareto_crossfit_refreshes = 0
+        self._sa_pareto_cached_reuses = 0
+        self._sa_pareto_task0_skips = 0
         use_cosine = args.get("sa_use_cosine_head", False)
         use_prototypes = args.get("sa_use_prototype_classifier", False)
         if use_cosine and use_prototypes:
@@ -573,23 +603,64 @@ class Learner(SDLoraLearner):
                     for module in backbone.w_As
                 ]
             crossfit_gradients = None
+            cached_modes = None
+            cached_utilities = None
+            refresh_crossfit = False
             if strategy == "pareto_knee":
-                if inputs is None or targets is None:
-                    raise ValueError(
-                        "pareto_knee Adaptive-A requires batch inputs and targets"
-                    )
-                crossfit_gradients = self._crossfit_adaptive_a_gradients(
-                    inputs, targets
+                self._reset_pareto_schedule_if_needed()
+                refresh_crossfit = should_refresh_pareto_crossfit(
+                    self._cur_task,
+                    self._sa_pareto_step,
+                    getattr(self, "_sa_adaptive_a_crossfit_interval", 4),
+                    self._sa_pareto_cached_modes is not None,
                 )
-            backbone.apply_adaptive_a_gradients(
+                if refresh_crossfit:
+                    if inputs is None or targets is None:
+                        raise ValueError(
+                            "pareto_knee crossfit refresh requires batch inputs "
+                            "and targets"
+                        )
+                    crossfit_gradients = self._crossfit_adaptive_a_gradients(
+                        inputs, targets
+                    )
+                    self._sa_pareto_crossfit_refreshes += 1
+                elif self._cur_task > 0:
+                    cached_modes = self._sa_pareto_cached_modes
+                    cached_utilities = self._sa_pareto_cached_utilities
+                    self._sa_pareto_cached_reuses += 1
+                else:
+                    self._sa_pareto_task0_skips += 1
+            result = backbone.apply_adaptive_a_gradients(
                 step_size=step_size,
                 momentum_buffers=momentum_buffers,
                 momentum=momentum,
                 crossfit_gradients=crossfit_gradients,
+                cached_modes=cached_modes,
+                cached_utilities=cached_utilities,
             )
+            if strategy == "pareto_knee":
+                if refresh_crossfit and result is not None:
+                    selection = result["selection"]
+                    self._sa_pareto_cached_modes = list(selection["modes"])
+                    self._sa_pareto_cached_utilities = list(
+                        selection["selected_utilities"]
+                    )
+                self._sa_pareto_step += 1
         else:
             backbone.apply_adaptive_a_gradients()
         return None
+
+    def _reset_pareto_schedule_if_needed(self):
+        """Keep the transient Pareto decision cache strictly task-local."""
+        if getattr(self, "_sa_pareto_schedule_task_id", None) == self._cur_task:
+            return
+        self._sa_pareto_schedule_task_id = self._cur_task
+        self._sa_pareto_step = 0
+        self._sa_pareto_cached_modes = None
+        self._sa_pareto_cached_utilities = None
+        self._sa_pareto_crossfit_refreshes = 0
+        self._sa_pareto_cached_reuses = 0
+        self._sa_pareto_task0_skips = 0
 
     def _crossfit_adaptive_a_gradients(self, inputs, targets):
         """Compute synchronized two-fold CE gradients for Pareto utility."""
@@ -674,7 +745,9 @@ class Learner(SDLoraLearner):
                 "mode_fractions=%s mean_crossfit_utility=%.6e "
                 "mean_operator_risk=%.6e implied_risk_ratio_mean=%.6f "
                 "implied_risk_ratio_range=[%.6f,%.6f] "
-                "mean_pareto_points=%.2f live_risk=%.6e",
+                "mean_pareto_points=%.2f live_risk=%.6e "
+                "crossfit_interval=%d refreshes=%d cached_reuses=%d "
+                "task0_skips=%d",
                 self._cur_task,
                 diagnostics["mode_counts"],
                 diagnostics["mode_fractions"],
@@ -685,6 +758,10 @@ class Learner(SDLoraLearner):
                 diagnostics["max_implied_risk_ratio"],
                 diagnostics["mean_pareto_points"],
                 diagnostics["live_risk_reference"],
+                getattr(self, "_sa_adaptive_a_crossfit_interval", 4),
+                getattr(self, "_sa_pareto_crossfit_refreshes", 0),
+                getattr(self, "_sa_pareto_cached_reuses", 0),
+                getattr(self, "_sa_pareto_task0_skips", 0),
             )
 
     def incremental_train(self, data_manager):

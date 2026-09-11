@@ -48,6 +48,7 @@ for dataset, source_name, seed in sources:
             "sa_dual_head": False,
             "sa_adaptive_a_enabled": True,
             "sa_adaptive_a_strategy": "pareto_knee",
+            "sa_adaptive_a_crossfit_interval": 4,
             "sa_resume": False,
         }
     )

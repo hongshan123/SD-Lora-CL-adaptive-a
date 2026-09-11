@@ -33,6 +33,7 @@ from backbone.sa_lora import (
     weighted_operator_risk,
 )
 from models.sdlora import Learner as SDLoraLearner
+from models import sa_sdlora as sa_sdlora_module
 from models.sa_sdlora import (
     Learner as SharedALearner,
     crossfit_classification_gradients,
@@ -664,6 +665,8 @@ def test_pareto_learner_passes_crossfit_gradients_to_backbone():
     learner = object.__new__(SharedALearner)
     learner._sa_adaptive_a_enabled = True
     learner._sa_adaptive_a_strategy = "pareto_knee"
+    learner._sa_adaptive_a_crossfit_interval = 4
+    learner._cur_task = 1
     learner._network = CrossfitNetwork()
     learner._known_classes = 0
     learner._raw_network = lambda: learner._network
@@ -681,6 +684,177 @@ def test_pareto_learner_passes_crossfit_gradients_to_backbone():
     assert "crossfit_gradients" in received
     assert len(received["crossfit_gradients"]) == 2
     assert len(received["crossfit_gradients"][0]) == 1
+
+
+@pytest.mark.parametrize(
+    "task_id, step, interval, has_cache, expected",
+    [
+        (0, 0, 4, False, False),
+        (0, 8, 4, True, False),
+        (1, 0, 4, False, True),
+        (1, 1, 4, True, False),
+        (1, 4, 4, True, True),
+        (2, 7, 8, True, False),
+        (2, 8, 8, True, True),
+        (1, 3, 1, True, True),
+    ],
+)
+def test_pareto_crossfit_refresh_schedule(
+    task_id, step, interval, has_cache, expected
+):
+    assert (
+        sa_sdlora_module.should_refresh_pareto_crossfit(
+            task_id, step, interval, has_cache
+        )
+        is expected
+    )
+
+
+def test_pareto_crossfit_interval_defaults_to_four_and_requires_positive_integer():
+    validator = sa_sdlora_module.validate_pareto_crossfit_interval
+
+    assert validator({}) == 4
+    assert validator({"sa_adaptive_a_crossfit_interval": 8}) == 8
+    with pytest.raises(ValueError, match="crossfit_interval"):
+        validator({"sa_adaptive_a_crossfit_interval": 0})
+    with pytest.raises(ValueError, match="crossfit_interval"):
+        validator({"sa_adaptive_a_crossfit_interval": 4.5})
+
+
+def test_pareto_learner_skips_task_zero_and_reuses_modes_until_refresh():
+    class ScheduledBackbone(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w_As = nn.ModuleList([nn.Linear(2, 2, bias=False)])
+            self.adaptive_a_strategy = "pareto_knee"
+            self.calls = []
+
+        def apply_adaptive_a_gradients(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("crossfit_gradients") is not None:
+                return {
+                    "selection": {
+                        "modes": ["tangent"],
+                        "selected_utilities": [0.75],
+                    }
+                }
+            return {
+                "selection": {
+                    "modes": kwargs.get("cached_modes", ["live"]),
+                    "selected_utilities": kwargs.get(
+                        "cached_utilities", [1.0]
+                    ),
+                }
+            }
+
+    class ScheduledNetwork(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.backbone = ScheduledBackbone()
+
+    learner = object.__new__(SharedALearner)
+    learner._sa_adaptive_a_enabled = True
+    learner._sa_adaptive_a_strategy = "pareto_knee"
+    learner._sa_adaptive_a_crossfit_interval = 4
+    learner._network = ScheduledNetwork()
+    learner._raw_network = lambda: learner._network
+    learner._known_classes = 0
+    crossfit_calls = []
+
+    def record_crossfit(inputs, targets):
+        crossfit_calls.append((inputs, targets))
+        gradient = torch.ones_like(learner._network.backbone.w_As[0].weight)
+        return ([gradient], [gradient])
+
+    learner._crossfit_adaptive_a_gradients = record_crossfit
+    inputs = torch.ones(4, 2)
+    targets = torch.zeros(4, dtype=torch.long)
+    optimizer = optim.SGD(learner._network.parameters(), lr=0.1)
+
+    learner._cur_task = 0
+    learner._after_backward(optimizer=optimizer)
+    assert len(crossfit_calls) == 0
+    assert learner._network.backbone.calls[-1]["crossfit_gradients"] is None
+
+    learner._cur_task = 1
+    for _ in range(5):
+        learner._after_backward(inputs, targets, optimizer)
+
+    assert len(crossfit_calls) == 2
+    task_one_calls = learner._network.backbone.calls[1:]
+    assert task_one_calls[0]["crossfit_gradients"] is not None
+    assert task_one_calls[1]["cached_modes"] == ["tangent"]
+    assert task_one_calls[1]["cached_utilities"] == [0.75]
+    assert task_one_calls[4]["crossfit_gradients"] is not None
+
+    learner._cur_task = 2
+    learner._after_backward(inputs, targets, optimizer)
+    assert len(crossfit_calls) == 3
+
+
+def test_pareto_task_zero_keeps_current_shared_a_gradients_live(tmp_path):
+    model = _adaptive_model(tmp_path, adaptive_a_strategy="pareto_knee")
+    model.task_id = 0
+    raw_q = torch.randn_like(model.w_As[0].weight)
+    raw_v = torch.randn_like(model.w_As[1].weight)
+    model.w_As[0].weight.grad = raw_q.clone()
+    model.w_As[1].weight.grad = raw_v.clone()
+
+    result = model.apply_adaptive_a_gradients()
+
+    assert result["selection"]["modes"] == ["live"]
+    assert torch.equal(model.w_As[0].weight.grad, raw_q)
+    assert torch.equal(model.w_As[1].weight.grad, raw_v)
+
+
+def test_pareto_cached_mode_projects_the_current_minibatch_gradient(tmp_path):
+    model = _adaptive_model(tmp_path, adaptive_a_strategy="pareto_knee")
+    model.task_id = 1
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+    with torch.no_grad():
+        wrapper.aggregate_q.fill_(1.0)
+        wrapper.aggregate_v.fill_(1.0)
+    raw_q = torch.tensor(
+        [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]]
+    )
+    raw_v = torch.tensor(
+        [[8.0, 7.0, 6.0, 5.0], [4.0, 3.0, 2.0, 1.0]]
+    )
+    model.w_As[0].weight.grad = raw_q.clone()
+    model.w_As[1].weight.grad = raw_v.clone()
+    expected_q = decompose_adaptive_a_gradient(
+        raw_q, wrapper.a_q.weight
+    )["tangent"]
+    expected_v = decompose_adaptive_a_gradient(
+        raw_v, wrapper.a_v.weight
+    )["tangent"]
+
+    result = model.apply_adaptive_a_gradients(
+        cached_modes=["tangent"], cached_utilities=[0.75]
+    )
+
+    assert torch.allclose(model.w_As[0].weight.grad, expected_q)
+    assert torch.allclose(model.w_As[1].weight.grad, expected_v)
+    assert result["selection"]["modes"] == ["tangent"]
+    assert result["selection"]["selected_utilities"] == [0.75]
+
+
+@pytest.mark.parametrize("value", [0, -1, 2.5, True])
+def test_pareto_crossfit_interval_rejects_non_positive_or_non_integer(value):
+    with pytest.raises(ValueError, match="positive integer"):
+        sa_sdlora_module.validate_pareto_crossfit_interval(
+            {"sa_adaptive_a_crossfit_interval": value}
+        )
+
+
+def test_pareto_crossfit_interval_defaults_to_four_and_accepts_eight():
+    assert sa_sdlora_module.validate_pareto_crossfit_interval({}) == 4
+    assert (
+        sa_sdlora_module.validate_pareto_crossfit_interval(
+            {"sa_adaptive_a_crossfit_interval": 8}
+        )
+        == 8
+    )
 
 
 def test_risk_budgeted_model_uses_previous_minibatch_update_as_control(tmp_path):

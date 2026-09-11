@@ -6,6 +6,7 @@ CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 GPU_IDS="${GPU_IDS:-0,1,2,3,4,5,6,7}"
 HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 RUNTIME_DIR="$PROJECT_ROOT/.runtime_pareto_knee_3datasets_tasks_i4_bs128"
+RUN_SUFFIX="${RUN_SUFFIX:-}"
 
 IFS=',' read -r -a gpu_id_list <<< "$GPU_IDS"
 GPU_COUNT="${#gpu_id_list[@]}"
@@ -25,6 +26,7 @@ mkdir -p "$RUNTIME_DIR"
 
 python - "$PROJECT_ROOT" "$RUNTIME_DIR" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -35,13 +37,15 @@ specs = (
     ("inr", "inr_coordinate_stable_adaptive_a_seed1995_nccl.json", 200, 1995),
     ("cub", "cub_coordinate_stable_adaptive_a_seed1_nccl.json", 200, 1),
 )
+run_suffix = os.environ.get("RUN_SUFFIX", "")
+suffix = f"_{run_suffix}" if run_suffix else ""
 
 configs = []
 for dataset, source_name, class_count, seed in specs:
     source = json.loads((root / "exps" / source_name).read_text())
     for task_count in (5, 10, 20):
         increment = class_count // task_count
-        name = f"{dataset}_pareto_knee_seed{seed}_t{task_count}_i4_bs128"
+        name = f"{dataset}_pareto_knee_seed{seed}_t{task_count}_i4_bs128{suffix}"
         config = dict(source)
         config.update(
             {

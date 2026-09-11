@@ -345,6 +345,26 @@ def signed_gradient_utility(
     return numerator / (denominator + eps)
 
 
+def crossfit_dot_utility(
+    train_candidate: Tensor,
+    control_gradient: Tensor,
+    control_candidate: Tensor,
+    train_gradient: Tensor,
+    step_size: float = 1.0,
+) -> Tensor:
+    """Return the symmetric first-order held-out loss decrease."""
+    if train_candidate.shape != control_gradient.shape:
+        raise ValueError("train candidate and control gradient shapes must match")
+    if control_candidate.shape != train_gradient.shape:
+        raise ValueError("control candidate and train gradient shapes must match")
+    if step_size < 0:
+        raise ValueError("step_size must be non-negative")
+    return 0.5 * step_size * (
+        torch.sum(train_candidate * control_gradient)
+        + torch.sum(control_candidate * train_gradient)
+    )
+
+
 def weighted_operator_risk(
     historical_up: Tensor,
     shared_a: Tensor,
@@ -436,6 +456,73 @@ def choose_risk_budgeted_modes(
         "modes": list(selected[2]),
         "selected_risk": selected[0],
         "selected_utility": selected[1],
+    }
+
+
+def choose_pareto_knee_modes(
+    layer_candidates: list[dict[str, dict[str, float]]],
+    eps: float = 1e-12,
+) -> dict:
+    """Choose the Pareto point nearest normalized ideal risk and utility."""
+    frontier = [(0.0, 0.0, ())]
+    for layer in layer_candidates:
+        missing = set(ADAPTIVE_A_MODES) - set(layer)
+        if missing:
+            raise ValueError("missing Adaptive-A modes: {}".format(sorted(missing)))
+        expanded = []
+        for total_risk, total_utility, modes in frontier:
+            for mode in ADAPTIVE_A_MODES:
+                risk = float(layer[mode]["risk"])
+                utility = float(layer[mode]["utility"])
+                if risk < 0:
+                    raise ValueError("candidate risk must be non-negative")
+                expanded.append(
+                    (total_risk + risk, total_utility + utility, modes + (mode,))
+                )
+        expanded.sort(key=lambda item: (item[0], -item[1], item[2]))
+        frontier = []
+        best_utility = float("-inf")
+        for state in expanded:
+            if state[1] > best_utility + eps:
+                frontier.append(state)
+                best_utility = state[1]
+    if not frontier:
+        raise RuntimeError("no Adaptive-A candidates are available")
+
+    min_risk = min(state[0] for state in frontier)
+    max_risk = max(state[0] for state in frontier)
+    min_utility = min(state[1] for state in frontier)
+    max_utility = max(state[1] for state in frontier)
+    risk_span = max_risk - min_risk
+    utility_span = max_utility - min_utility
+
+    def ideal_distance(state):
+        risk, utility, modes = state
+        normalized_risk = (
+            (risk - min_risk) / risk_span if risk_span > eps else 0.0
+        )
+        utility_regret = (
+            (max_utility - utility) / utility_span
+            if utility_span > eps
+            else 0.0
+        )
+        return (
+            normalized_risk * normalized_risk
+            + utility_regret * utility_regret,
+            risk,
+            -utility,
+            modes,
+        )
+
+    selected = min(frontier, key=ideal_distance)
+    live_risk = sum(float(layer["live"]["risk"]) for layer in layer_candidates)
+    implied_ratio = selected[0] / live_risk if live_risk > eps else 0.0
+    return {
+        "modes": list(selected[2]),
+        "selected_risk": selected[0],
+        "selected_utility": selected[1],
+        "implied_risk_ratio": implied_ratio,
+        "pareto_points": len(frontier),
     }
 
 
@@ -1181,9 +1268,12 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.adaptive_a_strategy = str(adaptive_a_strategy)
         self.adaptive_a_risk_budget = float(adaptive_a_risk_budget)
         self.adaptive_a_risk_budget_mode = str(adaptive_a_risk_budget_mode)
-        if self.adaptive_a_strategy not in ("impact_ratio", "risk_budgeted"):
+        if self.adaptive_a_strategy not in (
+            "impact_ratio", "risk_budgeted", "pareto_knee"
+        ):
             raise ValueError(
-                "sa_adaptive_a_strategy must be impact_ratio or risk_budgeted"
+                "sa_adaptive_a_strategy must be impact_ratio, risk_budgeted, "
+                "or pareto_knee"
             )
         if self.adaptive_a_risk_budget < 0:
             raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
@@ -1465,6 +1555,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._adaptive_a_previous_gradients = None
         self._adaptive_a_last_effective_budget = None
         self._adaptive_a_last_live_risk = None
+        self._adaptive_a_last_implied_risk_ratio = None
+        self._adaptive_a_last_pareto_points = None
+        self._adaptive_a_risk_ratios = []
+        self._adaptive_a_pareto_point_counts = []
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -1568,7 +1662,8 @@ class SharedALoRA_ViT_timm(nn.Module):
                         ),
                         capture_input_sketch=(
                             self.adaptive_a_enabled
-                            and self.adaptive_a_strategy == "risk_budgeted"
+                            and self.adaptive_a_strategy
+                            in ("risk_budgeted", "pareto_knee")
                         ),
                     )
                 else:
@@ -1795,6 +1890,9 @@ class SharedALoRA_ViT_timm(nn.Module):
     def apply_adaptive_a_gradients(
         self,
         control_gradients: list[Tensor | None] | None = None,
+        crossfit_gradients: tuple[
+            list[Tensor | None], list[Tensor | None]
+        ] | None = None,
         step_size: float = 1.0,
         momentum_buffers: list[Tensor | None] | None = None,
         momentum: float = 0.0,
@@ -1810,6 +1908,22 @@ class SharedALoRA_ViT_timm(nn.Module):
             self._adaptive_a_previous_gradients = None
             self._adaptive_a_last_effective_budget = None
             self._adaptive_a_last_live_risk = None
+            self._adaptive_a_last_implied_risk_ratio = None
+            self._adaptive_a_last_pareto_points = None
+            self._adaptive_a_risk_ratios = []
+            self._adaptive_a_pareto_point_counts = []
+        if self.adaptive_a_strategy == "pareto_knee":
+            if crossfit_gradients is None:
+                raise ValueError(
+                    "pareto_knee Adaptive-A requires explicit crossfit gradients"
+                )
+            return self._apply_risk_budgeted_adaptive_a(
+                control_gradients,
+                step_size=step_size,
+                momentum_buffers=momentum_buffers,
+                momentum=momentum,
+                crossfit_gradients=crossfit_gradients,
+            )
         if self.adaptive_a_strategy == "risk_budgeted":
             if control_gradients is None:
                 control_gradients = self._adaptive_a_previous_gradients
@@ -1873,7 +1987,12 @@ class SharedALoRA_ViT_timm(nn.Module):
         return {**diagnostics, "layer_gradients": layer_gradients}
 
     def _apply_risk_budgeted_adaptive_a(
-        self, control_gradients, step_size, momentum_buffers, momentum
+        self,
+        control_gradients,
+        step_size,
+        momentum_buffers,
+        momentum,
+        crossfit_gradients=None,
     ):
         """Select exact Frozen/Tangent/Live gradients under one global budget."""
         if step_size < 0:
@@ -1889,6 +2008,11 @@ class SharedALoRA_ViT_timm(nn.Module):
         ]
         if control_gradients is not None and len(control_gradients) != len(self.w_As):
             raise ValueError("control_gradients must match shared-A branches")
+        if crossfit_gradients is not None:
+            if len(crossfit_gradients) != 2:
+                raise ValueError("crossfit gradients must contain two folds")
+            if any(len(fold) != len(self.w_As) for fold in crossfit_gradients):
+                raise ValueError("crossfit gradients must match shared-A branches")
         candidates_by_layer = []
         tensor_candidates = []
         raw_gradients = []
@@ -1934,6 +2058,47 @@ class SharedALoRA_ViT_timm(nn.Module):
                 if control_gradients is not None
                 else None
             )
+            fold_candidates = None
+            if crossfit_gradients is not None:
+                train_q = crossfit_gradients[0][2 * wrapper_index]
+                train_v = crossfit_gradients[0][2 * wrapper_index + 1]
+                heldout_q = crossfit_gradients[1][2 * wrapper_index]
+                heldout_v = crossfit_gradients[1][2 * wrapper_index + 1]
+                if any(
+                    gradient is None
+                    for gradient in (train_q, train_v, heldout_q, heldout_v)
+                ):
+                    raise ValueError("crossfit shared-A gradients cannot be None")
+                train_proposed_q = train_q + (
+                    momentum * momentum_q if momentum_q is not None else 0.0
+                )
+                train_proposed_v = train_v + (
+                    momentum * momentum_v if momentum_v is not None else 0.0
+                )
+                heldout_proposed_q = heldout_q + (
+                    momentum * momentum_q if momentum_q is not None else 0.0
+                )
+                heldout_proposed_v = heldout_v + (
+                    momentum * momentum_v if momentum_v is not None else 0.0
+                )
+                fold_candidates = (
+                    decompose_adaptive_a_gradient(
+                        train_proposed_q, wrapper.a_q.weight
+                    ),
+                    decompose_adaptive_a_gradient(
+                        train_proposed_v, wrapper.a_v.weight
+                    ),
+                    decompose_adaptive_a_gradient(
+                        heldout_proposed_q, wrapper.a_q.weight
+                    ),
+                    decompose_adaptive_a_gradient(
+                        heldout_proposed_v, wrapper.a_v.weight
+                    ),
+                    train_q,
+                    train_v,
+                    heldout_q,
+                    heldout_v,
+                )
             layer = {}
             input_rms = wrapper.historical_input_rms.to(
                 device=gradient_q.device, dtype=gradient_q.dtype
@@ -1944,7 +2109,36 @@ class SharedALoRA_ViT_timm(nn.Module):
                     risk = 0.0
                 else:
                     utility = 0.0
-                    if control_q is not None:
+                    if fold_candidates is not None:
+                        (
+                            train_q_candidates,
+                            train_v_candidates,
+                            heldout_q_candidates,
+                            heldout_v_candidates,
+                            train_q,
+                            train_v,
+                            heldout_q,
+                            heldout_v,
+                        ) = fold_candidates
+                        utility = float(
+                            (
+                                crossfit_dot_utility(
+                                    train_q_candidates[mode],
+                                    heldout_q,
+                                    heldout_q_candidates[mode],
+                                    train_q,
+                                    step_size,
+                                )
+                                + crossfit_dot_utility(
+                                    train_v_candidates[mode],
+                                    heldout_v,
+                                    heldout_v_candidates[mode],
+                                    train_v,
+                                    step_size,
+                                )
+                            ).detach()
+                        )
+                    elif control_q is not None:
                         utility += float(
                             signed_gradient_utility(
                                 q_candidates[mode], control_q, self.adaptive_a_eps
@@ -1982,15 +2176,15 @@ class SharedALoRA_ViT_timm(nn.Module):
         live_risk = sum(
             layer["live"]["risk"] for layer in candidates_by_layer
         )
-        budget = (
-            float("inf")
-            if not has_history
-            else effective_risk_budget(
+        budget = None
+        if not has_history:
+            budget = float("inf")
+        elif self.adaptive_a_strategy == "risk_budgeted":
+            budget = effective_risk_budget(
                 candidates_by_layer,
                 self.adaptive_a_risk_budget,
                 self.adaptive_a_risk_budget_mode,
             )
-        )
         self._adaptive_a_last_effective_budget = budget
         self._adaptive_a_last_live_risk = live_risk
         if not has_history:
@@ -1998,9 +2192,25 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "modes": ["live"] * len(candidates_by_layer),
                 "selected_risk": 0.0,
                 "selected_utility": float(len(candidates_by_layer)),
+                "implied_risk_ratio": 1.0,
+                "pareto_points": 1,
             }
+        elif self.adaptive_a_strategy == "pareto_knee":
+            selection = choose_pareto_knee_modes(candidates_by_layer)
         else:
             selection = choose_risk_budgeted_modes(candidates_by_layer, budget)
+        self._adaptive_a_last_implied_risk_ratio = selection.get(
+            "implied_risk_ratio"
+        )
+        self._adaptive_a_last_pareto_points = selection.get("pareto_points")
+        if self._adaptive_a_last_implied_risk_ratio is not None:
+            self._adaptive_a_risk_ratios.append(
+                self._adaptive_a_last_implied_risk_ratio
+            )
+        if self._adaptive_a_last_pareto_points is not None:
+            self._adaptive_a_pareto_point_counts.append(
+                self._adaptive_a_last_pareto_points
+            )
         for mode, layer, tensors in zip(
             selection["modes"], candidates_by_layer, tensor_candidates
         ):
@@ -2066,14 +2276,14 @@ class SharedALoRA_ViT_timm(nn.Module):
                 for layer in sorted(per_layer)
             ],
         }
-        if self.adaptive_a_strategy == "risk_budgeted":
+        if self.adaptive_a_strategy in ("risk_budgeted", "pareto_knee"):
             mode_counts = {
                 mode: sum(item.get("mode") == mode for item in observations)
                 for mode in ADAPTIVE_A_MODES
             }
             diagnostics.update(
                 {
-                    "strategy": "risk_budgeted",
+                    "strategy": self.adaptive_a_strategy,
                     "mode_counts": mode_counts,
                     "mode_fractions": {
                         mode: mode_counts[mode] / len(observations)
@@ -2090,6 +2300,30 @@ class SharedALoRA_ViT_timm(nn.Module):
                     "risk_budget_mode": self.adaptive_a_risk_budget_mode,
                     "effective_risk_budget": self._adaptive_a_last_effective_budget,
                     "live_risk_reference": self._adaptive_a_last_live_risk,
+                    "implied_risk_ratio": self._adaptive_a_last_implied_risk_ratio,
+                    "pareto_points": self._adaptive_a_last_pareto_points,
+                    "mean_implied_risk_ratio": (
+                        sum(self._adaptive_a_risk_ratios)
+                        / len(self._adaptive_a_risk_ratios)
+                        if self._adaptive_a_risk_ratios
+                        else None
+                    ),
+                    "min_implied_risk_ratio": (
+                        min(self._adaptive_a_risk_ratios)
+                        if self._adaptive_a_risk_ratios
+                        else None
+                    ),
+                    "max_implied_risk_ratio": (
+                        max(self._adaptive_a_risk_ratios)
+                        if self._adaptive_a_risk_ratios
+                        else None
+                    ),
+                    "mean_pareto_points": (
+                        sum(self._adaptive_a_pareto_point_counts)
+                        / len(self._adaptive_a_pareto_point_counts)
+                        if self._adaptive_a_pareto_point_counts
+                        else None
+                    ),
                 }
             )
         return diagnostics

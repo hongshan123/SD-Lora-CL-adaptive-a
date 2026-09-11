@@ -13,6 +13,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 from torch import optim
+from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -22,7 +23,9 @@ from backbone.sa_lora import (
     SharedALoRA_ViT_timm,
     adaptive_a_layer_gradient,
     canonical_down_projection,
+    choose_pareto_knee_modes,
     choose_risk_budgeted_modes,
+    crossfit_dot_utility,
     decompose_adaptive_a_gradient,
     effective_risk_budget,
     low_rank_product_frobenius_norm,
@@ -32,6 +35,7 @@ from backbone.sa_lora import (
 from models.sdlora import Learner as SDLoraLearner
 from models.sa_sdlora import (
     Learner as SharedALearner,
+    crossfit_classification_gradients,
     validate_adaptive_a_config,
 )
 from utils.inc_net import get_backbone
@@ -496,6 +500,187 @@ def test_relative_risk_budget_scales_with_live_candidate_risk():
 def test_relative_risk_budget_requires_supported_mode():
     with pytest.raises(ValueError, match="risk_budget_mode"):
         effective_risk_budget([], 0.5, "unknown")
+
+
+def test_pareto_knee_selects_balanced_nondominated_mode():
+    layers = [
+        {
+            "frozen": {"risk": 0.0, "utility": 0.0},
+            "tangent": {"risk": 0.2, "utility": 0.8},
+            "live": {"risk": 1.0, "utility": 1.0},
+        }
+    ]
+
+    selected = choose_pareto_knee_modes(layers)
+
+    assert selected["modes"] == ["tangent"]
+    assert selected["selected_risk"] == pytest.approx(0.2)
+    assert selected["selected_utility"] == pytest.approx(0.8)
+    assert selected["implied_risk_ratio"] == pytest.approx(0.2)
+
+
+def test_pareto_knee_is_invariant_to_positive_affine_objective_scaling():
+    layers = [
+        {
+            "frozen": {"risk": 2.0, "utility": -4.0},
+            "tangent": {"risk": 4.0, "utility": 4.0},
+            "live": {"risk": 12.0, "utility": 6.0},
+        }
+    ]
+    scaled = [
+        {
+            mode: {
+                "risk": 100.0 * values["risk"] + 7.0,
+                "utility": 0.01 * values["utility"] - 3.0,
+            }
+            for mode, values in layers[0].items()
+        }
+    ]
+
+    assert choose_pareto_knee_modes(layers)["modes"] == ["tangent"]
+    assert choose_pareto_knee_modes(scaled)["modes"] == ["tangent"]
+
+
+def test_pareto_knee_requires_explicit_crossfit_gradients(tmp_path):
+    model = _adaptive_model(tmp_path, adaptive_a_strategy="pareto_knee")
+    model.task_id = 1
+    model.w_As[0].weight.grad = torch.ones_like(model.w_As[0].weight)
+    model.w_As[1].weight.grad = torch.ones_like(model.w_As[1].weight)
+
+    with pytest.raises(ValueError, match="crossfit"):
+        model.apply_adaptive_a_gradients()
+
+
+def test_pareto_balanced_crossfit_utility_selects_tangent_update(tmp_path):
+    model = _adaptive_model(tmp_path, adaptive_a_strategy="pareto_knee")
+    model.task_id = 1
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+    with torch.no_grad():
+        shared = torch.tensor(
+            [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]
+        )
+        model.w_As[0].weight.copy_(shared)
+        model.w_As[1].weight.copy_(shared)
+        wrapper.aggregate_q.fill_(1.0)
+        wrapper.aggregate_v.fill_(1.0)
+    full = torch.tensor(
+        [[1.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 1.0]]
+    )
+    model.w_As[0].weight.grad = full.clone()
+    model.w_As[1].weight.grad = full.clone()
+    crossfit = ([full.clone(), full.clone()], [full.clone(), full.clone()])
+
+    selected = model.apply_adaptive_a_gradients(
+        crossfit_gradients=crossfit,
+        step_size=0.1,
+    )
+
+    expected_tangent = torch.tensor(
+        [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]
+    )
+    assert selected["selection"]["modes"] == ["tangent"]
+    assert torch.allclose(model.w_As[0].weight.grad, expected_tangent)
+    assert torch.allclose(model.w_As[1].weight.grad, expected_tangent)
+    assert 0.0 <= selected["selection"]["implied_risk_ratio"] <= 1.0
+    assert selected["implied_risk_ratio"] == pytest.approx(
+        selected["selection"]["implied_risk_ratio"]
+    )
+    assert selected["mean_implied_risk_ratio"] == pytest.approx(
+        selected["selection"]["implied_risk_ratio"]
+    )
+    assert selected["pareto_points"] >= 2
+
+
+def test_crossfit_dot_utility_matches_symmetric_first_order_gain():
+    train_gradient = torch.tensor([[1.0, 2.0]])
+    control_gradient = torch.tensor([[3.0, -1.0]])
+    train_candidate = torch.tensor([[0.5, 1.0]])
+    control_candidate = torch.tensor([[2.0, -0.5]])
+
+    utility = crossfit_dot_utility(
+        train_candidate,
+        control_gradient,
+        control_candidate,
+        train_gradient,
+        step_size=0.2,
+    )
+
+    expected = 0.1 * (
+        torch.sum(train_candidate * control_gradient)
+        + torch.sum(control_candidate * train_gradient)
+    )
+    assert utility == pytest.approx(float(expected))
+
+
+def test_crossfit_classification_gradients_use_disjoint_alternating_folds():
+    network = _TrainingNet()
+    with torch.no_grad():
+        network.weight.weight.zero_()
+        network.weight.bias.zero_()
+    inputs = torch.tensor(
+        [[1.0, 0.0], [0.0, 1.0], [2.0, 0.0], [0.0, 2.0]]
+    )
+    targets = torch.tensor([0, 1, 0, 1])
+
+    train, control = crossfit_classification_gradients(
+        network,
+        [network.weight.weight],
+        inputs,
+        targets,
+        known_classes=0,
+    )
+
+    assert torch.allclose(
+        train[0], torch.tensor([[-0.75, 0.0], [0.75, 0.0]])
+    )
+    assert torch.allclose(
+        control[0], torch.tensor([[0.0, 0.75], [0.0, -0.75]])
+    )
+
+
+def test_pareto_learner_passes_crossfit_gradients_to_backbone():
+    class CrossfitBackbone(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w_As = nn.ModuleList([nn.Linear(2, 2, bias=False)])
+            self.adaptive_a_strategy = "pareto_knee"
+            self.received = None
+
+        def apply_adaptive_a_gradients(self, **kwargs):
+            self.received = kwargs
+
+    class CrossfitNetwork(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.backbone = CrossfitBackbone()
+
+        def forward(self, inputs, ortho_loss=False):
+            logits = self.backbone.w_As[0](inputs)
+            output = {"logits": logits, "features": logits}
+            if ortho_loss:
+                return output, torch.zeros((), device=inputs.device)
+            return output
+
+    learner = object.__new__(SharedALearner)
+    learner._sa_adaptive_a_enabled = True
+    learner._sa_adaptive_a_strategy = "pareto_knee"
+    learner._network = CrossfitNetwork()
+    learner._known_classes = 0
+    learner._raw_network = lambda: learner._network
+    inputs = torch.tensor(
+        [[1.0, 0.0], [0.0, 1.0], [2.0, 0.0], [0.0, 2.0]]
+    )
+    targets = torch.tensor([0, 1, 0, 1])
+    optimizer = optim.SGD(learner._network.parameters(), lr=0.1, momentum=0.9)
+    F.cross_entropy(learner._network(inputs)["logits"], targets).backward()
+
+    learner._after_backward(inputs, targets, optimizer)
+
+    received = learner._network.backbone.received
+    assert received is not None
+    assert "crossfit_gradients" in received
+    assert len(received["crossfit_gradients"]) == 2
+    assert len(received["crossfit_gradients"][0]) == 1
 
 
 def test_risk_budgeted_model_uses_previous_minibatch_update_as_control(tmp_path):

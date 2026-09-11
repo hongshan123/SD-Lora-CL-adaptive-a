@@ -3,6 +3,7 @@ import copy
 import json
 import math
 import os
+from contextlib import nullcontext
 
 import numpy as np
 import timm
@@ -109,9 +110,12 @@ def validate_adaptive_a_config(args):
         raise ValueError("sa_adaptive_a_gate_momentum must be in [0, 1)")
     if settings["adaptive_a_eps"] <= 0:
         raise ValueError("sa_adaptive_a_eps must be positive")
-    if settings["adaptive_a_strategy"] not in ("impact_ratio", "risk_budgeted"):
+    if settings["adaptive_a_strategy"] not in (
+        "impact_ratio", "risk_budgeted", "pareto_knee"
+    ):
         raise ValueError(
-            "sa_adaptive_a_strategy must be impact_ratio or risk_budgeted"
+            "sa_adaptive_a_strategy must be impact_ratio, risk_budgeted, "
+            "or pareto_knee"
         )
     if settings["adaptive_a_risk_budget"] < 0:
         raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
@@ -140,11 +144,44 @@ def validate_adaptive_a_config(args):
             "sa_live_a_coordinate_align=True"
         )
     if (
-        settings["adaptive_a_strategy"] == "risk_budgeted"
+        settings["adaptive_a_strategy"] in ("risk_budgeted", "pareto_knee")
         and args.get("optimizer", "sgd").lower() != "sgd"
     ):
-        raise ValueError("risk_budgeted Adaptive-A currently requires SGD")
+        raise ValueError("discrete Adaptive-A strategies currently require SGD")
     return settings
+
+
+def crossfit_classification_gradients(
+    network, parameters, inputs, targets, known_classes
+):
+    """Compute CE gradients on disjoint alternating folds of one batch."""
+    if inputs.shape[0] < 2:
+        raise ValueError("crossfit classification requires at least two samples")
+    output = network(inputs, ortho_loss=True)
+    if isinstance(output, tuple):
+        output = output[0]
+    logits = output["logits"][:, known_classes:]
+    local_targets = targets - known_classes
+    train_loss = F.cross_entropy(logits[0::2], local_targets[0::2])
+    control_loss = F.cross_entropy(logits[1::2], local_targets[1::2])
+    train_gradients = torch.autograd.grad(
+        train_loss,
+        parameters,
+        retain_graph=True,
+        allow_unused=True,
+    )
+    control_gradients = torch.autograd.grad(
+        control_loss,
+        parameters,
+        allow_unused=True,
+    )
+    return (
+        [None if gradient is None else gradient.detach() for gradient in train_gradients],
+        [
+            None if gradient is None else gradient.detach()
+            for gradient in control_gradients
+        ],
+    )
 
 
 def collective_device():
@@ -518,7 +555,7 @@ class Learner(SDLoraLearner):
         raw_network = self._raw_network()
         backbone = raw_network.backbone
         strategy = getattr(self, "_sa_adaptive_a_strategy", "impact_ratio")
-        if strategy == "risk_budgeted":
+        if strategy in ("risk_budgeted", "pareto_knee"):
             step_size = (
                 float(optimizer.param_groups[0]["lr"])
                 if optimizer is not None
@@ -535,14 +572,62 @@ class Learner(SDLoraLearner):
                     optimizer.state.get(module.weight, {}).get("momentum_buffer")
                     for module in backbone.w_As
                 ]
+            crossfit_gradients = None
+            if strategy == "pareto_knee":
+                if inputs is None or targets is None:
+                    raise ValueError(
+                        "pareto_knee Adaptive-A requires batch inputs and targets"
+                    )
+                crossfit_gradients = self._crossfit_adaptive_a_gradients(
+                    inputs, targets
+                )
             backbone.apply_adaptive_a_gradients(
                 step_size=step_size,
                 momentum_buffers=momentum_buffers,
                 momentum=momentum,
+                crossfit_gradients=crossfit_gradients,
             )
         else:
             backbone.apply_adaptive_a_gradients()
         return None
+
+    def _crossfit_adaptive_a_gradients(self, inputs, targets):
+        """Compute synchronized two-fold CE gradients for Pareto utility."""
+        raw_network = self._raw_network()
+        backbone = raw_network.backbone
+        parameters = [module.weight for module in backbone.w_As]
+        wrappers = [
+            block.attn.qkv
+            for block in getattr(backbone.lora_vit, "blocks", [])
+            if hasattr(block.attn.qkv, "capture_input_sketch")
+        ] if hasattr(backbone, "lora_vit") else []
+        capture_states = [wrapper.capture_input_sketch for wrapper in wrappers]
+        for wrapper in wrappers:
+            wrapper.capture_input_sketch = False
+        sync_context = (
+            self._network.no_sync()
+            if hasattr(self._network, "no_sync")
+            else nullcontext()
+        )
+        try:
+            with sync_context, rng_preserving():
+                folds = crossfit_classification_gradients(
+                    self._network,
+                    parameters,
+                    inputs,
+                    targets,
+                    known_classes=self._known_classes,
+                )
+        finally:
+            for wrapper, capture_state in zip(wrappers, capture_states):
+                wrapper.capture_input_sketch = capture_state
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            for fold in folds:
+                for gradient in fold:
+                    if gradient is not None:
+                        dist.all_reduce(gradient, op=dist.ReduceOp.SUM)
+                        gradient.div_(dist.get_world_size())
+        return folds
 
     def _log_adaptive_a_diagnostics(self):
         """Log task-local Adaptive-A aggregates without serializing them."""
@@ -581,6 +666,24 @@ class Learner(SDLoraLearner):
                 float(self.args.get("sa_adaptive_a_risk_budget", 0.05)),
                 diagnostics["effective_risk_budget"],
                 diagnostics["risk_budget_mode"],
+                diagnostics["live_risk_reference"],
+            )
+        elif diagnostics.get("strategy") == "pareto_knee":
+            logging.info(
+                "[ParetoKnee-AdaptiveA] task %d: mode_counts=%s "
+                "mode_fractions=%s mean_crossfit_utility=%.6e "
+                "mean_operator_risk=%.6e implied_risk_ratio_mean=%.6f "
+                "implied_risk_ratio_range=[%.6f,%.6f] "
+                "mean_pareto_points=%.2f live_risk=%.6e",
+                self._cur_task,
+                diagnostics["mode_counts"],
+                diagnostics["mode_fractions"],
+                diagnostics["mean_selected_utility"],
+                diagnostics["mean_selected_risk"],
+                diagnostics["mean_implied_risk_ratio"],
+                diagnostics["min_implied_risk_ratio"],
+                diagnostics["max_implied_risk_ratio"],
+                diagnostics["mean_pareto_points"],
                 diagnostics["live_risk_reference"],
             )
 

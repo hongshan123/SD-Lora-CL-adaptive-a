@@ -327,6 +327,123 @@ def decompose_adaptive_a_gradient(
     }
 
 
+def project_functional_halfspace_directions(
+    proposed_directions: Sequence[Tensor],
+    stability_gradients: Sequence[Tensor],
+    shared_as: Sequence[Tensor],
+    conflict_tol: float = 1e-12,
+    normal_tol: float = 1e-12,
+    min_normal_fraction: float = 1e-4,
+) -> dict:
+    """Project shared-A directions onto one global functional halfspace."""
+    branch_count = len(proposed_directions)
+    if branch_count == 0:
+        raise ValueError("at least one shared-A direction is required")
+    if len(stability_gradients) != branch_count or len(shared_as) != branch_count:
+        raise ValueError("direction, stability, and shared-A counts must match")
+    for direction, stability_gradient, shared_a in zip(
+        proposed_directions, stability_gradients, shared_as
+    ):
+        if not all(
+            isinstance(tensor, Tensor)
+            for tensor in (direction, stability_gradient, shared_a)
+        ):
+            raise ValueError("directions, stability gradients, and shared As must be tensors")
+        if (
+            direction.shape != stability_gradient.shape
+            or direction.shape != shared_a.shape
+        ):
+            raise ValueError(
+                "direction, stability gradient, and shared-A shapes must match"
+            )
+
+    proposed_components = [
+        decompose_adaptive_a_gradient(direction, shared_a)
+        for direction, shared_a in zip(proposed_directions, shared_as)
+    ]
+    stability_components = [
+        decompose_adaptive_a_gradient(stability_gradient, shared_a)
+        for stability_gradient, shared_a in zip(stability_gradients, shared_as)
+    ]
+
+    pre_inner = sum(
+        float(
+            torch.sum(
+                stability_gradient.to(dtype=torch.float64)
+                * direction.to(dtype=torch.float64)
+            )
+        )
+        for stability_gradient, direction in zip(
+            stability_gradients, proposed_directions
+        )
+    )
+    stability_norm2 = sum(
+        float(torch.sum(stability_gradient.to(dtype=torch.float64).square()))
+        for stability_gradient in stability_gradients
+    )
+    normal_norm2 = sum(
+        float(
+            torch.sum(component["perpendicular"].to(dtype=torch.float64).square())
+        )
+        for component in stability_components
+    )
+    normal_fraction = (
+        normal_norm2 / stability_norm2 if stability_norm2 > 0.0 else 0.0
+    )
+
+    directions = [direction.clone() for direction in proposed_directions]
+    mode = "identity"
+    correction_ratio = 0.0
+    if stability_norm2 <= normal_tol:
+        mode = "degenerate"
+    elif pre_inner < -conflict_tol:
+        if (
+            normal_norm2 > normal_tol
+            and normal_fraction >= min_normal_fraction
+        ):
+            correction_scale = pre_inner / normal_norm2
+            directions = [
+                direction - correction_scale * component["perpendicular"]
+                for direction, component in zip(directions, stability_components)
+            ]
+            mode = "normal"
+            correction_norm2 = correction_scale * correction_scale * normal_norm2
+        else:
+            correction_scale = pre_inner / stability_norm2
+            directions = [
+                direction - correction_scale * stability_gradient
+                for direction, stability_gradient in zip(
+                    directions, stability_gradients
+                )
+            ]
+            mode = "full"
+            correction_norm2 = correction_scale * correction_scale * stability_norm2
+        proposed_norm2 = sum(
+            float(torch.sum(component["live"].to(dtype=torch.float64).square()))
+            for component in proposed_components
+        )
+        if proposed_norm2 > 0.0:
+            correction_ratio = math.sqrt(correction_norm2 / proposed_norm2)
+
+    post_inner = sum(
+        float(
+            torch.sum(
+                stability_gradient.to(dtype=torch.float64)
+                * direction.to(dtype=torch.float64)
+            )
+        )
+        for stability_gradient, direction in zip(stability_gradients, directions)
+    )
+    return {
+        "directions": directions,
+        "mode": mode,
+        "pre_inner": pre_inner,
+        "post_inner": post_inner,
+        "normal_fraction": normal_fraction,
+        "correction_ratio": correction_ratio,
+    }
+
+
 def signed_gradient_utility(
     candidate: Tensor, control_gradient: Tensor, eps: float = 1e-8
 ) -> Tensor:

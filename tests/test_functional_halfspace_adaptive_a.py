@@ -130,6 +130,50 @@ def test_functional_halfspace_uses_full_projection_for_row_space_stability():
     assert result["normal_fraction"] == pytest.approx(0.0)
 
 
+def test_functional_halfspace_uses_full_projection_for_small_normal_fraction():
+    """Ignoring the fraction threshold would wrongly select normal projection."""
+    proposed = [torch.tensor([[-10.0, -1.0]])]
+    stability = [torch.tensor([[10.0, 1.0]])]
+    shared_as = [torch.tensor([[1.0, 0.0]])]
+
+    result = project_functional_halfspace_directions(
+        proposed, stability, shared_as, min_normal_fraction=0.1
+    )
+
+    assert result["mode"] == "full"
+    assert torch.equal(result["directions"][0], torch.zeros_like(proposed[0]))
+    assert result["normal_fraction"] == pytest.approx(1.0 / 101.0)
+
+
+def test_functional_halfspace_preserves_proposed_dtype_and_device():
+    """Mixed precision stability tensors must not promote the output direction."""
+    proposed = [torch.tensor([[-2.0, -2.0, 0.0]], dtype=torch.float16)]
+    stability = [torch.tensor([[2.0, 2.0, 0.0]], dtype=torch.float32)]
+    shared_as = [torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32)]
+
+    result = project_functional_halfspace_directions(
+        proposed, stability, shared_as
+    )
+
+    projected = result["directions"][0]
+    assert result["mode"] == "normal"
+    assert projected.dtype == proposed[0].dtype
+    assert projected.device == proposed[0].device
+    assert torch.equal(
+        projected, torch.tensor([[-2.0, 2.0, 0.0]], dtype=torch.float16)
+    )
+
+
+def test_functional_halfspace_rejects_per_branch_device_mismatches():
+    """Paired tensors on different devices must fail before projection math."""
+    with pytest.raises(ValueError, match="devices must match"):
+        project_functional_halfspace_directions(
+            [torch.tensor([[-2.0, 2.0]])],
+            [torch.empty((1, 2), device="meta")],
+            [torch.tensor([[1.0, 0.0]])],
+        )
+
+
 def test_functional_halfspace_aggregates_float32_products_in_float64():
     """Float32 product overflow must not turn a valid full projection into NaNs."""
     proposed = [torch.tensor([[-1e20, 3.0]], dtype=torch.float32)]

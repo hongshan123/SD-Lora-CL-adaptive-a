@@ -356,6 +356,13 @@ def project_functional_halfspace_directions(
             raise ValueError(
                 "direction, stability gradient, and shared-A shapes must match"
             )
+        if (
+            direction.device != stability_gradient.device
+            or direction.device != shared_a.device
+        ):
+            raise ValueError(
+                "direction, stability gradient, and shared-A devices must match"
+            )
 
     proposed_components = [
         decompose_adaptive_a_gradient(direction, shared_a)
@@ -403,7 +410,11 @@ def project_functional_halfspace_directions(
         ):
             correction_scale = pre_inner / normal_norm2
             directions = [
-                direction - correction_scale * component["perpendicular"]
+                direction
+                - correction_scale
+                * component["perpendicular"].to(
+                    device=direction.device, dtype=direction.dtype
+                )
                 for direction, component in zip(directions, stability_components)
             ]
             mode = "normal"
@@ -411,7 +422,11 @@ def project_functional_halfspace_directions(
         else:
             correction_scale = pre_inner / stability_norm2
             directions = [
-                direction - correction_scale * stability_gradient
+                direction
+                - correction_scale
+                * stability_gradient.to(
+                    device=direction.device, dtype=direction.dtype
+                )
                 for direction, stability_gradient in zip(
                     directions, stability_gradients
                 )

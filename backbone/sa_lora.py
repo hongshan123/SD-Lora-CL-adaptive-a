@@ -1343,6 +1343,9 @@ class SharedALoRA_ViT_timm(nn.Module):
         adaptive_a_strategy="impact_ratio",
         adaptive_a_risk_budget=0.05,
         adaptive_a_risk_budget_mode="absolute",
+        functional_conflict_tol=1e-12,
+        functional_normal_tol=1e-12,
+        functional_min_normal_fraction=1e-4,
         resume=False,
     ):
         super().__init__()
@@ -1399,12 +1402,17 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.adaptive_a_strategy = str(adaptive_a_strategy)
         self.adaptive_a_risk_budget = float(adaptive_a_risk_budget)
         self.adaptive_a_risk_budget_mode = str(adaptive_a_risk_budget_mode)
+        self.functional_conflict_tol = float(functional_conflict_tol)
+        self.functional_normal_tol = float(functional_normal_tol)
+        self.functional_min_normal_fraction = float(
+            functional_min_normal_fraction
+        )
         if self.adaptive_a_strategy not in (
-            "impact_ratio", "risk_budgeted", "pareto_knee"
+            "impact_ratio", "risk_budgeted", "pareto_knee", "functional_halfspace"
         ):
             raise ValueError(
                 "sa_adaptive_a_strategy must be impact_ratio, risk_budgeted, "
-                "or pareto_knee"
+                "pareto_knee, or functional_halfspace"
             )
         if self.adaptive_a_risk_budget < 0:
             raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
@@ -1420,6 +1428,14 @@ class SharedALoRA_ViT_timm(nn.Module):
             raise ValueError("sa_adaptive_a_gate_momentum must be in [0, 1)")
         if self.adaptive_a_eps <= 0:
             raise ValueError("sa_adaptive_a_eps must be positive")
+        if self.functional_conflict_tol < 0:
+            raise ValueError("sa_functional_conflict_tol must be non-negative")
+        if self.functional_normal_tol <= 0:
+            raise ValueError("sa_functional_normal_tol must be positive")
+        if not 0.0 <= self.functional_min_normal_fraction <= 1.0:
+            raise ValueError(
+                "sa_functional_min_normal_fraction must be in [0, 1]"
+            )
         if self.adaptive_a_enabled and not train_a_all_tasks:
             raise ValueError(
                 "sa_adaptive_a_enabled requires sa_train_a_all_tasks=True"
@@ -1690,6 +1706,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._adaptive_a_last_pareto_points = None
         self._adaptive_a_risk_ratios = []
         self._adaptive_a_pareto_point_counts = []
+        self._functional_halfspace_observations = []
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -2021,6 +2038,7 @@ class SharedALoRA_ViT_timm(nn.Module):
     def apply_adaptive_a_gradients(
         self,
         control_gradients: list[Tensor | None] | None = None,
+        stability_gradients: list[Tensor | None] | None = None,
         crossfit_gradients: tuple[
             list[Tensor | None], list[Tensor | None]
         ] | None = None,
@@ -2045,6 +2063,13 @@ class SharedALoRA_ViT_timm(nn.Module):
             self._adaptive_a_last_pareto_points = None
             self._adaptive_a_risk_ratios = []
             self._adaptive_a_pareto_point_counts = []
+            self._functional_halfspace_observations = []
+        if self.adaptive_a_strategy == "functional_halfspace":
+            return self._apply_functional_halfspace_adaptive_a(
+                stability_gradients,
+                momentum_buffers=momentum_buffers,
+                momentum=momentum,
+            )
         if self.adaptive_a_strategy == "pareto_knee":
             if (cached_modes is None) != (cached_utilities is None):
                 raise ValueError(
@@ -2128,6 +2153,56 @@ class SharedALoRA_ViT_timm(nn.Module):
         if diagnostics is None:
             return None
         return {**diagnostics, "layer_gradients": layer_gradients}
+
+    def _apply_functional_halfspace_adaptive_a(
+        self, stability_gradients, momentum_buffers, momentum
+    ):
+        """Write shared-A gradients that make SGD apply one global projection."""
+        if self.task_id == 0 or stability_gradients is None:
+            return None
+        if len(stability_gradients) != len(self.w_As):
+            raise ValueError("stability_gradients must match shared-A branches")
+        if not 0.0 <= momentum < 1.0:
+            raise ValueError("momentum must be in [0, 1)")
+        if momentum_buffers is not None and len(momentum_buffers) != len(self.w_As):
+            raise ValueError("momentum_buffers must match shared-A branches")
+
+        gradients = [module.weight.grad for module in self.w_As]
+        if any(gradient is None for gradient in gradients):
+            return None
+        if any(gradient is None for gradient in stability_gradients):
+            return None
+        proposed_directions = []
+        for index, gradient in enumerate(gradients):
+            buffer = (
+                momentum_buffers[index]
+                if momentum_buffers is not None
+                else None
+            )
+            proposed_directions.append(
+                gradient + momentum * buffer if buffer is not None else gradient
+            )
+        projection = project_functional_halfspace_directions(
+            proposed_directions,
+            stability_gradients,
+            [module.weight for module in self.w_As],
+            conflict_tol=self.functional_conflict_tol,
+            normal_tol=self.functional_normal_tol,
+            min_normal_fraction=self.functional_min_normal_fraction,
+        )
+        with torch.no_grad():
+            for index, (module, direction) in enumerate(
+                zip(self.w_As, projection["directions"])
+            ):
+                buffer = (
+                    momentum_buffers[index]
+                    if momentum_buffers is not None
+                    else None
+                )
+                gradient = direction - momentum * buffer if buffer is not None else direction
+                module.weight.grad.copy_(gradient)
+        self._functional_halfspace_observations.append(projection)
+        return self.adaptive_a_diagnostics()
 
     def _apply_risk_budgeted_adaptive_a(
         self,
@@ -2428,6 +2503,40 @@ class SharedALoRA_ViT_timm(nn.Module):
 
     def adaptive_a_diagnostics(self) -> dict | None:
         """Return aggregate task-local Adaptive-A gate diagnostics."""
+        if self.adaptive_a_strategy == "functional_halfspace":
+            observations = self._functional_halfspace_observations
+            if not observations:
+                return None
+            modes = [item["mode"] for item in observations]
+            return {
+                "strategy": "functional_halfspace",
+                "observations": len(observations),
+                "conflicts": sum(
+                    item["pre_inner"] < -self.functional_conflict_tol
+                    for item in observations
+                ),
+                "normal_projections": sum(mode == "normal" for mode in modes),
+                "full_fallbacks": sum(mode == "full" for mode in modes),
+                "degenerate_noops": sum(
+                    mode == "degenerate" for mode in modes
+                ),
+                "mean_pre_inner": sum(
+                    item["pre_inner"] for item in observations
+                )
+                / len(observations),
+                "mean_post_inner": sum(
+                    item["post_inner"] for item in observations
+                )
+                / len(observations),
+                "mean_normal_fraction": sum(
+                    item["normal_fraction"] for item in observations
+                )
+                / len(observations),
+                "mean_correction_ratio": sum(
+                    item["correction_ratio"] for item in observations
+                )
+                / len(observations),
+            }
         if not self.adaptive_a_enabled or not self._adaptive_a_observations:
             return None
         observations = self._adaptive_a_observations

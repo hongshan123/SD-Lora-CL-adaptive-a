@@ -103,6 +103,11 @@ def validate_adaptive_a_config(args):
             args.get("sa_adaptive_a_risk_budget_mode", "absolute")
         ),
     }
+    functional_conflict_tol = float(args.get("sa_functional_conflict_tol", 1e-12))
+    functional_normal_tol = float(args.get("sa_functional_normal_tol", 1e-12))
+    functional_min_normal_fraction = float(
+        args.get("sa_functional_min_normal_fraction", 1e-4)
+    )
     if settings["adaptive_a_stability_weight"] < 0:
         raise ValueError("sa_adaptive_a_stability_weight must be non-negative")
     if not 0.0 <= settings["adaptive_a_gate_floor"] <= 1.0:
@@ -112,17 +117,31 @@ def validate_adaptive_a_config(args):
     if settings["adaptive_a_eps"] <= 0:
         raise ValueError("sa_adaptive_a_eps must be positive")
     if settings["adaptive_a_strategy"] not in (
-        "impact_ratio", "risk_budgeted", "pareto_knee"
+        "impact_ratio", "risk_budgeted", "pareto_knee", "functional_halfspace"
     ):
         raise ValueError(
             "sa_adaptive_a_strategy must be impact_ratio, risk_budgeted, "
-            "or pareto_knee"
+            "pareto_knee, or functional_halfspace"
         )
     if settings["adaptive_a_risk_budget"] < 0:
         raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
     if settings["adaptive_a_risk_budget_mode"] not in ("absolute", "relative"):
         raise ValueError(
             "sa_adaptive_a_risk_budget_mode must be absolute or relative"
+        )
+    if functional_conflict_tol < 0:
+        raise ValueError("sa_functional_conflict_tol must be non-negative")
+    if functional_normal_tol <= 0:
+        raise ValueError("sa_functional_normal_tol must be positive")
+    if not 0.0 <= functional_min_normal_fraction <= 1.0:
+        raise ValueError("sa_functional_min_normal_fraction must be in [0, 1]")
+    if settings["adaptive_a_strategy"] == "functional_halfspace":
+        settings.update(
+            {
+                "functional_conflict_tol": functional_conflict_tol,
+                "functional_normal_tol": functional_normal_tol,
+                "functional_min_normal_fraction": functional_min_normal_fraction,
+            }
         )
     if not settings["adaptive_a_enabled"]:
         return settings
@@ -145,10 +164,11 @@ def validate_adaptive_a_config(args):
             "sa_live_a_coordinate_align=True"
         )
     if (
-        settings["adaptive_a_strategy"] in ("risk_budgeted", "pareto_knee")
+        settings["adaptive_a_strategy"]
+        in ("risk_budgeted", "pareto_knee", "functional_halfspace")
         and args.get("optimizer", "sgd").lower() != "sgd"
     ):
-        raise ValueError("discrete Adaptive-A strategies currently require SGD")
+        raise ValueError("functional and discrete Adaptive-A strategies require SGD")
     return settings
 
 
@@ -405,12 +425,13 @@ class Learner(SDLoraLearner):
 
     def __init__(self, args):
         super().__init__(args)
-        self._sa_adaptive_a_enabled = validate_adaptive_a_config(args)[
-            "adaptive_a_enabled"
-        ]
-        self._sa_adaptive_a_strategy = validate_adaptive_a_config(args)[
-            "adaptive_a_strategy"
-        ]
+        adaptive_a_settings = validate_adaptive_a_config(args)
+        self._sa_adaptive_a_enabled = adaptive_a_settings["adaptive_a_enabled"]
+        self._sa_adaptive_a_strategy = adaptive_a_settings["adaptive_a_strategy"]
+        self._sa_functional_halfspace_enabled = (
+            self._sa_adaptive_a_enabled
+            and self._sa_adaptive_a_strategy == "functional_halfspace"
+        )
         self._sa_adaptive_a_crossfit_interval = validate_pareto_crossfit_interval(
             args
         )
@@ -585,6 +606,33 @@ class Learner(SDLoraLearner):
         raw_network = self._raw_network()
         backbone = raw_network.backbone
         strategy = getattr(self, "_sa_adaptive_a_strategy", "impact_ratio")
+        if strategy == "functional_halfspace":
+            momentum = (
+                float(optimizer.param_groups[0].get("momentum", 0.0))
+                if optimizer is not None
+                else 0.0
+            )
+            momentum_buffers = (
+                [
+                    optimizer.state.get(module.weight, {}).get(
+                        "momentum_buffer"
+                    )
+                    for module in backbone.w_As
+                ]
+                if optimizer is not None
+                else None
+            )
+            stability_gradients = (
+                self._functional_stability_gradients(inputs)
+                if self._cur_task > 0 and inputs is not None
+                else None
+            )
+            backbone.apply_adaptive_a_gradients(
+                stability_gradients=stability_gradients,
+                momentum_buffers=momentum_buffers,
+                momentum=momentum,
+            )
+            return None
         if strategy in ("risk_budgeted", "pareto_knee"):
             step_size = (
                 float(optimizer.param_groups[0]["lr"])
@@ -650,6 +698,61 @@ class Learner(SDLoraLearner):
             backbone.apply_adaptive_a_gradients()
         return None
 
+    def _functional_stability_gradients(self, inputs):
+        """Return DDP-averaged task-start-teacher gradients for shared A only."""
+        if self._cur_task == 0:
+            return None
+        if self._hbd_teacher is None:
+            raise RuntimeError(
+                "functional_halfspace teacher missing for task {}; snapshot "
+                "must be created before training".format(self._cur_task)
+            )
+        raw_network = self._raw_network()
+        backbone = raw_network.backbone
+        parameters = [module.weight for module in backbone.w_As]
+        wrappers = [
+            block.attn.qkv
+            for block in getattr(backbone.lora_vit, "blocks", [])
+            if hasattr(block.attn.qkv, "capture_input_sketch")
+        ] if hasattr(backbone, "lora_vit") else []
+        capture_states = [wrapper.capture_input_sketch for wrapper in wrappers]
+        for wrapper in wrappers:
+            wrapper.capture_input_sketch = False
+        student_captures = []
+        handles = register_live_a_historical_capture_hooks(
+            backbone, student_captures
+        )
+        try:
+            with rng_preserving(), torch.enable_grad():
+                backbone(inputs)
+                with torch.no_grad():
+                    teacher_outputs = live_a_historical_outputs(
+                        self._hbd_teacher,
+                        inputs,
+                        self._hbd_teacher_captures,
+                    )
+                distance = hbd_historical_branch_distance(
+                    student_captures, teacher_outputs
+                )
+                gradients = list(
+                    torch.autograd.grad(
+                        distance, parameters, allow_unused=True
+                    )
+                )
+        finally:
+            for handle in handles:
+                handle.remove()
+            for wrapper, capture_state in zip(wrappers, capture_states):
+                wrapper.capture_input_sketch = capture_state
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            for index, gradient in enumerate(gradients):
+                if gradient is not None:
+                    gradient = gradient.contiguous()
+                    dist.all_reduce(gradient, op=dist.ReduceOp.SUM)
+                    gradient.div_(dist.get_world_size())
+                    gradients[index] = gradient
+        return gradients
+
     def _reset_pareto_schedule_if_needed(self):
         """Keep the transient Pareto decision cache strictly task-local."""
         if getattr(self, "_sa_pareto_schedule_task_id", None) == self._cur_task:
@@ -704,6 +807,25 @@ class Learner(SDLoraLearner):
         """Log task-local Adaptive-A aggregates without serializing them."""
         diagnostics = self._raw_network().backbone.adaptive_a_diagnostics()
         if diagnostics is None:
+            return
+        if diagnostics.get("strategy") == "functional_halfspace":
+            logging.info(
+                "[FunctionalHalfspace-AdaptiveA] task %d: observations=%d "
+                "conflicts=%d normal_projections=%d full_fallbacks=%d "
+                "degenerate_noops=%d mean_pre_inner=%.6e "
+                "mean_post_inner=%.6e mean_normal_fraction=%.6e "
+                "mean_correction_ratio=%.6e",
+                self._cur_task,
+                diagnostics["observations"],
+                diagnostics["conflicts"],
+                diagnostics["normal_projections"],
+                diagnostics["full_fallbacks"],
+                diagnostics["degenerate_noops"],
+                diagnostics["mean_pre_inner"],
+                diagnostics["mean_post_inner"],
+                diagnostics["mean_normal_fraction"],
+                diagnostics["mean_correction_ratio"],
+            )
             return
         logging.info(
             "[AdaptiveA-SDLoRA] task %d: observations=%d mean_gate=%.6f "
@@ -766,7 +888,10 @@ class Learner(SDLoraLearner):
 
     def incremental_train(self, data_manager):
         self._dual_num_tasks = data_manager.nb_tasks
-        if self._hbd_enabled and self._cur_task >= 0:
+        if (
+            self._hbd_enabled
+            or getattr(self, "_sa_functional_halfspace_enabled", False)
+        ) and self._cur_task >= 0:
             backbone = self._raw_network().backbone
             self._hbd_teacher = backbone.build_hbd_teacher()
             self._hbd_teacher_captures = []

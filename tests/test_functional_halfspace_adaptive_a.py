@@ -145,9 +145,9 @@ def test_functional_halfspace_uses_full_projection_for_small_normal_fraction():
     assert result["normal_fraction"] == pytest.approx(1.0 / 101.0)
 
 
-def test_functional_halfspace_preserves_proposed_dtype_and_device():
-    """Mixed precision stability tensors must not promote the output direction."""
-    proposed = [torch.tensor([[-2.0, -2.0, 0.0]], dtype=torch.float16)]
+def test_functional_halfspace_preserves_same_dtype_output_and_halfspace():
+    """Same-dtype correction must retain direction storage and the constraint."""
+    proposed = [torch.tensor([[-2.0, -2.0, 0.0]], dtype=torch.float32)]
     stability = [torch.tensor([[2.0, 2.0, 0.0]], dtype=torch.float32)]
     shared_as = [torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32)]
 
@@ -160,8 +160,19 @@ def test_functional_halfspace_preserves_proposed_dtype_and_device():
     assert projected.dtype == proposed[0].dtype
     assert projected.device == proposed[0].device
     assert torch.equal(
-        projected, torch.tensor([[-2.0, 2.0, 0.0]], dtype=torch.float16)
+        projected, torch.tensor([[-2.0, 2.0, 0.0]], dtype=torch.float32)
     )
+    assert result["post_inner"] >= -1e-6 * max(1.0, abs(result["pre_inner"]))
+
+
+def test_functional_halfspace_rejects_per_branch_dtype_mismatches():
+    """Mixed precision cannot preserve the hard halfspace after correction."""
+    with pytest.raises(ValueError, match="dtypes must match"):
+        project_functional_halfspace_directions(
+            [torch.tensor([[-2.0, -2.0, 0.0]], dtype=torch.float16)],
+            [torch.tensor([[2.0, 2.0, 0.0]], dtype=torch.float32)],
+            [torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32)],
+        )
 
 
 def test_functional_halfspace_rejects_per_branch_device_mismatches():

@@ -2849,7 +2849,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "coordinate_aligned": self.live_a_coordinate_align,
                 "absorb_mode": self.live_a_absorb_mode,
             }
-        if self.adaptive_a_strategy == "risk_budgeted":
+        if self.adaptive_a_strategy in ("risk_budgeted", "pareto_knee"):
             state.update(
                 {
                 "adaptive_a_input_rms": [

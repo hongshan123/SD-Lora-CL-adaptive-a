@@ -885,11 +885,12 @@ def test_risk_budgeted_model_uses_previous_minibatch_update_as_control(tmp_path)
     assert torch.count_nonzero(model.w_As[1].weight.grad) == 0
 
 
-def test_risk_budgeted_input_sketch_is_fixed_size_and_reloaded(tmp_path):
+@pytest.mark.parametrize("strategy", ["risk_budgeted", "pareto_knee"])
+def test_adaptive_a_input_sketch_is_fixed_size_and_reloaded(tmp_path, strategy):
     run_dir = tmp_path / "run"
     model = _adaptive_model(
         tmp_path,
-        adaptive_a_strategy="risk_budgeted",
+        adaptive_a_strategy=strategy,
     )
     model.train()
     model(torch.randn(2, 3, 4))
@@ -913,7 +914,7 @@ def test_risk_budgeted_input_sketch_is_fixed_size_and_reloaded(tmp_path):
         cumulative_merge="live_a_aggregate_b",
         live_a_coordinate_align=True,
         adaptive_a_enabled=True,
-        adaptive_a_strategy="risk_budgeted",
+        adaptive_a_strategy=strategy,
     )
     wrapper = restored.lora_vit.blocks[0].attn.qkv
     assert torch.allclose(

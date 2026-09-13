@@ -216,6 +216,19 @@ def test_functional_halfspace_preserves_same_dtype_output_and_halfspace():
     assert result["post_inner"] >= -1e-6 * max(1.0, abs(result["pre_inner"]))
 
 
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_functional_halfspace_rejects_low_precision_projection_tensors(dtype):
+    """Storage quantization must not weaken the hard halfspace guarantee."""
+    tensors = [
+        torch.tensor([[-2.0, -2.0, 0.0]], dtype=dtype),
+        torch.tensor([[2.0, 2.0, 0.0]], dtype=dtype),
+        torch.tensor([[1.0, 0.0, 0.0]], dtype=dtype),
+    ]
+
+    with pytest.raises(ValueError, match="float32 or torch.float64"):
+        project_functional_halfspace_directions(*[[tensor] for tensor in tensors])
+
+
 def test_functional_halfspace_rejects_per_branch_dtype_mismatches():
     """Mixed precision cannot preserve the hard halfspace after correction."""
     with pytest.raises(ValueError, match="dtypes must match"):
@@ -296,6 +309,26 @@ def test_functional_halfspace_config_has_exact_defaults_and_bounds():
         invalid = {**base, key: value}
         with pytest.raises(ValueError, match=message):
             validate_adaptive_a_config(invalid)
+
+
+def test_functional_halfspace_rejects_ordinary_hbd_scalar_loss():
+    """Combining the controller with HBD would add its distance to CE loss."""
+    functional = {
+        "sa_adaptive_a_enabled": True,
+        "sa_adaptive_a_strategy": "functional_halfspace",
+        "sa_train_a_all_tasks": True,
+        "sa_cumulative_state": True,
+        "sa_cumulative_merge": "live_a_aggregate_b",
+        "sa_live_a_coordinate_align": True,
+        "optimizer": "sgd",
+        "sa_hbd_enabled": True,
+    }
+
+    with pytest.raises(ValueError, match="functional_halfspace.*sa_hbd_enabled"):
+        validate_adaptive_a_config(functional)
+
+    ordinary_hbd = {**functional, "sa_adaptive_a_strategy": "impact_ratio"}
+    assert validate_adaptive_a_config(ordinary_hbd)["adaptive_a_strategy"] == "impact_ratio"
 
 
 def test_functional_halfspace_task_zero_keeps_shared_a_gradients_exactly(tmp_path):

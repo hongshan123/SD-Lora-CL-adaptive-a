@@ -123,6 +123,13 @@ def validate_adaptive_a_config(args):
             "sa_adaptive_a_strategy must be impact_ratio, risk_budgeted, "
             "pareto_knee, or functional_halfspace"
         )
+    if (
+        settings["adaptive_a_strategy"] == "functional_halfspace"
+        and args.get("sa_hbd_enabled", False)
+    ):
+        raise ValueError(
+            "functional_halfspace cannot be combined with sa_hbd_enabled=true"
+        )
     if settings["adaptive_a_risk_budget"] < 0:
         raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
     if settings["adaptive_a_risk_budget_mode"] not in ("absolute", "relative"):

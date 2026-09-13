@@ -370,6 +370,11 @@ def project_functional_halfspace_directions(
             raise ValueError(
                 "direction, stability gradient, and shared-A dtypes must match"
             )
+        if direction.dtype not in (torch.float32, torch.float64):
+            raise ValueError(
+                "functional halfspace projection tensors must use "
+                "torch.float32 or torch.float64"
+            )
 
     proposed_components = [
         decompose_adaptive_a_gradient(direction, shared_a)

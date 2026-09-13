@@ -113,4 +113,3 @@ Expected: all tests PASS, including the original 198-test baseline plus the new 
 git add models/sa_sdlora.py backbone/sa_lora.py tests/test_functional_halfspace_adaptive_a.py
 git commit -m "feat: integrate teacher-projected adaptive a"
 ```
-

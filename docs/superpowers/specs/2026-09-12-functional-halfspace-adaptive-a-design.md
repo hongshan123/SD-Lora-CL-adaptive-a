@@ -52,6 +52,12 @@ The guarantee concerns only the first-order contribution of the shared-A
 update.  It is not a guarantee on the whole optimizer step, current B, the
 classifier, finite-step stability, or old-class accuracy.
 
+Functional-halfspace projection tensors must use `torch.float32` or
+`torch.float64`. Within every Q/V branch, the proposed direction, stability
+gradient, and shared-A tensor must have exactly the same dtype. FP16 and BF16
+are rejected because writing the correction back at those precisions can
+quantize it across the hard stability halfspace boundary.
+
 ## Degenerate Normal Channel
 
 The normal correction is considered unusable when either `h2` is below the
@@ -105,4 +111,3 @@ normal fraction, and mean correction-to-proposed-direction norm ratio.
 - Do not change prototype transport, Dual-B/FC head behavior, coordinate
   alignment, NormCap/absorption, or persistent checkpoint state.
 - Do not add a learned router, replay samples, old data, or per-task parameters.
-

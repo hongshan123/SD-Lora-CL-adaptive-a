@@ -82,6 +82,10 @@ class Learner(BaseLearner):
         """Optional post-backward gradient processing before the optimizer step."""
         return None
 
+    def _after_optimizer_step(self, inputs=None, targets=None, optimizer=None):
+        """Optional diagnostics immediately after the optimizer step."""
+        return None
+
     def _sync_sum(self, value):
         tensor = torch.tensor(float(value), device=self._device)
         if self._is_distributed():
@@ -331,6 +335,7 @@ class Learner(BaseLearner):
                 loss.backward()
                 self._after_backward(inputs, targets, optimizer)
                 optimizer.step()
+                self._after_optimizer_step(inputs, targets, optimizer)
                 losses += loss.item()
                 num_batches += 1
 
@@ -448,6 +453,7 @@ class Learner(BaseLearner):
                 loss.backward()
                 self._after_backward(inputs, targets, optimizer)
                 optimizer.step()
+                self._after_optimizer_step(inputs, targets, optimizer)
                 losses += loss.item()
                 num_batches += 1
 

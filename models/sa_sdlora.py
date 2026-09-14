@@ -232,6 +232,25 @@ def validate_pareto_crossfit_interval(args):
     return int(interval)
 
 
+def validate_functional_diagnostics_interval(args):
+    """Return the optional step cadence for function-safety diagnostics."""
+    interval = args.get("sa_functional_diagnostics_interval", 0)
+    if isinstance(interval, bool) or not isinstance(interval, Integral):
+        raise ValueError(
+            "sa_functional_diagnostics_interval must be a non-negative integer"
+        )
+    if interval < 0:
+        raise ValueError(
+            "sa_functional_diagnostics_interval must be a non-negative integer"
+        )
+    return int(interval)
+
+
+def should_capture_functional_diagnostic(task_id, step, interval):
+    """Sample diagnostics by optimizer step, independently of cross-fit refreshes."""
+    return task_id > 0 and interval > 0 and step % interval == 0
+
+
 def old_logits_kl(student_logits, teacher_logits, temperature=2.0):
     """Temperature-scaled KL from a frozen old-class teacher."""
     if student_logits.shape != teacher_logits.shape:
@@ -517,6 +536,19 @@ class Learner(SDLoraLearner):
         self._sa_adaptive_a_crossfit_interval = validate_pareto_crossfit_interval(
             args
         )
+        self._sa_functional_diagnostics_interval = (
+            validate_functional_diagnostics_interval(args)
+        )
+        if (
+            self._sa_functional_diagnostics_interval > 0
+            and not self._sa_function_safe_pareto_enabled
+        ):
+            raise ValueError(
+                "sa_functional_diagnostics_interval requires "
+                "sa_adaptive_a_strategy=function_safe_pareto"
+            )
+        self._sa_functional_diagnostic_pending = None
+        self._sa_functional_diagnostic_observations = []
         self._sa_pareto_schedule_task_id = None
         self._sa_pareto_step = 0
         self._sa_pareto_cached_modes = None
@@ -800,9 +832,199 @@ class Learner(SDLoraLearner):
                             None if gradient is None else gradient.detach().clone()
                             for gradient in stability_gradients
                         ]
+                if strategy == "function_safe_pareto":
+                    self._prepare_functional_step_diagnostic(
+                        inputs, stability_gradients
+                    )
                 self._sa_pareto_step += 1
         else:
             backbone.apply_adaptive_a_gradients()
+        return None
+
+    @staticmethod
+    def _snapshot_functional_lora_state(backbone):
+        parameter_names = {
+            id(parameter): name for name, parameter in backbone.named_parameters()
+        }
+        scale = backbone.wrapped_param[0].param
+        return {
+            "a": {
+                parameter_names[id(module.weight)]: module.weight.detach().clone()
+                for module in backbone.w_As
+            },
+            "b": {
+                parameter_names[id(module.weight)]: module.weight.detach().clone()
+                for module in backbone.w_Bs
+            },
+            "scale_name": parameter_names[id(scale)],
+            "scale": scale.detach().clone(),
+        }
+
+    @staticmethod
+    def _restore_functional_lora_state(backbone, state):
+        named_parameters = dict(backbone.named_parameters())
+        values = {**state["a"], **state["b"]}
+        values[state["scale_name"]] = state["scale"]
+        with torch.no_grad():
+            for name, value in values.items():
+                named_parameters[name].copy_(value)
+
+    @staticmethod
+    def _relative_state_update(before, after, key):
+        numerator = torch.sqrt(
+            sum(
+                (new.float() - old.float()).square().sum()
+                for old, new in zip(
+                    before[key].values(), after[key].values()
+                )
+            )
+        )
+        denominator = torch.sqrt(
+            sum(old.float().square().sum() for old in before[key].values())
+        )
+        return float(numerator / (denominator + 1e-12))
+
+    def _prepare_functional_step_diagnostic(self, inputs, gradients):
+        interval = getattr(self, "_sa_functional_diagnostics_interval", 0)
+        if not should_capture_functional_diagnostic(
+            self._cur_task, self._sa_pareto_step, interval
+        ):
+            return
+        backbone = self._raw_network().backbone
+        heldout_inputs = inputs[1::2]
+        before = self._snapshot_functional_lora_state(backbone)
+        with rng_preserving(), torch.no_grad():
+            teacher_features = self._hbd_teacher(heldout_inputs)
+            teacher_output = self._functional_old_head(teacher_features)
+            teacher_logits = (
+                teacher_output["logits"]
+                if isinstance(teacher_output, dict)
+                else teacher_output
+            )
+        gradient_norm = torch.sqrt(
+            sum(
+                gradient.detach().float().square().sum()
+                for gradient in gradients
+                if gradient is not None
+            )
+        )
+        self._sa_functional_diagnostic_pending = {
+            "inputs": heldout_inputs.detach(),
+            "teacher_logits": teacher_logits.detach(),
+            "stability_gradient_norm": float(gradient_norm),
+            "state": before,
+        }
+
+    def _functional_logits_for_diagnostic(self, backbone, inputs, state):
+        self._restore_functional_lora_state(backbone, state)
+        features = backbone(inputs)
+        output = self._functional_old_head(features)
+        return output["logits"] if isinstance(output, dict) else output
+
+    def _after_optimizer_step(self, inputs=None, targets=None, optimizer=None):
+        pending = getattr(self, "_sa_functional_diagnostic_pending", None)
+        if pending is None:
+            return None
+        self._sa_functional_diagnostic_pending = None
+        backbone = self._raw_network().backbone
+        before = pending["state"]
+        after = self._snapshot_functional_lora_state(backbone)
+        diagnostic_backbone = copy.deepcopy(backbone).eval()
+
+        def evaluate(state):
+            logits = self._functional_logits_for_diagnostic(
+                diagnostic_backbone, pending["inputs"], state
+            )
+            return float(
+                old_logits_kl(
+                    logits,
+                    pending["teacher_logits"],
+                    temperature=self._sa_functional_temperature,
+                )
+            )
+
+        with rng_preserving(), torch.no_grad():
+            pre_kl = evaluate(before)
+            full_kl = evaluate(after)
+            a_only = {
+                "a": after["a"],
+                "b": before["b"],
+                "scale_name": before["scale_name"],
+                "scale": before["scale"],
+            }
+            b_scale_only = {
+                "a": before["a"],
+                "b": after["b"],
+                "scale_name": after["scale_name"],
+                "scale": after["scale"],
+            }
+            a_only_kl = evaluate(a_only)
+            b_scale_only_kl = evaluate(b_scale_only)
+
+        teacher_probabilities = F.softmax(
+            pending["teacher_logits"].float()
+            / self._sa_functional_temperature,
+            dim=1,
+        )
+        entropy = -(
+            teacher_probabilities
+            * torch.log(torch.clamp_min(teacher_probabilities, 1e-12))
+        ).sum(dim=1).mean()
+        class_count = teacher_probabilities.shape[1]
+        normalized_entropy = (
+            float(entropy / math.log(class_count)) if class_count > 1 else 0.0
+        )
+        top_values = torch.topk(
+            teacher_probabilities,
+            k=min(2, class_count),
+            dim=1,
+        ).values
+        margin = (
+            float((top_values[:, 0] - top_values[:, 1]).mean())
+            if class_count > 1
+            else 1.0
+        )
+        full_delta = full_kl - pre_kl
+        a_delta = a_only_kl - pre_kl
+        b_scale_delta = b_scale_only_kl - pre_kl
+        values = {
+            "teacher_normalized_entropy": normalized_entropy,
+            "teacher_max_probability": float(
+                teacher_probabilities.max(dim=1).values.mean()
+            ),
+            "teacher_probability_margin": margin,
+            "pre_kl": pre_kl,
+            "full_delta_kl": full_delta,
+            "a_only_delta_kl": a_delta,
+            "b_scale_only_delta_kl": b_scale_delta,
+            "interaction_delta_kl": full_delta - a_delta - b_scale_delta,
+            "stability_gradient_norm": pending["stability_gradient_norm"],
+            "relative_a_update": self._relative_state_update(before, after, "a"),
+            "relative_b_update": self._relative_state_update(before, after, "b"),
+            "relative_scale_update": float(
+                torch.linalg.vector_norm(
+                    after["scale"].float() - before["scale"].float()
+                )
+                / (torch.linalg.vector_norm(before["scale"].float()) + 1e-12)
+            ),
+            "nonincreasing_full_kl": float(full_delta <= 0.0),
+        }
+        keys = list(values)
+        packed = torch.tensor(
+            [values[key] for key in keys], device=after["scale"].device
+        )
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+            packed.div_(dist.get_world_size())
+        observation = {
+            key: float(value) for key, value in zip(keys, packed.cpu().tolist())
+        }
+        modes = list(getattr(backbone, "_adaptive_a_last_modes", {}).values())
+        for mode in ("frozen", "tangent", "live"):
+            observation["selected_{}_fraction".format(mode)] = (
+                modes.count(mode) / len(modes) if modes else 0.0
+            )
+        self._sa_functional_diagnostic_observations.append(observation)
         return None
 
     def _functional_stability_gradients(self, inputs):
@@ -944,6 +1166,8 @@ class Learner(SDLoraLearner):
         self._sa_pareto_crossfit_refreshes = 0
         self._sa_pareto_cached_reuses = 0
         self._sa_pareto_task0_skips = 0
+        self._sa_functional_diagnostic_pending = None
+        self._sa_functional_diagnostic_observations = []
 
     def _crossfit_adaptive_a_gradients(self, inputs, targets):
         """Compute synchronized two-fold CE gradients for Pareto utility."""
@@ -1088,6 +1312,42 @@ class Learner(SDLoraLearner):
                     safety["mean_pre_cosine"],
                     safety["mean_correction_ratio"],
                 )
+                self._log_functional_step_diagnostics()
+
+    def _log_functional_step_diagnostics(self):
+        observations = getattr(
+            self, "_sa_functional_diagnostic_observations", []
+        )
+        if not observations:
+            return
+        mean = lambda key: sum(item[key] for item in observations) / len(observations)
+        logging.info(
+            "[FunctionSafeDiagnostic] task %d: observations=%d "
+            "teacher_entropy=%.6f teacher_max_prob=%.6f teacher_margin=%.6f "
+            "pre_kl=%.6e full_delta_kl=%.6e safe_step_fraction=%.6f "
+            "a_only_delta_kl=%.6e b_scale_only_delta_kl=%.6e "
+            "interaction_delta_kl=%.6e stability_grad_norm=%.6e "
+            "relative_a_update=%.6e relative_b_update=%.6e "
+            "relative_scale_update=%.6e selected_modes=[%.4f,%.4f,%.4f]",
+            self._cur_task,
+            len(observations),
+            mean("teacher_normalized_entropy"),
+            mean("teacher_max_probability"),
+            mean("teacher_probability_margin"),
+            mean("pre_kl"),
+            mean("full_delta_kl"),
+            mean("nonincreasing_full_kl"),
+            mean("a_only_delta_kl"),
+            mean("b_scale_only_delta_kl"),
+            mean("interaction_delta_kl"),
+            mean("stability_gradient_norm"),
+            mean("relative_a_update"),
+            mean("relative_b_update"),
+            mean("relative_scale_update"),
+            mean("selected_frozen_fraction"),
+            mean("selected_tangent_fraction"),
+            mean("selected_live_fraction"),
+        )
 
     def incremental_train(self, data_manager):
         self._dual_num_tasks = data_manager.nb_tasks

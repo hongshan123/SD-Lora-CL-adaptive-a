@@ -855,3 +855,14 @@
 - 严格同双卡 batch64 对照纯 `functional_halfspace`：CIFAR-100 `88.29 / 92.263 / 6.156`，ImageNet-R `79.43 / 82.151 / 5.638`，CUB-200 `83.02 / 89.282 / 10.484`。配对差（新策略减纯半空间）分别为 C100 `-2.96 / -1.012 / +2.122`、INR `-0.75 / -0.374 / +0.213`、CUB `+1.29 / +0.296 / -1.874`。
 - 诊断：Task 9 冲突触发率为 C100 `4655/9600=48.5%`、INR `2023/5040=40.1%`、CUB `576/1200=48.0%`；平均修正比例为 `0.167 / 0.116 / 0.147`，均无 full fallback。C100/INR 的负收益说明当前任务图像上的旧 logits KL 不能稳定代表旧类边界，且投影后的 Live 候选改变了 Pareto utility/risk 的塑性平衡；CUB 的正收益支持该信号在细粒度数据上可能有效，但不具跨数据集普适性。
 - 阶段结论：未达到“三数据集不弱于基线”的验收标准。暂不扫描阈值；下一步应先做 teacher signal 的离线相关性诊断（旧类下降与 KL gradient/conflict 的相关性）以及 projected-Live 与原始-Live 的成对候选分析。
+
+## 2026-09-14：Function-Safe 失效机制诊断
+
+- 实验标题：旧 logits teacher 质量与单步 KL 参数归因诊断。
+- 目的：区分三类候选根因：(1) 当前任务图像上的旧类 teacher 分布信息量不足；(2) A 半空间投影未在有限步长下维持 KL；(3) 未受约束的 B/scale 更新主导 KL 漂移。
+- 方法：新增默认关闭的 `sa_functional_diagnostics_interval`。采样时保存 optimizer step 前的 A、B 和 scale；step 后在同一 held-out 半批上使用一次性 backbone 深拷贝回放 pre、full-post、A-only-post、B/scale-only-post，记录 teacher 归一化熵、最大概率、概率 margin、KL 增量及交互项。诊断不写入真实参数，其对象身份、version counter、train/eval 状态、input-sketch 开关和 RNG 均保持不变。
+- 不变量：不改变 loss、梯度、Pareto 候选、投影公式、prototype transport、NormCap 或分类头；开关默认 `0`，已有实验路径无额外前向。
+- 短序列矩阵：CIFAR-100 seed1993、ImageNet-R seed1995、CUB-200 seed1；前 5 个任务，双卡每卡 batch64、SGD、20 epoch；每 20 step 诊断一次。GPU 分别为 `0,1`、`2,3`、`4,5`。
+- 验收：若 teacher entropy 接近 1 且 margin 很小，支持 teacher 低信息量；若 A-only KL 不增而 full/B-only 增长，支持约束覆盖不完整；若 A-only 本身频繁增长，则有限步长、缓存或候选选择破坏了一阶保证。
+- 实现验证：定向测试 `43 passed`，完整仓库 `242 passed`；真实 Shared-A 参数别名测试确认诊断前后 Parameter 身份、version counter、requires-grad 与 optimizer ownership 不变。CUB 两任务双卡 DDP 冒烟 `exit=0`，采样与非采样 step 均无 collective 死锁；运行脚本 `run_function_safe_diagnostics_t5_3datasets_2gpu.sh` 的三份配置均通过 PREPARE_ONLY 预检。
+- 冒烟首批观测（仅用于机制验证，不作为性能结果）：Task1 teacher entropy `0.999111`、max probability `0.058072`、margin `0.002718`；完整单步 KL 增量 `+5.39e-9`，A-only `-2.46e-9`，B/scale-only `+1.63e-8`。这同时支持“teacher 低信息量”和“B/scale 漂移不受 A 半空间约束”两条假设，待三数据集 T5 结果确认。

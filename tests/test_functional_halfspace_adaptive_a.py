@@ -1,5 +1,6 @@
 """Tests for the pure global functional-halfspace projection kernel."""
 
+import copy
 from pathlib import Path
 import sys
 
@@ -20,6 +21,10 @@ from backbone.sa_lora import (  # noqa: E402
 from models import sa_sdlora as sa_sdlora_module  # noqa: E402
 from models.sa_sdlora import Learner as SharedALearner  # noqa: E402
 from models.sa_sdlora import validate_adaptive_a_config  # noqa: E402
+from models.sa_sdlora import (  # noqa: E402
+    should_capture_functional_diagnostic,
+    validate_functional_diagnostics_interval,
+)
 
 
 class _TinyAttention(nn.Module):
@@ -798,6 +803,8 @@ def test_function_safe_pareto_refreshes_crossfit_and_stability_together():
     learner._raw_network = lambda: learner._network
     learner._known_classes = 2
     learner._cur_task = 1
+    learner._sa_functional_diagnostic_pending = {"stale": True}
+    learner._sa_functional_diagnostic_observations = [{"stale": 1.0}]
     crossfit_calls = []
     stability_calls = []
 
@@ -824,6 +831,8 @@ def test_function_safe_pareto_refreshes_crossfit_and_stability_together():
     for _ in range(5):
         learner._after_backward(inputs, targets, optimizer)
 
+    assert learner._sa_functional_diagnostic_pending is None
+    assert learner._sa_functional_diagnostic_observations == []
     assert len(crossfit_calls) == 2
     assert len(stability_calls) == 2
     calls = learner._network.backbone.calls
@@ -992,3 +1001,157 @@ def test_function_safe_pareto_old_logit_gradient_is_manually_ddp_averaged(
 
     assert len(collectives) == 1
     assert torch.allclose(averaged, reference)
+
+
+@pytest.mark.parametrize("value", [-1, True, 1.5, "4"])
+def test_functional_diagnostics_interval_rejects_invalid_values(value):
+    """A malformed cadence must not silently alter the training schedule."""
+    with pytest.raises(ValueError, match="diagnostics_interval"):
+        validate_functional_diagnostics_interval(
+            {"sa_functional_diagnostics_interval": value}
+        )
+
+
+def test_functional_diagnostics_interval_defaults_off():
+    """Ordinary experiments must remain free of diagnostic forward passes."""
+    assert validate_functional_diagnostics_interval({}) == 0
+
+
+def test_functional_diagnostic_cadence_counts_optimizer_steps():
+    """Cross-fit refresh cadence must not shift the requested sample steps."""
+    assert not should_capture_functional_diagnostic(0, 0, 20)
+    assert not should_capture_functional_diagnostic(1, 0, 0)
+    assert should_capture_functional_diagnostic(1, 0, 20)
+    assert not should_capture_functional_diagnostic(1, 4, 20)
+    assert should_capture_functional_diagnostic(1, 20, 20)
+
+
+def test_functional_step_diagnostic_attributes_b_only_kl_change_to_b_scale():
+    """Changing B alone must not be misreported as an A-induced KL change."""
+    class ScaledLinearBackbone(nn.Module):
+        def __init__(self, a, b, scale):
+            super().__init__()
+            self.w_As = nn.ModuleList([nn.Linear(2, 2, bias=False)])
+            self.w_Bs = nn.ModuleList([nn.Linear(2, 2, bias=False)])
+            self.wrapped_param = nn.ModuleList(
+                [sa_lora_module.ParameterWrapper(nn.Parameter(torch.tensor([scale])))]
+            )
+            with torch.no_grad():
+                self.w_As[0].weight.copy_(a)
+                self.w_Bs[0].weight.copy_(b)
+
+        def forward(self, inputs):
+            features = self.w_Bs[0](self.w_As[0](inputs))
+            return self.wrapped_param[0](features)
+
+    class DictIdentity(nn.Module):
+        def forward(self, features):
+            return {"logits": features}
+
+    learner = object.__new__(SharedALearner)
+    learner._network = type("Network", (), {})()
+    learner._network.backbone = ScaledLinearBackbone(
+        torch.eye(2), torch.eye(2), 1.0
+    )
+    learner._raw_network = lambda: learner._network
+    learner._cur_task = 1
+    learner._hbd_teacher = ScaledLinearBackbone(
+        torch.eye(2), torch.eye(2), 1.0
+    )
+    learner._functional_old_head = DictIdentity()
+    learner._sa_functional_temperature = 2.0
+    learner._sa_functional_diagnostics_interval = 1
+    learner._sa_pareto_step = 0
+    learner._sa_functional_diagnostic_pending = None
+    learner._sa_functional_diagnostic_observations = []
+    inputs = torch.tensor(
+        [[1.0, 0.0], [1.0, 2.0], [0.0, 1.0], [2.0, 1.0]]
+    )
+
+    stability_gradients = learner._functional_old_logit_gradients(inputs)
+    learner._prepare_functional_step_diagnostic(inputs, stability_gradients)
+    with torch.no_grad():
+        learner._network.backbone.w_Bs[0].weight.add_(
+            torch.tensor([[0.5, -0.25], [0.0, 0.25]])
+        )
+    tracked_parameters = [
+        learner._network.backbone.w_As[0].weight,
+        learner._network.backbone.w_Bs[0].weight,
+        learner._network.backbone.wrapped_param[0].param,
+    ]
+    versions_before_diagnostic = [parameter._version for parameter in tracked_parameters]
+    learner._after_optimizer_step(inputs=inputs)
+
+    observation = learner._sa_functional_diagnostic_observations[-1]
+    assert observation["full_delta_kl"] > 0.0
+    assert observation["a_only_delta_kl"] == pytest.approx(0.0, abs=1e-8)
+    assert observation["b_scale_only_delta_kl"] == pytest.approx(
+        observation["full_delta_kl"], rel=1e-5, abs=1e-8
+    )
+    assert observation["interaction_delta_kl"] == pytest.approx(0.0, abs=1e-7)
+    assert [parameter._version for parameter in tracked_parameters] == (
+        versions_before_diagnostic
+    )
+
+
+def test_functional_diagnostic_preserves_real_backbone_parameter_aliases(tmp_path):
+    """Replay must not replace Parameters shared by ViT and QKV wrappers."""
+    class FirstTokenHead(nn.Module):
+        def forward(self, features):
+            return {"logits": features[:, 0, :2]}
+
+    backbone = _functional_model(
+        tmp_path, strategy="function_safe_pareto", blocks=1
+    )
+    backbone.task_id = 1
+    learner = object.__new__(SharedALearner)
+    learner._network = type("Network", (), {})()
+    learner._network.backbone = backbone
+    learner._raw_network = lambda: learner._network
+    learner._cur_task = 1
+    learner._hbd_teacher = copy.deepcopy(backbone).eval()
+    learner._functional_old_head = FirstTokenHead()
+    learner._sa_functional_temperature = 2.0
+    learner._sa_functional_diagnostics_interval = 1
+    learner._sa_pareto_step = 0
+    learner._sa_functional_diagnostic_pending = None
+    learner._sa_functional_diagnostic_observations = []
+    inputs = torch.randn(4, 3, 4)
+    def current_parameters():
+        return [
+            *[module.weight for module in backbone.w_As],
+            *[module.weight for module in backbone.w_Bs],
+            backbone.wrapped_param[0].param,
+        ]
+
+    parameters = current_parameters()
+    optimizer = optim.SGD(parameters, lr=0.1)
+    identities = [id(parameter) for parameter in parameters]
+    versions = [parameter._version for parameter in parameters]
+    gradients = [torch.ones_like(module.weight) for module in backbone.w_As]
+
+    learner._prepare_functional_step_diagnostic(inputs, gradients)
+
+    live_parameters = current_parameters()
+    assert [id(parameter) for parameter in live_parameters] == identities
+    assert [parameter._version for parameter in live_parameters] == versions
+    assert all(isinstance(parameter, nn.Parameter) for parameter in live_parameters)
+    assert all(parameter.requires_grad for parameter in live_parameters)
+    assert all(
+        any(candidate is parameter for candidate in optimizer.param_groups[0]["params"])
+        for parameter in live_parameters
+    )
+
+    with torch.no_grad():
+        backbone.w_Bs[0].weight.add_(0.01)
+    versions_after_update = [parameter._version for parameter in current_parameters()]
+    learner._after_optimizer_step(inputs=inputs, optimizer=optimizer)
+
+    replayed_parameters = current_parameters()
+    assert [id(parameter) for parameter in replayed_parameters] == identities
+    assert [parameter._version for parameter in replayed_parameters] == (
+        versions_after_update
+    )
+    assert all(isinstance(parameter, nn.Parameter) for parameter in replayed_parameters)
+    assert all(parameter.requires_grad for parameter in replayed_parameters)
+    assert learner._sa_functional_diagnostic_observations

@@ -1032,3 +1032,13 @@
 - 判断：当前 KL teacher 在新任务图像上约束的是模型对非旧类样本的响应，不等于旧类边界稳定。C100/INR 中它可能把有用的塑性方向误判为风险；CUB 的提升更像数据域相关的有效代理信号。
 - 风险：不能把 CUB 单 seed 提升写成通用 function-space safety 结论，也不能直接比较不同硬件的单卡 Pareto-Knee 结果作为严格消融。
 - 下一步：停止继续调 cosine/temperature；先做旧类准确率下降、KL 变化、投影修正量三者的离线相关性。如果相关性弱，保留该策略作为 CUB 特化诊断，不升级为主方法。
+
+## 2026-09-14 诊断插桩判断
+
+- 执行代码表明 student KL 同时经过历史 `G A/||A||` 和当前 `s B A`，但 `autograd.grad` 参数列表只有共享 A；因此“完整函数安全”目前没有覆盖 B/scale。
+- teacher 首选 prototype cosine head，温度为 2。随旧类数增加，其 softmax 可能高度平坦；仅看冲突率无法判断该梯度是否携带旧类边界信息，必须实测 entropy/max-prob/margin。
+- Live 候选在进入 Pareto utility/risk 计算前已被投影，故该模块不仅约束最终更新，还改变了候选前沿；短诊断不修改这一逻辑，只测更新结果。
+- 同一 odd held-out fold 同时用于 stability gradient 与 projected candidate 的 cross-fit utility，存在选择耦合；本轮先量化 teacher 和参数归因，不同时修复 fold 划分，避免多个变量一起变化。
+- 诊断设计使用 step 前后参数回放，能够在同一输入上给出 A-only、B/scale-only 和非线性交互的 KL 增量。开关默认关闭，并在每个任务切换时清空 pending/state，避免污染正式训练。
+- 两轮代码审查发现并排除了两种插桩污染：真实参数 `copy_` 会增加 version counter；根模块 `functional_call` 在 `base_vit/lora_vit/QKV` 参数别名下会替换 Parameter 引用。最终只在一次性深拷贝 backbone 上回放，真实拓扑回归测试覆盖准备与 step 后阶段。
+- CUB 双卡 1-epoch 冒烟显示 teacher 分布近乎均匀，并且 B/scale-only KL 增量大于完整增量，而 A-only 增量为负。当前最强工作假设是：A 投影局部有效，但 teacher 梯度信噪比低，且完整函数变化主要从未约束的 B/scale 通道进入。

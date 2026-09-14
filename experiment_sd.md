@@ -851,4 +851,7 @@
 - 固定协议：CoordinateStable alignment、prototype transport、bounded NormCap、rank10、优化器、学习率、任务顺序均继承主配置；Dual-B 关闭；T=10、20 epoch、双卡每卡 batch64。
 - 实验矩阵：CIFAR-100 seed1993、ImageNet-R seed1995、CUB-200 seed1。执行脚本 `run_function_safe_pareto_t10_3datasets_2gpu.sh`；实现提交 `fbb24c7`，2026-09-14 09:37 使用 GPU `0,2` / `3,4` / `5,6` 并行启动，结果待回填。
 - 实现验证：Adaptive-A 定向测试 99 passed；完整仓库测试 234 passed；三份运行配置 PREPARE_ONLY 预检通过。独立审查后禁止与 Dual-B 混用，并要求非算子等价 absorption 必须配合 prototype classifier 和 CoordinateStable transport。
-- 结果：待训练完成后填写 Final、AAA、Forgetting、冲突率、平均修正比例及相对 Pareto-Knee 的配对差。
+- 结果：三路均 exit=0。Function-Safe Pareto 为：CIFAR-100 `85.33 / 91.251 / 8.278`，ImageNet-R `78.68 / 81.777 / 5.851`，CUB-200 `84.31 / 89.578 / 8.610`（Final / AAA / Forgetting）。
+- 严格同双卡 batch64 对照纯 `functional_halfspace`：CIFAR-100 `88.29 / 92.263 / 6.156`，ImageNet-R `79.43 / 82.151 / 5.638`，CUB-200 `83.02 / 89.282 / 10.484`。配对差（新策略减纯半空间）分别为 C100 `-2.96 / -1.012 / +2.122`、INR `-0.75 / -0.374 / +0.213`、CUB `+1.29 / +0.296 / -1.874`。
+- 诊断：Task 9 冲突触发率为 C100 `4655/9600=48.5%`、INR `2023/5040=40.1%`、CUB `576/1200=48.0%`；平均修正比例为 `0.167 / 0.116 / 0.147`，均无 full fallback。C100/INR 的负收益说明当前任务图像上的旧 logits KL 不能稳定代表旧类边界，且投影后的 Live 候选改变了 Pareto utility/risk 的塑性平衡；CUB 的正收益支持该信号在细粒度数据上可能有效，但不具跨数据集普适性。
+- 阶段结论：未达到“三数据集不弱于基线”的验收标准。暂不扫描阈值；下一步应先做 teacher signal 的离线相关性诊断（旧类下降与 KL gradient/conflict 的相关性）以及 projected-Live 与原始-Live 的成对候选分析。

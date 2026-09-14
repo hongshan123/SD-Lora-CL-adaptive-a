@@ -1024,3 +1024,11 @@
 - 动作：先跑三个开发 seed；不在首轮扫描 temperature、刷新间隔或 cosine threshold。只有三数据集至少不弱于 Pareto-Knee，才进入 seeds 1-3 配对确认。
 - 审查修正：旧 Dual-B 的真实决策是 FC/prototype 融合，单独冻结 prototype head 会产生 teacher 定义歧义，因此新策略明确拒绝 Dual-B。bounded/normalized absorption 会改变部署特征坐标，未启用 transport 时也明确拒绝，防止 KL 锚定错位 head。
 - 启动状态：提交 `fbb24c7` 后三路双卡任务均进入 Task 0，队列 PID `3251008`；GPU 1 上已有外部 ObjectNet 作业，因此使用不连续卡对 `0,2`、`3,4`、`5,6`，未抢占 GPU 1。
+
+## 2026-09-14 13:20 Function-Safe Pareto 结果判断
+
+- 事实：队列 exit=0。C100 `85.33/91.251/8.278`，INR `78.68/81.777/5.851`，CUB `84.31/89.578/8.610`；与同双卡纯 functional halfspace 相比，只有 CUB 提升。
+- 观察：三个数据集的冲突触发率都约 40%-49%，但结果方向不同；因此“冲突更多就应当收益更多”的简单解释不成立。C100 Task 9 的修正比例约 16.7%，且 Pareto 选择的 Live 占比升至 34.4%，但最终仍明显下降。
+- 判断：当前 KL teacher 在新任务图像上约束的是模型对非旧类样本的响应，不等于旧类边界稳定。C100/INR 中它可能把有用的塑性方向误判为风险；CUB 的提升更像数据域相关的有效代理信号。
+- 风险：不能把 CUB 单 seed 提升写成通用 function-space safety 结论，也不能直接比较不同硬件的单卡 Pareto-Knee 结果作为严格消融。
+- 下一步：停止继续调 cosine/temperature；先做旧类准确率下降、KL 变化、投影修正量三者的离线相关性。如果相关性弱，保留该策略作为 CUB 特化诊断，不升级为主方法。

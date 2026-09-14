@@ -116,6 +116,59 @@ def test_live_a_bank_vs_aggregate_forward_and_a_grad():
     assert torch.allclose(grad_agg, grad_bank, atol=1e-5)
 
 
+def test_historical_only_forward_removes_current_branch_and_restores_it(tmp_path):
+    """Leaking the diagnostic scope would silently change ordinary training."""
+    torch.manual_seed(13)
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(4),
+        r=2,
+        filepath=str(tmp_path / "run"),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="live_a_aggregate_b",
+    )
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+    with torch.no_grad():
+        wrapper.aggregate_q.copy_(torch.randn_like(wrapper.aggregate_q))
+        wrapper.aggregate_v.copy_(torch.randn_like(wrapper.aggregate_v))
+        wrapper.b_q.weight.copy_(torch.randn_like(wrapper.b_q.weight))
+        wrapper.b_v.weight.copy_(torch.randn_like(wrapper.b_v.weight))
+    inputs = torch.randn(3, 2, 4)
+
+    full_before = model(inputs)
+    with model.historical_only_forward():
+        historical = model(inputs)
+    full_after = model(inputs)
+
+    current_q, current_v = wrapper.current_output(inputs)
+    expected_difference = torch.zeros_like(full_before)
+    expected_difference[:, :, :4] = current_q
+    expected_difference[:, :, -4:] = current_v
+    assert torch.allclose(full_before - historical, expected_difference, atol=1e-6)
+    assert torch.allclose(full_after, full_before, atol=1e-6)
+
+
+def test_historical_only_forward_restores_current_branch_after_exception(tmp_path):
+    """An exception in stability-gradient computation must not poison training."""
+    model = SharedALoRA_ViT_timm(
+        _TinyViT(4),
+        r=2,
+        filepath=str(tmp_path / "run"),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="live_a_aggregate_b",
+    )
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+
+    with pytest.raises(RuntimeError, match="probe"):
+        with model.historical_only_forward():
+            raise RuntimeError("probe")
+
+    assert wrapper.current_branch_enabled is True
+
+
 def test_live_a_fresh_roundtrip_keeps_raw_current_semantics(tmp_path):
     dim, rank = 6, 2
     torch.manual_seed(17)

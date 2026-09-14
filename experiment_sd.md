@@ -868,3 +868,13 @@
 - 冒烟首批观测（仅用于机制验证，不作为性能结果）：Task1 teacher entropy `0.999111`、max probability `0.058072`、margin `0.002718`；完整单步 KL 增量 `+5.39e-9`，A-only `-2.46e-9`，B/scale-only `+1.63e-8`。这同时支持“teacher 低信息量”和“B/scale 漂移不受 A 半空间约束”两条假设，待三数据集 T5 结果确认。
 - T5 正式运行 Task1 阶段证据：C100 teacher entropy/max-prob `0.999643/0.107837`，KL 增量 full/A-only/B-scale-only 为 `+6.72e-7/-2.44e-7/+9.01e-7`，safe-step `43.75%`；INR 为 `0.999846/0.053448`、`+1.05e-6/-1.25e-7/+1.17e-6`、`35.71%`；CUB 为 `0.999046/0.058946`、`+4.47e-7/+0.66e-7/+4.84e-7`、`20.00%`。
 - 阶段判断：三个 teacher 均接近对应旧类数下的均匀分布；C100/INR 的 A-only 平均 KL 下降，证明 A 投影方向并非主要错误，但未受约束的 B/scale 增量分别达到 full 增量的约 `134%/111%`，覆盖了 A 的保护作用。CUB 的 Tangent 选择比例更高且 Tangent 不受投影，A-only 也轻微上升。不能通过继续调 cosine threshold 或刷新间隔解决这一结构性覆盖缺口。
+
+## 2026-09-14：Functional stability signal 三路单-seed 对照
+
+- 实验标题：Full-logit KL、Historical-only logit KL 与 HBD 的同协议直接比较。
+- 尝试方法：保留 `function_safe_pareto` 的 Pareto 候选、cross-fit、半空间投影和所有主方法组件，只把 student 稳定性前向从完整 `historical + current` LoRA 改为仅历史 `G A/||A||` 分支；teacher、正常训练前向和部署前向不变。第三路使用已有 `functional_halfspace` HBD，直接约束历史 Q/V 响应。
+- 理论依据：诊断显示完整 student KL 的正漂移主要由不受 A 投影控制的 current `sBA` 贡献。Historical-only scope 将稳定梯度重新限定为“共享 A 对历史函数的影响”，避免要求 A 抵消当前 B 为新任务学习产生的必要变化；HBD 用作不经过分类头的历史功能约束对照。
+- 公平协议：CIFAR-100 seed1993、ImageNet-R seed1995、CUB-200 seed1；T=10、20 epoch、SGD、双卡每卡 batch64（等效 128）。CoordinateStable alignment、prototype transport、bounded NormCap、LoRA rank、学习率和任务顺序均继承同一数据集 source config，`sa_dual_head=false`。
+- 三路：`full_logit=function_safe_pareto + scope=full`；`historical_logit=function_safe_pareto + scope=historical`；`hbd=functional_halfspace`。不启用诊断插桩，避免额外前向改变三路运行时间口径。
+- 执行：`run_functional_signal_threeway_single_seed_2gpu.sh` 生成 9 份可审计配置；按数据集分三波，每波三路并行使用 GPU `0,1` / `2,3` / `4,5`。结果待回填。
+- 验收：Historical-only 若在三个数据集均不弱于 Full-logit，说明去除 current-B 混杂有效；若仍不如 HBD，则瓶颈主要是当前任务图像上旧分类 logits 的低信息量，而非 branch scope。

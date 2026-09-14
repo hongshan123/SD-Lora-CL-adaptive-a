@@ -13,6 +13,7 @@ import math
 import copy
 import os
 from collections.abc import Sequence
+from contextlib import contextmanager
 
 import timm
 import torch
@@ -1242,6 +1243,7 @@ class _LiveAAggregateQKV(nn.Module):
         self.dim = qkv.in_features
         self.history_groups = int(history_groups)
         self.capture_input_sketch = bool(capture_input_sketch)
+        self.current_branch_enabled = True
         if historical_input_rms is None:
             historical_input_rms = torch.ones(self.dim)
         self.register_buffer(
@@ -1277,8 +1279,9 @@ class _LiveAAggregateQKV(nn.Module):
                 self.pending_input_count += float(flat.shape[0])
         new_q = self._norm_live_a(x, self.a_q.weight, self.aggregate_q)
         new_v = self._norm_live_a(x, self.a_v.weight, self.aggregate_v)
-        new_q = new_q + self.scaling_cur[0](self.b_q(self.a_q(x)))
-        new_v = new_v + self.scaling_cur[0](self.b_v(self.a_v(x)))
+        if self.current_branch_enabled:
+            new_q = new_q + self.scaling_cur[0](self.b_q(self.a_q(x)))
+            new_v = new_v + self.scaling_cur[0](self.b_v(self.a_v(x)))
         qkv = self.qkv(x)
         qkv[:, :, : self.dim] += new_q
         qkv[:, :, -self.dim :] += new_v
@@ -3375,6 +3378,23 @@ class SharedALoRA_ViT_timm(nn.Module):
             },
             _join_path(filename, SA_MERGED_FILENAME),
         )
+
+    @contextmanager
+    def historical_only_forward(self):
+        """Temporarily evaluate live-A wrappers without current-task B."""
+        wrappers = [
+            block.attn.qkv
+            for block in getattr(self.lora_vit, "blocks", [])
+            if isinstance(block.attn.qkv, _LiveAAggregateQKV)
+        ]
+        previous_states = [wrapper.current_branch_enabled for wrapper in wrappers]
+        for wrapper in wrappers:
+            wrapper.current_branch_enabled = False
+        try:
+            yield
+        finally:
+            for wrapper, previous in zip(wrappers, previous_states):
+                wrapper.current_branch_enabled = previous
 
     def forward(self, x: Tensor, loss=False, eval=False) -> Tensor:
         if loss:

@@ -1045,3 +1045,11 @@
 - 三数据集 20-epoch Task1 已确认该假设。C100/INR 的 A-only 更新平均降低 KL，但 full KL 仍增加；B/scale-only 是主导正项。CUB 的 A-only 略增，与其较高 Tangent 比例一致，因为当前实现只投影 Live 候选。
 - teacher entropy 在 C100/INR/CUB 分别为 `0.99964/0.99985/0.99905`，最大概率仅略高于均匀先验 `1/K`。旧 prototype cosine logits 在温度 2 下提供的是极弱排序信号，不能解释为可靠的旧类边界监督。
 - 根因优先级：P0 是约束对象不完整（只约束 A，训练和持久化都显著依赖 B/scale）；P1 是 teacher 信号在 current-task 数据上的信息量不足；P2 是只投影 Live、Tangent 与弱冲突仍可增加 A-only KL。后续修正必须一次只验证一个根因，禁止先扫阈值。
+
+## 2026-09-14 Historical-only signal 实现与对照前判断
+
+- 本轮只隔离一个变量：稳定性 student logits 是否包含当前任务 `sBA`。正常训练、评估、prototype transport、分类头和持久化状态均不改变。
+- 实现使用 `_LiveAAggregateQKV.current_branch_enabled` 的非持久 Python 状态和 `historical_only_forward()` context manager；状态在 `finally` 中逐 wrapper 恢复，不进入 `state_dict`。诊断回放复用同一 scope，防止训练定义与日志定义不一致。
+- 关键预期：Historical-only 只能消除 B 对稳定梯度的混杂，不能修复 teacher 在当前任务图像上近均匀的问题。因此它优于 Full-logit 但仍弱于 HBD，是最符合现有证据的结果；不能预设它一定成为主方法。
+- 风险：Full-logit 与 Historical-logit 仍只投影 Pareto 的 Live 候选，Tangent/弱冲突不受约束；本轮不同时修改候选覆盖范围。
+- 验证：新增作用域移除/恢复、异常恢复、配置校验、B-invariance、诊断同口径及队列失败传播测试；相关模型测试 `60 passed`，完整仓库 `252 passed`，9-run PREPARE_ONLY 预检通过。

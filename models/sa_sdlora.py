@@ -246,6 +246,24 @@ def validate_functional_diagnostics_interval(args):
     return int(interval)
 
 
+def validate_functional_student_scope(args):
+    """Return which student LoRA branches define old-logit stability."""
+    scope = args.get("sa_functional_student_scope", "full")
+    if scope not in ("full", "historical"):
+        raise ValueError(
+            "sa_functional_student_scope must be full or historical"
+        )
+    if (
+        scope == "historical"
+        and args.get("sa_adaptive_a_strategy") != "function_safe_pareto"
+    ):
+        raise ValueError(
+            "sa_functional_student_scope=historical requires "
+            "sa_adaptive_a_strategy=function_safe_pareto"
+        )
+    return scope
+
+
 def should_capture_functional_diagnostic(task_id, step, interval):
     """Sample diagnostics by optimizer step, independently of cross-fit refreshes."""
     return task_id > 0 and interval > 0 and step % interval == 0
@@ -533,6 +551,7 @@ class Learner(SDLoraLearner):
         self._sa_functional_temperature = adaptive_a_settings.get(
             "functional_temperature", 2.0
         )
+        self._sa_functional_student_scope = validate_functional_student_scope(args)
         self._sa_adaptive_a_crossfit_interval = validate_pareto_crossfit_interval(
             args
         )
@@ -917,7 +936,8 @@ class Learner(SDLoraLearner):
 
     def _functional_logits_for_diagnostic(self, backbone, inputs, state):
         self._restore_functional_lora_state(backbone, state)
-        features = backbone(inputs)
+        with self._functional_student_context(backbone):
+            features = backbone(inputs)
         output = self._functional_old_head(features)
         return output["logits"] if isinstance(output, dict) else output
 
@@ -1112,7 +1132,11 @@ class Learner(SDLoraLearner):
         for wrapper in wrappers:
             wrapper.capture_input_sketch = False
         try:
-            with rng_preserving(), torch.enable_grad():
+            with (
+                rng_preserving(),
+                torch.enable_grad(),
+                self._functional_student_context(backbone),
+            ):
                 student_features = backbone(heldout_inputs)
                 student_output = self._functional_old_head(student_features)
                 student_logits = (
@@ -1153,6 +1177,19 @@ class Learner(SDLoraLearner):
                     gradient.div_(dist.get_world_size())
                     gradients[index] = gradient
         return gradients
+
+    def _functional_student_context(self, backbone):
+        scope = getattr(self, "_sa_functional_student_scope", "full")
+        if scope == "full":
+            return nullcontext()
+        if scope == "historical":
+            if not hasattr(backbone, "historical_only_forward"):
+                raise RuntimeError(
+                    "historical functional student scope requires a backbone "
+                    "with historical_only_forward()"
+                )
+            return backbone.historical_only_forward()
+        raise RuntimeError("unknown functional student scope: {}".format(scope))
 
     def _reset_pareto_schedule_if_needed(self):
         """Keep the transient Pareto decision cache strictly task-local."""

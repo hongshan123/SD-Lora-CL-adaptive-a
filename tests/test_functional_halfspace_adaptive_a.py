@@ -1,6 +1,7 @@
 """Tests for the pure global functional-halfspace projection kernel."""
 
 import copy
+from contextlib import contextmanager
 from pathlib import Path
 import sys
 
@@ -24,6 +25,7 @@ from models.sa_sdlora import validate_adaptive_a_config  # noqa: E402
 from models.sa_sdlora import (  # noqa: E402
     should_capture_functional_diagnostic,
     validate_functional_diagnostics_interval,
+    validate_functional_student_scope,
 )
 
 
@@ -646,6 +648,30 @@ def test_function_safe_pareto_config_defaults_to_logit_kl_and_cosine_margin():
     assert settings["adaptive_a_strategy"] == "function_safe_pareto"
     assert settings["functional_conflict_cosine"] == pytest.approx(0.05)
     assert settings["functional_temperature"] == pytest.approx(2.0)
+    assert validate_functional_student_scope({}) == "full"
+
+
+@pytest.mark.parametrize("scope", ["", "history", "all", None])
+def test_function_safe_pareto_rejects_unknown_functional_student_scope(scope):
+    """A typo must not silently fall back to the confounded full-logit signal."""
+    with pytest.raises(ValueError, match="sa_functional_student_scope"):
+        validate_functional_student_scope(
+            {
+                "sa_adaptive_a_strategy": "function_safe_pareto",
+                "sa_functional_student_scope": scope,
+            }
+        )
+
+
+def test_historical_functional_student_scope_requires_function_safe_pareto():
+    """Historical-only logits are defined only for the Function-Safe route."""
+    with pytest.raises(ValueError, match="function_safe_pareto"):
+        validate_functional_student_scope(
+            {
+                "sa_adaptive_a_strategy": "functional_halfspace",
+                "sa_functional_student_scope": "historical",
+            }
+        )
 
 
 def test_function_safe_pareto_rejects_dual_head_teacher_ambiguity():
@@ -956,6 +982,56 @@ def test_function_safe_pareto_old_logit_gradient_uses_heldout_half_only():
     assert torch.allclose(first[0], second[0], atol=1e-7, rtol=1e-6)
 
 
+def test_historical_student_scope_excludes_current_branch_from_stability_gradient():
+    """Current-task B must not steer the historical-function stability signal."""
+    class Backbone(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w_As = nn.ModuleList([nn.Linear(2, 2, bias=False)])
+            self.current_gain = 1.0
+            self._historical_only = False
+            with torch.no_grad():
+                self.w_As[0].weight.copy_(torch.eye(2))
+
+        @contextmanager
+        def historical_only_forward(self):
+            previous = self._historical_only
+            self._historical_only = True
+            try:
+                yield
+            finally:
+                self._historical_only = previous
+
+        def forward(self, inputs):
+            historical = self.w_As[0](inputs)
+            if self._historical_only:
+                return historical
+            return historical + self.current_gain * historical.square()
+
+    class DictIdentity(nn.Module):
+        def forward(self, features):
+            return {"logits": features}
+
+    learner = object.__new__(SharedALearner)
+    learner._network = type("Network", (), {})()
+    learner._network.backbone = Backbone()
+    learner._raw_network = lambda: learner._network
+    learner._cur_task = 1
+    learner._hbd_teacher = copy.deepcopy(learner._network.backbone).eval()
+    learner._hbd_teacher.current_gain = 0.0
+    learner._functional_old_head = DictIdentity()
+    learner._sa_functional_temperature = 2.0
+    learner._sa_functional_student_scope = "historical"
+    inputs = torch.tensor([[1.0, 3.0], [2.0, 1.0], [4.0, 2.0], [1.0, 2.0]])
+
+    first = learner._functional_old_logit_gradients(inputs)[0]
+    learner._network.backbone.current_gain = 9.0
+    second = learner._functional_old_logit_gradients(inputs)[0]
+
+    assert torch.allclose(first, second, atol=1e-7, rtol=1e-6)
+    assert learner._network.backbone._historical_only is False
+
+
 def test_function_safe_pareto_old_logit_gradient_is_manually_ddp_averaged(
     monkeypatch,
 ):
@@ -1092,6 +1168,35 @@ def test_functional_step_diagnostic_attributes_b_only_kl_change_to_b_scale():
     assert [parameter._version for parameter in tracked_parameters] == (
         versions_before_diagnostic
     )
+
+
+def test_historical_scope_diagnostic_logits_ignore_current_b(tmp_path):
+    """Diagnostic replay must measure the same historical function as its gradient."""
+    class FirstTokenHead(nn.Module):
+        def forward(self, features):
+            return {"logits": features[:, 0, :2]}
+
+    backbone = _functional_model(
+        tmp_path, strategy="function_safe_pareto", blocks=1
+    )
+    learner = object.__new__(SharedALearner)
+    learner._functional_old_head = FirstTokenHead()
+    learner._sa_functional_student_scope = "historical"
+    before = learner._snapshot_functional_lora_state(backbone)
+    after = copy.deepcopy(before)
+    for value in after["b"].values():
+        value.add_(1.0)
+    inputs = torch.randn(4, 3, 4)
+    diagnostic_backbone = copy.deepcopy(backbone).eval()
+
+    logits_before = learner._functional_logits_for_diagnostic(
+        diagnostic_backbone, inputs, before
+    )
+    logits_after = learner._functional_logits_for_diagnostic(
+        diagnostic_backbone, inputs, after
+    )
+
+    assert torch.allclose(logits_before, logits_after, atol=1e-7, rtol=1e-6)
 
 
 def test_functional_diagnostic_preserves_real_backbone_parameter_aliases(tmp_path):

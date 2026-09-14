@@ -866,3 +866,5 @@
 - 验收：若 teacher entropy 接近 1 且 margin 很小，支持 teacher 低信息量；若 A-only KL 不增而 full/B-only 增长，支持约束覆盖不完整；若 A-only 本身频繁增长，则有限步长、缓存或候选选择破坏了一阶保证。
 - 实现验证：定向测试 `43 passed`，完整仓库 `242 passed`；真实 Shared-A 参数别名测试确认诊断前后 Parameter 身份、version counter、requires-grad 与 optimizer ownership 不变。CUB 两任务双卡 DDP 冒烟 `exit=0`，采样与非采样 step 均无 collective 死锁；运行脚本 `run_function_safe_diagnostics_t5_3datasets_2gpu.sh` 的三份配置均通过 PREPARE_ONLY 预检。
 - 冒烟首批观测（仅用于机制验证，不作为性能结果）：Task1 teacher entropy `0.999111`、max probability `0.058072`、margin `0.002718`；完整单步 KL 增量 `+5.39e-9`，A-only `-2.46e-9`，B/scale-only `+1.63e-8`。这同时支持“teacher 低信息量”和“B/scale 漂移不受 A 半空间约束”两条假设，待三数据集 T5 结果确认。
+- T5 正式运行 Task1 阶段证据：C100 teacher entropy/max-prob `0.999643/0.107837`，KL 增量 full/A-only/B-scale-only 为 `+6.72e-7/-2.44e-7/+9.01e-7`，safe-step `43.75%`；INR 为 `0.999846/0.053448`、`+1.05e-6/-1.25e-7/+1.17e-6`、`35.71%`；CUB 为 `0.999046/0.058946`、`+4.47e-7/+0.66e-7/+4.84e-7`、`20.00%`。
+- 阶段判断：三个 teacher 均接近对应旧类数下的均匀分布；C100/INR 的 A-only 平均 KL 下降，证明 A 投影方向并非主要错误，但未受约束的 B/scale 增量分别达到 full 增量的约 `134%/111%`，覆盖了 A 的保护作用。CUB 的 Tangent 选择比例更高且 Tangent 不受投影，A-only 也轻微上升。不能通过继续调 cosine threshold 或刷新间隔解决这一结构性覆盖缺口。

@@ -1042,3 +1042,6 @@
 - 诊断设计使用 step 前后参数回放，能够在同一输入上给出 A-only、B/scale-only 和非线性交互的 KL 增量。开关默认关闭，并在每个任务切换时清空 pending/state，避免污染正式训练。
 - 两轮代码审查发现并排除了两种插桩污染：真实参数 `copy_` 会增加 version counter；根模块 `functional_call` 在 `base_vit/lora_vit/QKV` 参数别名下会替换 Parameter 引用。最终只在一次性深拷贝 backbone 上回放，真实拓扑回归测试覆盖准备与 step 后阶段。
 - CUB 双卡 1-epoch 冒烟显示 teacher 分布近乎均匀，并且 B/scale-only KL 增量大于完整增量，而 A-only 增量为负。当前最强工作假设是：A 投影局部有效，但 teacher 梯度信噪比低，且完整函数变化主要从未约束的 B/scale 通道进入。
+- 三数据集 20-epoch Task1 已确认该假设。C100/INR 的 A-only 更新平均降低 KL，但 full KL 仍增加；B/scale-only 是主导正项。CUB 的 A-only 略增，与其较高 Tangent 比例一致，因为当前实现只投影 Live 候选。
+- teacher entropy 在 C100/INR/CUB 分别为 `0.99964/0.99985/0.99905`，最大概率仅略高于均匀先验 `1/K`。旧 prototype cosine logits 在温度 2 下提供的是极弱排序信号，不能解释为可靠的旧类边界监督。
+- 根因优先级：P0 是约束对象不完整（只约束 A，训练和持久化都显著依赖 B/scale）；P1 是 teacher 信号在 current-task 数据上的信息量不足；P2 是只投影 Live、Tangent 与弱冲突仍可增加 A-only KL。后续修正必须一次只验证一个根因，禁止先扫阈值。

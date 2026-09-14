@@ -1014,3 +1014,12 @@
 - 判断：当前证据只能说明 C100 小幅正收益，不能判断跨数据集效果。需要同一提交下的 Live-A、冻结 A、Adaptive-A 三路配对。
 - 风险：新任务 B 从零初始化使 Adaptive-A 初始 current impact 为零；累计 G 又使后期 gate 偏小。队列完成后优先检查 gate 是否预测真实旧类下降，而不是直接扫描超参数。
 - 动作：新增双卡 batch64 的九运行 fail-fast 队列及回归测试；同步到 cuda6 独立目录后使用 GPU 2,3 nohup 启动。
+
+## 2026-09-14 09:31 Function-Safe Pareto 实现后、启动前
+
+- 观察：此前纯 functional halfspace 的稳定目标与 Pareto utility 脱节，且全局投影可能让不同 block 的冲突互相抵消；operator risk 也不能直接代表旧类分类边界变化。
+- 判断：新策略应是 Pareto-Knee 的受控扩展，而不是替换完整训练目标。只改显著冲突的分块 Live 候选，能把稳定性约束限制在最需要的位置。
+- 风险：当前任务样本上的旧 logits 仍是代理信号，特别是 CUB 细粒度类别上可能与旧类真实分布有 domain gap；单 seed 成功不能作为最终结论。
+- 风险：每 4 step 额外执行 student/teacher 半批前向和 shared-A `autograd.grad`，预计有可见训练时开销，必须从日志实测。
+- 动作：先跑三个开发 seed；不在首轮扫描 temperature、刷新间隔或 cosine threshold。只有三数据集至少不弱于 Pareto-Knee，才进入 seeds 1-3 配对确认。
+- 审查修正：旧 Dual-B 的真实决策是 FC/prototype 融合，单独冻结 prototype head 会产生 teacher 定义歧义，因此新策略明确拒绝 Dual-B。bounded/normalized absorption 会改变部署特征坐标，未启用 transport 时也明确拒绝，防止 KL 锚定错位 head。

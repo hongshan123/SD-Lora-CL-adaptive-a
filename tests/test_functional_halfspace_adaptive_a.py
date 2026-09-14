@@ -11,6 +11,7 @@ from torch import optim
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from backbone import sa_lora as sa_lora_module  # noqa: E402
 from backbone.sa_lora import (  # noqa: E402
     SharedALoRA_ViT_timm,
     decompose_adaptive_a_gradient,
@@ -40,9 +41,9 @@ class _TinyBlock(nn.Module):
 
 
 class _TinyViT(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, blocks=1):
         super().__init__()
-        self.blocks = nn.ModuleList([_TinyBlock(dim)])
+        self.blocks = nn.ModuleList([_TinyBlock(dim) for _ in range(blocks)])
         self.head = nn.Identity()
 
     def forward(self, x):
@@ -51,9 +52,9 @@ class _TinyViT(nn.Module):
         return self.head(x)
 
 
-def _functional_model(tmp_path):
+def _functional_model(tmp_path, strategy="functional_halfspace", blocks=1):
     return SharedALoRA_ViT_timm(
-        _TinyViT(4),
+        _TinyViT(4, blocks=blocks),
         r=2,
         filepath=str(tmp_path / "run"),
         cur_task_index=0,
@@ -62,7 +63,7 @@ def _functional_model(tmp_path):
         cumulative_merge="live_a_aggregate_b",
         live_a_coordinate_align=True,
         adaptive_a_enabled=True,
-        adaptive_a_strategy="functional_halfspace",
+        adaptive_a_strategy=strategy,
     )
 
 
@@ -621,3 +622,373 @@ def test_functional_halfspace_logs_its_task_summary(caplog):
 
     assert "FunctionalHalfspace-AdaptiveA" in caplog.text
     assert "normal_projections=1" in caplog.text
+
+
+def test_function_safe_pareto_config_defaults_to_logit_kl_and_cosine_margin():
+    """Rejecting the new strategy or silently using raw-dot noise is a bug."""
+    settings = validate_adaptive_a_config(
+        {
+            "sa_adaptive_a_enabled": True,
+            "sa_adaptive_a_strategy": "function_safe_pareto",
+            "sa_train_a_all_tasks": True,
+            "sa_cumulative_state": True,
+            "sa_cumulative_merge": "live_a_aggregate_b",
+            "sa_live_a_coordinate_align": True,
+            "optimizer": "sgd",
+        }
+    )
+
+    assert settings["adaptive_a_strategy"] == "function_safe_pareto"
+    assert settings["functional_conflict_cosine"] == pytest.approx(0.05)
+    assert settings["functional_temperature"] == pytest.approx(2.0)
+
+
+def test_function_safe_pareto_rejects_dual_head_teacher_ambiguity():
+    config = {
+        "sa_adaptive_a_enabled": True,
+        "sa_adaptive_a_strategy": "function_safe_pareto",
+        "sa_train_a_all_tasks": True,
+        "sa_cumulative_state": True,
+        "sa_cumulative_merge": "live_a_aggregate_b",
+        "sa_live_a_coordinate_align": True,
+        "sa_dual_head": True,
+        "optimizer": "sgd",
+    }
+
+    with pytest.raises(ValueError, match="function_safe_pareto.*sa_dual_head"):
+        validate_adaptive_a_config(config)
+
+
+def test_function_safe_pareto_requires_transport_for_non_equivalent_absorption():
+    config = {
+        "sa_adaptive_a_enabled": True,
+        "sa_adaptive_a_strategy": "function_safe_pareto",
+        "sa_train_a_all_tasks": True,
+        "sa_cumulative_state": True,
+        "sa_cumulative_merge": "live_a_aggregate_b",
+        "sa_live_a_coordinate_align": True,
+        "sa_live_a_absorb_mode": "bounded_norm_calibrated_absorb",
+        "sa_use_prototype_classifier": True,
+        "optimizer": "sgd",
+    }
+
+    with pytest.raises(ValueError, match="non-operator-preserving absorption"):
+        validate_adaptive_a_config(config)
+
+    config["sa_coordinate_stable_transport"] = True
+    settings = validate_adaptive_a_config(config)
+    assert settings["adaptive_a_strategy"] == "function_safe_pareto"
+
+
+def test_functional_halfspace_cosine_margin_ignores_weak_negative_alignment():
+    """A tiny normalized conflict must not trigger the safety projection."""
+    proposed = [torch.tensor([[1.0, 0.0]])]
+    stability = [torch.tensor([[-0.01, 1.0]])]
+    shared_as = [torch.tensor([[1.0, 0.0]])]
+
+    result = project_functional_halfspace_directions(
+        proposed,
+        stability,
+        shared_as,
+        conflict_cosine=0.05,
+    )
+
+    assert result["pre_inner"] < 0.0
+    assert result["pre_cosine"] == pytest.approx(-0.0099995, rel=1e-4)
+    assert result["mode"] == "identity"
+    assert torch.equal(result["directions"][0], proposed[0])
+
+
+def test_old_logits_kl_is_zero_at_teacher_and_backpropagates_only_to_student():
+    """Using branch cosine or allowing teacher gradients would break the signal."""
+    old_logits_kl = getattr(sa_sdlora_module, "old_logits_kl")
+    student = torch.tensor(
+        [[2.0, -1.0, 0.5], [0.0, 1.0, -2.0]], requires_grad=True
+    )
+    teacher = student.detach().clone().requires_grad_(True)
+
+    equal_loss = old_logits_kl(student, teacher, temperature=2.0)
+    assert equal_loss.item() == pytest.approx(0.0, abs=1e-7)
+
+    shifted_student = (student + torch.tensor([[0.0, 1.0, 0.0]])).clone()
+    loss = old_logits_kl(shifted_student, teacher, temperature=2.0)
+    loss.backward()
+
+    assert loss.item() > 0.0
+    assert student.grad is not None
+    assert torch.linalg.vector_norm(student.grad).item() > 0.0
+    assert teacher.grad is None
+
+
+def test_function_safe_pareto_projects_live_per_block_without_global_cancellation(
+    tmp_path,
+):
+    """A safe second block must not hide a conflict in the first block."""
+    model = _functional_model(
+        tmp_path, strategy="function_safe_pareto", blocks=2
+    )
+    model.task_id = 1
+    with torch.no_grad():
+        for module in model.w_As:
+            module.weight.copy_(
+                torch.tensor(
+                    [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]
+                )
+            )
+        for block in model.lora_vit.blocks:
+            block.attn.qkv.aggregate_q.fill_(1.0)
+            block.attn.qkv.aggregate_v.fill_(1.0)
+
+    conflicting = torch.zeros_like(model.w_As[0].weight)
+    conflicting[0, 2] = -1.0
+    safe = torch.zeros_like(model.w_As[2].weight)
+    safe[0, 2] = 2.0
+    zero = torch.zeros_like(conflicting)
+    gradients = [conflicting, zero.clone(), safe, zero.clone()]
+    stability = [
+        -conflicting,
+        zero.clone(),
+        safe.clone(),
+        zero.clone(),
+    ]
+    for module, gradient in zip(model.w_As, gradients):
+        module.weight.grad = gradient.clone()
+
+    result = model.apply_adaptive_a_gradients(
+        stability_gradients=stability,
+        cached_modes=["live", "live"],
+        cached_utilities=[1.0, 1.0],
+    )
+
+    assert result["selection"]["modes"] == ["live", "live"]
+    assert torch.allclose(model.w_As[0].weight.grad, zero)
+    assert torch.equal(model.w_As[2].weight.grad, safe)
+    assert result["functional_safety"]["observations"] == 2
+    assert result["functional_safety"]["conflicts"] == 1
+
+
+def test_function_safe_pareto_refreshes_crossfit_and_stability_together():
+    """Refreshing either cache alone would pair stale safety with new utility."""
+    class ScheduledBackbone(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.w_As = nn.ModuleList([nn.Linear(2, 2, bias=False)])
+            self.adaptive_a_strategy = "function_safe_pareto"
+            self.calls = []
+
+        def apply_adaptive_a_gradients(self, **kwargs):
+            self.calls.append(kwargs)
+            return {
+                "selection": {
+                    "modes": ["live"],
+                    "selected_utilities": [0.75],
+                }
+            }
+
+    class ScheduledNetwork(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.backbone = ScheduledBackbone()
+
+    learner = object.__new__(SharedALearner)
+    learner._sa_adaptive_a_enabled = True
+    learner._sa_adaptive_a_strategy = "function_safe_pareto"
+    learner._sa_adaptive_a_crossfit_interval = 4
+    learner._network = ScheduledNetwork()
+    learner._raw_network = lambda: learner._network
+    learner._known_classes = 2
+    learner._cur_task = 1
+    crossfit_calls = []
+    stability_calls = []
+
+    def crossfit(inputs, targets):
+        crossfit_calls.append(1)
+        gradient = torch.ones_like(learner._network.backbone.w_As[0].weight)
+        return ([gradient], [gradient])
+
+    def stability(inputs):
+        stability_calls.append(1)
+        return [
+            torch.full_like(
+                learner._network.backbone.w_As[0].weight,
+                float(len(stability_calls)),
+            )
+        ]
+
+    learner._crossfit_adaptive_a_gradients = crossfit
+    learner._functional_old_logit_gradients = stability
+    inputs = torch.ones(4, 2)
+    targets = torch.full((4,), 2, dtype=torch.long)
+    optimizer = optim.SGD(learner._network.parameters(), lr=0.1)
+
+    for _ in range(5):
+        learner._after_backward(inputs, targets, optimizer)
+
+    assert len(crossfit_calls) == 2
+    assert len(stability_calls) == 2
+    calls = learner._network.backbone.calls
+    assert calls[0]["crossfit_gradients"] is not None
+    assert calls[0]["stability_gradients"][0][0, 0].item() == 1.0
+    for call in calls[1:4]:
+        assert call["crossfit_gradients"] is None
+        assert call["stability_gradients"][0][0, 0].item() == 1.0
+    assert calls[4]["crossfit_gradients"] is not None
+    assert calls[4]["stability_gradients"][0][0, 0].item() == 2.0
+
+
+def test_function_safe_pareto_snapshots_and_releases_frozen_old_head(
+    monkeypatch,
+):
+    """The function teacher must include an immutable old classifier snapshot."""
+    events = []
+
+    class Backbone:
+        cumulative_state = False
+        cumulative_merge = "live_a_aggregate_b"
+
+        def build_hbd_teacher(self):
+            return nn.Identity()
+
+        def adaptive_a_diagnostics(self):
+            return None
+
+    class Network:
+        def __init__(self):
+            self.backbone = Backbone()
+            self.prototype_head = nn.Linear(2, 3, bias=False)
+            self.fc = nn.Linear(2, 3, bias=False)
+
+    learner = object.__new__(SharedALearner)
+    learner._network = Network()
+    learner._raw_network = lambda: learner._network
+    learner.args = {"sa_use_prototype_classifier": False}
+    learner._cur_task = 0
+    learner._hbd_enabled = False
+    learner._hbd_teacher = None
+    learner._hbd_teacher_handles = []
+    learner._hbd_teacher_captures = []
+    learner._functional_old_head = None
+    learner._sa_functional_halfspace_enabled = False
+    learner._sa_function_safe_pareto_enabled = True
+    learner._dual_head = False
+    learner._lrpt_enabled = False
+    learner._coordinate_stable_transport = False
+    learner._is_main_process = lambda: False
+
+    source_head = learner._network.prototype_head
+
+    def train(self, data_manager):
+        assert learner._hbd_teacher is not None
+        assert learner._functional_old_head is not source_head
+        assert not any(
+            parameter.requires_grad
+            for parameter in learner._functional_old_head.parameters()
+        )
+        events.append("trained")
+
+    monkeypatch.setattr(sa_sdlora_module.SDLoraLearner, "incremental_train", train)
+    monkeypatch.setattr(
+        sa_sdlora_module,
+        "register_live_a_historical_capture_hooks",
+        lambda *args, **kwargs: pytest.fail(
+            "function-safe Pareto does not need historical branch hooks"
+        ),
+    )
+
+    learner.incremental_train(type("DataManager", (), {"nb_tasks": 2})())
+
+    assert events == ["trained"]
+    assert learner._hbd_teacher is None
+    assert learner._functional_old_head is None
+
+
+def test_function_safe_pareto_old_logit_gradient_uses_heldout_half_only():
+    """Even-index cross-fit samples must not leak into the stability gradient."""
+    class Backbone(nn.Module):
+        def __init__(self, weight):
+            super().__init__()
+            self.w_As = nn.ModuleList([nn.Linear(2, 2, bias=False)])
+            with torch.no_grad():
+                self.w_As[0].weight.copy_(weight)
+
+        def forward(self, inputs):
+            return self.w_As[0](inputs)
+
+    class DictIdentity(nn.Module):
+        def forward(self, features):
+            return {"logits": features}
+
+    class Network(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.backbone = Backbone(torch.eye(2))
+
+    learner = object.__new__(SharedALearner)
+    learner._network = Network()
+    learner._raw_network = lambda: learner._network
+    learner._cur_task = 1
+    learner._hbd_teacher = Backbone(torch.tensor([[1.0, 0.5], [0.0, 1.0]]))
+    learner._functional_old_head = DictIdentity()
+    learner._sa_functional_temperature = 2.0
+
+    inputs = torch.tensor(
+        [[1.0, 7.0], [2.0, 1.0], [-3.0, 5.0], [1.0, 3.0]]
+    )
+    changed_even_inputs = inputs.clone()
+    changed_even_inputs[0] = torch.tensor([100.0, -200.0])
+    changed_even_inputs[2] = torch.tensor([-300.0, 400.0])
+
+    first = learner._functional_old_logit_gradients(inputs)
+    second = learner._functional_old_logit_gradients(changed_even_inputs)
+
+    assert len(first) == 1
+    assert first[0] is not None
+    assert torch.linalg.vector_norm(first[0]).item() > 0.0
+    assert torch.allclose(first[0], second[0], atol=1e-7, rtol=1e-6)
+
+
+def test_function_safe_pareto_old_logit_gradient_is_manually_ddp_averaged(
+    monkeypatch,
+):
+    class Backbone(nn.Module):
+        def __init__(self, weight):
+            super().__init__()
+            self.w_As = nn.ModuleList([nn.Linear(2, 2, bias=False)])
+            with torch.no_grad():
+                self.w_As[0].weight.copy_(weight)
+
+        def forward(self, inputs):
+            return self.w_As[0](inputs)
+
+    class DictIdentity(nn.Module):
+        def forward(self, features):
+            return {"logits": features}
+
+    learner = object.__new__(SharedALearner)
+    learner._network = type("Network", (), {})()
+    learner._network.backbone = Backbone(torch.eye(2))
+    learner._raw_network = lambda: learner._network
+    learner._cur_task = 1
+    learner._hbd_teacher = Backbone(
+        torch.tensor([[1.0, 0.5], [0.0, 1.0]])
+    )
+    learner._functional_old_head = DictIdentity()
+    learner._sa_functional_temperature = 2.0
+    inputs = torch.tensor([[1.0, 2.0], [2.0, 1.0]])
+
+    monkeypatch.setattr(sa_sdlora_module.dist, "is_initialized", lambda: False)
+    reference = learner._functional_old_logit_gradients(inputs)[0]
+    collectives = []
+
+    monkeypatch.setattr(sa_sdlora_module.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(sa_sdlora_module.dist, "get_world_size", lambda: 2)
+
+    def all_reduce(tensor, op):
+        collectives.append(op)
+        tensor.mul_(2.0)
+
+    monkeypatch.setattr(sa_sdlora_module.dist, "all_reduce", all_reduce)
+    averaged = learner._functional_old_logit_gradients(inputs)[0]
+
+    assert len(collectives) == 1
+    assert torch.allclose(averaged, reference)

@@ -207,3 +207,13 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 控制变量：CoordinateStable alignment、bounded NormCap、prototype transport、Dual-B、rank10、20 epoch、任务顺序均不变。
 - 资源协议：cuda6 GPU 2,3；每卡 batch64，双卡有效 batch128；全部由单个 nohup 串行队列运行，失败即停止。
 - 判定：先比较 Final/AAA/Forgetting，再检查 gate 与旧类下降、当前类增益的关系；不依据单数据集结果调整 gate 超参数。
+
+## 14. Function-Safe Pareto Adaptive-A（2026-09-14）
+
+- 目标：保留 Pareto-Knee 对新任务 utility/operator risk 的离散选择，同时只在 Live 候选真正损害旧任务函数时修正共享 A 的更新。
+- 稳定信号：冻结任务开始时的 backbone 与旧分类头，在当前 batch 的 held-out 奇数样本上计算旧类 logits KL；不使用旧数据、不把 KL 加入普通训练 loss。
+- 约束：每个 Transformer block 联合处理 Q/V；仅当新任务方向与稳定梯度的余弦小于 `-0.05` 且绝对内积小于 `-1e-12` 时，将 Live 候选投影到一阶安全半空间。Frozen/Tangent 和 Pareto-Knee 选择逻辑保持不变。
+- 调度：稳定梯度与两折 Pareto utility 每 4 step 同步刷新，其余 step 复用瞬时缓存；Task 0 完全跳过 teacher 信号。
+- 状态边界：teacher、旧 head 和梯度缓存均在任务内释放，不进入 checkpoint；CoordinateStable、prototype transport、bounded NormCap 和分类头逻辑不变。
+- 首轮矩阵：CIFAR-100 seed1993、ImageNet-R seed1995、CUB-200 seed1，均为 T=10、20 epoch、双卡每卡 batch64、关闭 Dual-B；仅与相同协议的 Pareto-Knee、Live-A、Frozen-A 配对比较。
+- 验收：三数据集 Final/AAA 不低于 Pareto-Knee，并检查冲突触发率、投影修正率和运行开销。若单 seed 无一致方向，不扫描 cosine threshold 或 temperature。

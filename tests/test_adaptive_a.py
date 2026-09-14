@@ -885,7 +885,9 @@ def test_risk_budgeted_model_uses_previous_minibatch_update_as_control(tmp_path)
     assert torch.count_nonzero(model.w_As[1].weight.grad) == 0
 
 
-@pytest.mark.parametrize("strategy", ["risk_budgeted", "pareto_knee"])
+@pytest.mark.parametrize(
+    "strategy", ["risk_budgeted", "pareto_knee", "function_safe_pareto"]
+)
 def test_adaptive_a_input_sketch_is_fixed_size_and_reloaded(tmp_path, strategy):
     run_dir = tmp_path / "run"
     model = _adaptive_model(

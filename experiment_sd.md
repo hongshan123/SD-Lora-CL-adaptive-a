@@ -841,3 +841,14 @@
 - 配置：三个数据集各使用既定开发 seed；SGD、20 epoch、rank10、CoordinateStable、bounded NormCap、transport、Dual-B 均保持不变。两卡每卡 batch64，等效 batch128。
 - 三组：`live_a=(train_a=true, adaptive=false)`；`frozen_a=(false,false)`；`adaptive_a=(true,true)`。
 - 执行：`run_adaptive_a_three_way_2gpu_queue.sh` 动态生成 9 份可审计 JSON，独立日志和输出目录；结果待回填。
+
+## 2026-09-14：Function-Safe Pareto 三数据集单 seed 验证
+
+- 实验标题：以旧类 logits KL 半空间约束 Pareto-Knee 的 Live-A 候选。
+- 尝试方法：新增 `function_safe_pareto`。任务开始时冻结上一任务部署 backbone 和旧分类头；每个 block 对 Q/V Live 候选做联合半空间投影，触发条件为 cosine `< -0.05` 且绝对内积 `< -1e-12`。稳定梯度和 cross-fit utility 每 4 step 同步刷新并缓存。
+- 理论依据：原 operator-risk 只约束参数空间变化，并不等价于旧类决策稳定。旧模型在当前数据上的 logits 提供 rehearsal-free function-space 约束；row-space normal 分量是共享 A 子空间变化的直接通道，优先在该通道执行最小修正。
+- 与已有实验区别：纯 `functional_halfspace` 每 step 对全局 A 更新施加强约束，可能牺牲塑性；本实验保留 Pareto 的 Frozen/Tangent/Live 选择，只修正存在显著功能冲突的分块 Live 候选。
+- 固定协议：CoordinateStable alignment、prototype transport、bounded NormCap、rank10、优化器、学习率、任务顺序均继承主配置；Dual-B 关闭；T=10、20 epoch、双卡每卡 batch64。
+- 实验矩阵：CIFAR-100 seed1993、ImageNet-R seed1995、CUB-200 seed1。执行脚本 `run_function_safe_pareto_t10_3datasets_2gpu.sh`，结果待回填。
+- 实现验证：Adaptive-A 定向测试 99 passed；完整仓库测试 234 passed；三份运行配置 PREPARE_ONLY 预检通过。独立审查后禁止与 Dual-B 混用，并要求非算子等价 absorption 必须配合 prototype classifier 和 CoordinateStable transport。
+- 结果：待训练完成后填写 Final、AAA、Forgetting、冲突率、平均修正比例及相对 Pareto-Knee 的配对差。

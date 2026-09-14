@@ -108,6 +108,12 @@ def validate_adaptive_a_config(args):
     functional_min_normal_fraction = float(
         args.get("sa_functional_min_normal_fraction", 1e-4)
     )
+    functional_conflict_cosine = float(
+        args.get("sa_functional_conflict_cosine", 0.05)
+    )
+    functional_temperature = float(
+        args.get("sa_functional_temperature", 2.0)
+    )
     if settings["adaptive_a_stability_weight"] < 0:
         raise ValueError("sa_adaptive_a_stability_weight must be non-negative")
     if not 0.0 <= settings["adaptive_a_gate_floor"] <= 1.0:
@@ -117,18 +123,24 @@ def validate_adaptive_a_config(args):
     if settings["adaptive_a_eps"] <= 0:
         raise ValueError("sa_adaptive_a_eps must be positive")
     if settings["adaptive_a_strategy"] not in (
-        "impact_ratio", "risk_budgeted", "pareto_knee", "functional_halfspace"
+        "impact_ratio",
+        "risk_budgeted",
+        "pareto_knee",
+        "functional_halfspace",
+        "function_safe_pareto",
     ):
         raise ValueError(
             "sa_adaptive_a_strategy must be impact_ratio, risk_budgeted, "
-            "pareto_knee, or functional_halfspace"
+            "pareto_knee, functional_halfspace, or function_safe_pareto"
         )
     if (
-        settings["adaptive_a_strategy"] == "functional_halfspace"
+        settings["adaptive_a_strategy"]
+        in ("functional_halfspace", "function_safe_pareto")
         and args.get("sa_hbd_enabled", False)
     ):
         raise ValueError(
-            "functional_halfspace cannot be combined with sa_hbd_enabled=true"
+            "functional_halfspace/function_safe_pareto cannot be combined "
+            "with sa_hbd_enabled=true"
         )
     if settings["adaptive_a_risk_budget"] < 0:
         raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
@@ -142,12 +154,38 @@ def validate_adaptive_a_config(args):
         raise ValueError("sa_functional_normal_tol must be positive")
     if not 0.0 <= functional_min_normal_fraction <= 1.0:
         raise ValueError("sa_functional_min_normal_fraction must be in [0, 1]")
-    if settings["adaptive_a_strategy"] == "functional_halfspace":
+    if not 0.0 <= functional_conflict_cosine <= 1.0:
+        raise ValueError("sa_functional_conflict_cosine must be in [0, 1]")
+    if functional_temperature <= 0.0:
+        raise ValueError("sa_functional_temperature must be positive")
+    if settings["adaptive_a_strategy"] == "function_safe_pareto":
+        if args.get("sa_dual_head", False):
+            raise ValueError(
+                "function_safe_pareto cannot be combined with sa_dual_head=true"
+            )
+        absorb_mode = args.get(
+            "sa_live_a_absorb_mode", "operator_preserving_absorb"
+        )
+        if absorb_mode != "operator_preserving_absorb" and not (
+            args.get("sa_use_prototype_classifier", False)
+            and args.get("sa_coordinate_stable_transport", False)
+        ):
+            raise ValueError(
+                "function_safe_pareto with non-operator-preserving absorption "
+                "requires sa_use_prototype_classifier=true and "
+                "sa_coordinate_stable_transport=true"
+            )
+    if settings["adaptive_a_strategy"] in (
+        "functional_halfspace",
+        "function_safe_pareto",
+    ):
         settings.update(
             {
                 "functional_conflict_tol": functional_conflict_tol,
                 "functional_normal_tol": functional_normal_tol,
                 "functional_min_normal_fraction": functional_min_normal_fraction,
+                "functional_conflict_cosine": functional_conflict_cosine,
+                "functional_temperature": functional_temperature,
             }
         )
     if not settings["adaptive_a_enabled"]:
@@ -172,7 +210,12 @@ def validate_adaptive_a_config(args):
         )
     if (
         settings["adaptive_a_strategy"]
-        in ("risk_budgeted", "pareto_knee", "functional_halfspace")
+        in (
+            "risk_budgeted",
+            "pareto_knee",
+            "functional_halfspace",
+            "function_safe_pareto",
+        )
         and args.get("optimizer", "sgd").lower() != "sgd"
     ):
         raise ValueError("functional and discrete Adaptive-A strategies require SGD")
@@ -187,6 +230,31 @@ def validate_pareto_crossfit_interval(args):
     if interval <= 0:
         raise ValueError("sa_adaptive_a_crossfit_interval must be a positive integer")
     return int(interval)
+
+
+def old_logits_kl(student_logits, teacher_logits, temperature=2.0):
+    """Temperature-scaled KL from a frozen old-class teacher."""
+    if student_logits.shape != teacher_logits.shape:
+        raise ValueError("student and teacher old logits must have the same shape")
+    if student_logits.ndim != 2 or student_logits.shape[1] == 0:
+        raise ValueError("old logits must be a non-empty [batch, classes] tensor")
+    if temperature <= 0.0:
+        raise ValueError("temperature must be positive")
+    teacher_probabilities = F.softmax(
+        teacher_logits.detach() / temperature, dim=1
+    )
+    student_log_probabilities = F.log_softmax(
+        student_logits / temperature, dim=1
+    )
+    return (
+        F.kl_div(
+            student_log_probabilities,
+            teacher_probabilities,
+            reduction="batchmean",
+        )
+        * temperature
+        * temperature
+    )
 
 
 def should_refresh_pareto_crossfit(task_id, step, interval, has_cache):
@@ -439,6 +507,13 @@ class Learner(SDLoraLearner):
             self._sa_adaptive_a_enabled
             and self._sa_adaptive_a_strategy == "functional_halfspace"
         )
+        self._sa_function_safe_pareto_enabled = (
+            self._sa_adaptive_a_enabled
+            and self._sa_adaptive_a_strategy == "function_safe_pareto"
+        )
+        self._sa_functional_temperature = adaptive_a_settings.get(
+            "functional_temperature", 2.0
+        )
         self._sa_adaptive_a_crossfit_interval = validate_pareto_crossfit_interval(
             args
         )
@@ -446,6 +521,7 @@ class Learner(SDLoraLearner):
         self._sa_pareto_step = 0
         self._sa_pareto_cached_modes = None
         self._sa_pareto_cached_utilities = None
+        self._sa_pareto_cached_stability_gradients = None
         self._sa_pareto_crossfit_refreshes = 0
         self._sa_pareto_cached_reuses = 0
         self._sa_pareto_task0_skips = 0
@@ -547,6 +623,7 @@ class Learner(SDLoraLearner):
                     "sa_cumulative_merge=live_a_aggregate_b"
                 )
         self._hbd_teacher = None
+        self._functional_old_head = None
         self._hbd_teacher_captures = []
         self._hbd_teacher_handles = []
         self._hbd_first_batch = True
@@ -640,7 +717,11 @@ class Learner(SDLoraLearner):
                 momentum=momentum,
             )
             return None
-        if strategy in ("risk_budgeted", "pareto_knee"):
+        if strategy in (
+            "risk_budgeted",
+            "pareto_knee",
+            "function_safe_pareto",
+        ):
             step_size = (
                 float(optimizer.param_groups[0]["lr"])
                 if optimizer is not None
@@ -660,8 +741,9 @@ class Learner(SDLoraLearner):
             crossfit_gradients = None
             cached_modes = None
             cached_utilities = None
+            stability_gradients = None
             refresh_crossfit = False
-            if strategy == "pareto_knee":
+            if strategy in ("pareto_knee", "function_safe_pareto"):
                 self._reset_pareto_schedule_if_needed()
                 refresh_crossfit = should_refresh_pareto_crossfit(
                     self._cur_task,
@@ -678,10 +760,22 @@ class Learner(SDLoraLearner):
                     crossfit_gradients = self._crossfit_adaptive_a_gradients(
                         inputs, targets
                     )
+                    if strategy == "function_safe_pareto":
+                        stability_gradients = (
+                            self._functional_old_logit_gradients(inputs)
+                        )
                     self._sa_pareto_crossfit_refreshes += 1
                 elif self._cur_task > 0:
                     cached_modes = self._sa_pareto_cached_modes
                     cached_utilities = self._sa_pareto_cached_utilities
+                    if strategy == "function_safe_pareto":
+                        stability_gradients = (
+                            self._sa_pareto_cached_stability_gradients
+                        )
+                        if stability_gradients is None:
+                            raise RuntimeError(
+                                "function-safe Pareto stability cache missing"
+                            )
                     self._sa_pareto_cached_reuses += 1
                 else:
                     self._sa_pareto_task0_skips += 1
@@ -692,14 +786,20 @@ class Learner(SDLoraLearner):
                 crossfit_gradients=crossfit_gradients,
                 cached_modes=cached_modes,
                 cached_utilities=cached_utilities,
+                stability_gradients=stability_gradients,
             )
-            if strategy == "pareto_knee":
+            if strategy in ("pareto_knee", "function_safe_pareto"):
                 if refresh_crossfit and result is not None:
                     selection = result["selection"]
                     self._sa_pareto_cached_modes = list(selection["modes"])
                     self._sa_pareto_cached_utilities = list(
                         selection["selected_utilities"]
                     )
+                    if strategy == "function_safe_pareto":
+                        self._sa_pareto_cached_stability_gradients = [
+                            None if gradient is None else gradient.detach().clone()
+                            for gradient in stability_gradients
+                        ]
                 self._sa_pareto_step += 1
         else:
             backbone.apply_adaptive_a_gradients()
@@ -760,6 +860,78 @@ class Learner(SDLoraLearner):
                     gradients[index] = gradient
         return gradients
 
+    def _functional_old_logit_gradients(self, inputs):
+        """Return held-out old-logit KL gradients for shared A only."""
+        if self._cur_task == 0:
+            return None
+        if self._hbd_teacher is None or self._functional_old_head is None:
+            raise RuntimeError(
+                "function-safe Pareto teacher backbone/head missing for task "
+                "{}".format(self._cur_task)
+            )
+        if inputs.shape[0] < 2:
+            raise ValueError(
+                "function-safe Pareto stability requires at least two samples"
+            )
+        heldout_inputs = inputs[1::2]
+        raw_network = self._raw_network()
+        backbone = raw_network.backbone
+        parameters = [module.weight for module in backbone.w_As]
+        wrappers = (
+            [
+                block.attn.qkv
+                for block in getattr(backbone.lora_vit, "blocks", [])
+                if hasattr(block.attn.qkv, "capture_input_sketch")
+            ]
+            if hasattr(backbone, "lora_vit")
+            else []
+        )
+        capture_states = [wrapper.capture_input_sketch for wrapper in wrappers]
+        for wrapper in wrappers:
+            wrapper.capture_input_sketch = False
+        try:
+            with rng_preserving(), torch.enable_grad():
+                student_features = backbone(heldout_inputs)
+                student_output = self._functional_old_head(student_features)
+                student_logits = (
+                    student_output["logits"]
+                    if isinstance(student_output, dict)
+                    else student_output
+                )
+                with torch.no_grad():
+                    teacher_features = self._hbd_teacher(heldout_inputs)
+                    teacher_output = self._functional_old_head(teacher_features)
+                    teacher_logits = (
+                        teacher_output["logits"]
+                        if isinstance(teacher_output, dict)
+                        else teacher_output
+                    )
+                stability_loss = old_logits_kl(
+                    student_logits,
+                    teacher_logits,
+                    temperature=self._sa_functional_temperature,
+                )
+                gradients = list(
+                    torch.autograd.grad(
+                        stability_loss, parameters, allow_unused=True
+                    )
+                )
+        finally:
+            for wrapper, capture_state in zip(wrappers, capture_states):
+                wrapper.capture_input_sketch = capture_state
+        gradients = [
+            None if gradient is None else gradient.detach()
+            for gradient in gradients
+        ]
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            for index, gradient in enumerate(gradients):
+                if gradient is not None:
+                    gradient = gradient.contiguous()
+                    dist.all_reduce(gradient, op=dist.ReduceOp.SUM)
+                    gradient.div_(dist.get_world_size())
+                    gradients[index] = gradient
+        return gradients
+
     def _reset_pareto_schedule_if_needed(self):
         """Keep the transient Pareto decision cache strictly task-local."""
         if getattr(self, "_sa_pareto_schedule_task_id", None) == self._cur_task:
@@ -768,6 +940,7 @@ class Learner(SDLoraLearner):
         self._sa_pareto_step = 0
         self._sa_pareto_cached_modes = None
         self._sa_pareto_cached_utilities = None
+        self._sa_pareto_cached_stability_gradients = None
         self._sa_pareto_crossfit_refreshes = 0
         self._sa_pareto_cached_reuses = 0
         self._sa_pareto_task0_skips = 0
@@ -868,15 +1041,24 @@ class Learner(SDLoraLearner):
                 diagnostics["risk_budget_mode"],
                 diagnostics["live_risk_reference"],
             )
-        elif diagnostics.get("strategy") == "pareto_knee":
+        elif diagnostics.get("strategy") in (
+            "pareto_knee",
+            "function_safe_pareto",
+        ):
+            prefix = (
+                "FunctionSafePareto"
+                if diagnostics["strategy"] == "function_safe_pareto"
+                else "ParetoKnee"
+            )
             logging.info(
-                "[ParetoKnee-AdaptiveA] task %d: mode_counts=%s "
+                "[%s-AdaptiveA] task %d: mode_counts=%s "
                 "mode_fractions=%s mean_crossfit_utility=%.6e "
                 "mean_operator_risk=%.6e implied_risk_ratio_mean=%.6f "
                 "implied_risk_ratio_range=[%.6f,%.6f] "
                 "mean_pareto_points=%.2f live_risk=%.6e "
                 "crossfit_interval=%d refreshes=%d cached_reuses=%d "
                 "task0_skips=%d",
+                prefix,
                 self._cur_task,
                 diagnostics["mode_counts"],
                 diagnostics["mode_fractions"],
@@ -892,21 +1074,52 @@ class Learner(SDLoraLearner):
                 getattr(self, "_sa_pareto_cached_reuses", 0),
                 getattr(self, "_sa_pareto_task0_skips", 0),
             )
+            if diagnostics["strategy"] == "function_safe_pareto":
+                safety = diagnostics["functional_safety"]
+                logging.info(
+                    "[FunctionSafePareto] task %d: blocks=%d conflicts=%d "
+                    "normal_projections=%d full_fallbacks=%d "
+                    "mean_pre_cosine=%.6f mean_correction_ratio=%.6f",
+                    self._cur_task,
+                    safety["observations"],
+                    safety["conflicts"],
+                    safety["normal_projections"],
+                    safety["full_fallbacks"],
+                    safety["mean_pre_cosine"],
+                    safety["mean_correction_ratio"],
+                )
 
     def incremental_train(self, data_manager):
         self._dual_num_tasks = data_manager.nb_tasks
         if (
             self._hbd_enabled
             or getattr(self, "_sa_functional_halfspace_enabled", False)
+            or getattr(self, "_sa_function_safe_pareto_enabled", False)
         ) and self._cur_task >= 0:
             backbone = self._raw_network().backbone
             self._hbd_teacher = backbone.build_hbd_teacher()
             self._hbd_teacher_captures = []
-            self._hbd_teacher_handles = (
-                register_live_a_historical_capture_hooks(
-                    self._hbd_teacher, self._hbd_teacher_captures
+            if (
+                self._hbd_enabled
+                or getattr(self, "_sa_functional_halfspace_enabled", False)
+            ):
+                self._hbd_teacher_handles = (
+                    register_live_a_historical_capture_hooks(
+                        self._hbd_teacher, self._hbd_teacher_captures
+                    )
                 )
-            )
+            if getattr(self, "_sa_function_safe_pareto_enabled", False):
+                raw_network = self._raw_network()
+                old_head = getattr(raw_network, "prototype_head", None)
+                if old_head is None:
+                    old_head = getattr(raw_network, "fc", None)
+                if old_head is None:
+                    raise RuntimeError(
+                        "function-safe Pareto requires an old classifier head"
+                    )
+                self._functional_old_head = copy.deepcopy(old_head).eval()
+                for parameter in self._functional_old_head.parameters():
+                    parameter.requires_grad_(False)
             self._hbd_first_batch = True
             self._hbd_ratio_logged = False
         if self._dual_head:
@@ -970,6 +1183,7 @@ class Learner(SDLoraLearner):
             self._hbd_teacher_handles = []
             self._hbd_teacher_captures = []
             self._hbd_teacher = None
+        self._functional_old_head = None
         if self._is_main_process():
             self._log_post_train_hash(self._cur_task)
             backbone = self._raw_network().backbone

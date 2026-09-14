@@ -332,6 +332,7 @@ def project_functional_halfspace_directions(
     stability_gradients: Sequence[Tensor],
     shared_as: Sequence[Tensor],
     conflict_tol: float = 1e-12,
+    conflict_cosine: float = 0.0,
     normal_tol: float = 1e-12,
     min_normal_fraction: float = 1e-4,
 ) -> dict:
@@ -339,6 +340,8 @@ def project_functional_halfspace_directions(
     branch_count = len(proposed_directions)
     if branch_count == 0:
         raise ValueError("at least one shared-A direction is required")
+    if not 0.0 <= conflict_cosine <= 1.0:
+        raise ValueError("conflict_cosine must be in [0, 1]")
     if len(stability_gradients) != branch_count or len(shared_as) != branch_count:
         raise ValueError("direction, stability, and shared-A counts must match")
     for direction, stability_gradient, shared_a in zip(
@@ -409,13 +412,22 @@ def project_functional_halfspace_directions(
     normal_fraction = (
         normal_norm2 / stability_norm2 if stability_norm2 > 0.0 else 0.0
     )
+    proposed_norm2 = sum(
+        float(torch.sum(component["live"].to(dtype=torch.float64).square()))
+        for component in proposed_components
+    )
+    pre_cosine = (
+        pre_inner / math.sqrt(stability_norm2 * proposed_norm2)
+        if stability_norm2 > 0.0 and proposed_norm2 > 0.0
+        else 0.0
+    )
 
     directions = [direction.clone() for direction in proposed_directions]
     mode = "identity"
     correction_ratio = 0.0
     if stability_norm2 <= normal_tol:
         mode = "degenerate"
-    elif pre_inner < -conflict_tol:
+    elif pre_inner < -conflict_tol and pre_cosine < -conflict_cosine:
         if (
             normal_norm2 > normal_tol
             and normal_fraction >= min_normal_fraction
@@ -437,10 +449,6 @@ def project_functional_halfspace_directions(
             ]
             mode = "full"
             correction_norm2 = correction_scale * correction_scale * stability_norm2
-        proposed_norm2 = sum(
-            float(torch.sum(component["live"].to(dtype=torch.float64).square()))
-            for component in proposed_components
-        )
         if proposed_norm2 > 0.0:
             correction_ratio = math.sqrt(correction_norm2 / proposed_norm2)
 
@@ -457,6 +465,7 @@ def project_functional_halfspace_directions(
         "directions": directions,
         "mode": mode,
         "pre_inner": pre_inner,
+        "pre_cosine": pre_cosine,
         "post_inner": post_inner,
         "normal_fraction": normal_fraction,
         "correction_ratio": correction_ratio,
@@ -1349,8 +1358,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         adaptive_a_risk_budget=0.05,
         adaptive_a_risk_budget_mode="absolute",
         functional_conflict_tol=1e-12,
+        functional_conflict_cosine=0.05,
         functional_normal_tol=1e-12,
         functional_min_normal_fraction=1e-4,
+        functional_temperature=2.0,
         resume=False,
     ):
         super().__init__()
@@ -1408,16 +1419,22 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.adaptive_a_risk_budget = float(adaptive_a_risk_budget)
         self.adaptive_a_risk_budget_mode = str(adaptive_a_risk_budget_mode)
         self.functional_conflict_tol = float(functional_conflict_tol)
+        self.functional_conflict_cosine = float(functional_conflict_cosine)
         self.functional_normal_tol = float(functional_normal_tol)
         self.functional_min_normal_fraction = float(
             functional_min_normal_fraction
         )
+        self.functional_temperature = float(functional_temperature)
         if self.adaptive_a_strategy not in (
-            "impact_ratio", "risk_budgeted", "pareto_knee", "functional_halfspace"
+            "impact_ratio",
+            "risk_budgeted",
+            "pareto_knee",
+            "functional_halfspace",
+            "function_safe_pareto",
         ):
             raise ValueError(
                 "sa_adaptive_a_strategy must be impact_ratio, risk_budgeted, "
-                "pareto_knee, or functional_halfspace"
+                "pareto_knee, functional_halfspace, or function_safe_pareto"
             )
         if self.adaptive_a_risk_budget < 0:
             raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
@@ -1441,6 +1458,12 @@ class SharedALoRA_ViT_timm(nn.Module):
             raise ValueError(
                 "sa_functional_min_normal_fraction must be in [0, 1]"
             )
+        if not 0.0 <= self.functional_conflict_cosine <= 1.0:
+            raise ValueError(
+                "sa_functional_conflict_cosine must be in [0, 1]"
+            )
+        if self.functional_temperature <= 0.0:
+            raise ValueError("sa_functional_temperature must be positive")
         if self.adaptive_a_enabled and not train_a_all_tasks:
             raise ValueError(
                 "sa_adaptive_a_enabled requires sa_train_a_all_tasks=True"
@@ -1816,7 +1839,11 @@ class SharedALoRA_ViT_timm(nn.Module):
                         capture_input_sketch=(
                             self.adaptive_a_enabled
                             and self.adaptive_a_strategy
-                            in ("risk_budgeted", "pareto_knee")
+                            in (
+                                "risk_budgeted",
+                                "pareto_knee",
+                                "function_safe_pareto",
+                            )
                         ),
                     )
                 else:
@@ -2075,7 +2102,10 @@ class SharedALoRA_ViT_timm(nn.Module):
                 momentum_buffers=momentum_buffers,
                 momentum=momentum,
             )
-        if self.adaptive_a_strategy == "pareto_knee":
+        if self.adaptive_a_strategy in (
+            "pareto_knee",
+            "function_safe_pareto",
+        ):
             if (cached_modes is None) != (cached_utilities is None):
                 raise ValueError(
                     "cached Pareto modes and utilities must be provided together"
@@ -2096,6 +2126,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 crossfit_gradients=crossfit_gradients,
                 cached_modes=cached_modes,
                 cached_utilities=cached_utilities,
+                stability_gradients=stability_gradients,
             )
         if self.adaptive_a_strategy == "risk_budgeted":
             if control_gradients is None:
@@ -2218,6 +2249,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         crossfit_gradients=None,
         cached_modes=None,
         cached_utilities=None,
+        stability_gradients=None,
     ):
         """Select exact Frozen/Tangent/Live gradients under one global budget."""
         if step_size < 0:
@@ -2238,6 +2270,18 @@ class SharedALoRA_ViT_timm(nn.Module):
                 raise ValueError("crossfit gradients must contain two folds")
             if any(len(fold) != len(self.w_As) for fold in crossfit_gradients):
                 raise ValueError("crossfit gradients must match shared-A branches")
+        if stability_gradients is not None and len(stability_gradients) != len(
+            self.w_As
+        ):
+            raise ValueError("stability_gradients must match shared-A branches")
+        if (
+            self.adaptive_a_strategy == "function_safe_pareto"
+            and self.task_id > 0
+            and stability_gradients is None
+        ):
+            raise ValueError(
+                "function_safe_pareto requires cached or refreshed stability gradients"
+            )
         if (cached_modes is None) != (cached_utilities is None):
             raise ValueError("cached Pareto modes and utilities must be provided together")
         candidates_by_layer = []
@@ -2275,6 +2319,34 @@ class SharedALoRA_ViT_timm(nn.Module):
             v_candidates = decompose_adaptive_a_gradient(
                 proposed_v, wrapper.a_v.weight
             )
+            stability_q = (
+                stability_gradients[2 * wrapper_index]
+                if stability_gradients is not None
+                else None
+            )
+            stability_v = (
+                stability_gradients[2 * wrapper_index + 1]
+                if stability_gradients is not None
+                else None
+            )
+            if self.adaptive_a_strategy == "function_safe_pareto" and has_history:
+                if stability_q is None or stability_v is None:
+                    raise ValueError(
+                        "function-safe stability gradients cannot contain None"
+                    )
+                safety = project_functional_halfspace_directions(
+                    [q_candidates["live"], v_candidates["live"]],
+                    [stability_q, stability_v],
+                    [wrapper.a_q.weight, wrapper.a_v.weight],
+                    conflict_tol=self.functional_conflict_tol,
+                    conflict_cosine=self.functional_conflict_cosine,
+                    normal_tol=self.functional_normal_tol,
+                    min_normal_fraction=self.functional_min_normal_fraction,
+                )
+                q_candidates["live"], v_candidates["live"] = safety[
+                    "directions"
+                ]
+                self._functional_halfspace_observations.append(safety)
             control_q = (
                 control_gradients[2 * wrapper_index]
                 if control_gradients is not None
@@ -2326,6 +2398,31 @@ class SharedALoRA_ViT_timm(nn.Module):
                     heldout_q,
                     heldout_v,
                 )
+                if (
+                    self.adaptive_a_strategy == "function_safe_pareto"
+                    and has_history
+                ):
+                    mutable_fold_candidates = list(fold_candidates)
+                    for q_index, v_index in ((0, 1), (2, 3)):
+                        fold_safety = project_functional_halfspace_directions(
+                            [
+                                mutable_fold_candidates[q_index]["live"],
+                                mutable_fold_candidates[v_index]["live"],
+                            ],
+                            [stability_q, stability_v],
+                            [wrapper.a_q.weight, wrapper.a_v.weight],
+                            conflict_tol=self.functional_conflict_tol,
+                            conflict_cosine=self.functional_conflict_cosine,
+                            normal_tol=self.functional_normal_tol,
+                            min_normal_fraction=(
+                                self.functional_min_normal_fraction
+                            ),
+                        )
+                        (
+                            mutable_fold_candidates[q_index]["live"],
+                            mutable_fold_candidates[v_index]["live"],
+                        ) = fold_safety["directions"]
+                    fold_candidates = tuple(mutable_fold_candidates)
             layer = {}
             input_rms = wrapper.historical_input_rms.to(
                 device=gradient_q.device, dtype=gradient_q.dtype
@@ -2452,7 +2549,10 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "pareto_points": None,
                 "selected_utilities": list(cached_utilities),
             }
-        elif self.adaptive_a_strategy == "pareto_knee":
+        elif self.adaptive_a_strategy in (
+            "pareto_knee",
+            "function_safe_pareto",
+        ):
             selection = choose_pareto_knee_modes(candidates_by_layer)
         else:
             selection = choose_risk_budgeted_modes(candidates_by_layer, budget)
@@ -2504,7 +2604,43 @@ class SharedALoRA_ViT_timm(nn.Module):
             )
         self._adaptive_a_previous_gradients = raw_gradients
         diagnostics = self.adaptive_a_diagnostics()
-        return {**diagnostics, "selection": selection} if diagnostics else None
+        if diagnostics is None:
+            return None
+        result = {**diagnostics, "selection": selection}
+        if self.adaptive_a_strategy == "function_safe_pareto":
+            result["functional_safety"] = self._functional_safety_diagnostics()
+        return result
+
+    def _functional_safety_diagnostics(self):
+        observations = self._functional_halfspace_observations
+        if not observations:
+            return {
+                "observations": 0,
+                "conflicts": 0,
+                "normal_projections": 0,
+                "full_fallbacks": 0,
+                "degenerate_noops": 0,
+                "mean_pre_cosine": 0.0,
+                "mean_correction_ratio": 0.0,
+            }
+        modes = [item["mode"] for item in observations]
+        return {
+            "observations": len(observations),
+            "conflicts": sum(
+                mode in ("normal", "full") for mode in modes
+            ),
+            "normal_projections": sum(mode == "normal" for mode in modes),
+            "full_fallbacks": sum(mode == "full" for mode in modes),
+            "degenerate_noops": sum(mode == "degenerate" for mode in modes),
+            "mean_pre_cosine": sum(
+                item["pre_cosine"] for item in observations
+            )
+            / len(observations),
+            "mean_correction_ratio": sum(
+                item["correction_ratio"] for item in observations
+            )
+            / len(observations),
+        }
 
     def adaptive_a_diagnostics(self) -> dict | None:
         """Return aggregate task-local Adaptive-A gate diagnostics."""
@@ -2575,7 +2711,11 @@ class SharedALoRA_ViT_timm(nn.Module):
                 for layer in sorted(per_layer)
             ],
         }
-        if self.adaptive_a_strategy in ("risk_budgeted", "pareto_knee"):
+        if self.adaptive_a_strategy in (
+            "risk_budgeted",
+            "pareto_knee",
+            "function_safe_pareto",
+        ):
             mode_counts = {
                 mode: sum(item.get("mode") == mode for item in observations)
                 for mode in ADAPTIVE_A_MODES
@@ -2625,6 +2765,10 @@ class SharedALoRA_ViT_timm(nn.Module):
                     ),
                 }
             )
+            if self.adaptive_a_strategy == "function_safe_pareto":
+                diagnostics["functional_safety"] = (
+                    self._functional_safety_diagnostics()
+                )
         return diagnostics
 
     def live_a_gradient_diagnostics(self, x) -> dict | None:
@@ -3094,7 +3238,11 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "coordinate_aligned": self.live_a_coordinate_align,
                 "absorb_mode": self.live_a_absorb_mode,
             }
-        if self.adaptive_a_strategy in ("risk_budgeted", "pareto_knee"):
+        if self.adaptive_a_strategy in (
+            "risk_budgeted",
+            "pareto_knee",
+            "function_safe_pareto",
+        ):
             state.update(
                 {
                 "adaptive_a_input_rms": [

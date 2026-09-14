@@ -1023,3 +1023,4 @@
 - 风险：每 4 step 额外执行 student/teacher 半批前向和 shared-A `autograd.grad`，预计有可见训练时开销，必须从日志实测。
 - 动作：先跑三个开发 seed；不在首轮扫描 temperature、刷新间隔或 cosine threshold。只有三数据集至少不弱于 Pareto-Knee，才进入 seeds 1-3 配对确认。
 - 审查修正：旧 Dual-B 的真实决策是 FC/prototype 融合，单独冻结 prototype head 会产生 teacher 定义歧义，因此新策略明确拒绝 Dual-B。bounded/normalized absorption 会改变部署特征坐标，未启用 transport 时也明确拒绝，防止 KL 锚定错位 head。
+- 启动状态：提交 `fbb24c7` 后三路双卡任务均进入 Task 0，队列 PID `3251008`；GPU 1 上已有外部 ObjectNet 作业，因此使用不连续卡对 `0,2`、`3,4`、`5,6`，未抢占 GPU 1。

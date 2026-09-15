@@ -1053,3 +1053,11 @@
 - 关键预期：Historical-only 只能消除 B 对稳定梯度的混杂，不能修复 teacher 在当前任务图像上近均匀的问题。因此它优于 Full-logit 但仍弱于 HBD，是最符合现有证据的结果；不能预设它一定成为主方法。
 - 风险：Full-logit 与 Historical-logit 仍只投影 Pareto 的 Live 候选，Tangent/弱冲突不受约束；本轮不同时修改候选覆盖范围。
 - 验证：新增作用域移除/恢复、异常恢复、配置校验、B-invariance、诊断同口径及队列失败传播测试；相关模型测试 `60 passed`，完整仓库 `252 passed`，9-run PREPARE_ONLY 预检通过。
+
+## 2026-09-15 三路对照结果判断
+
+- 队列 `functional_signal_threeway_single_seed_queue.log` 已完成，C100/INR/CUB 三波均 `status=0`，无 Traceback、NCCL 或 OOM，GPU 全部释放。
+- C100 的 Historical-only 相比 Full-logit 提升 `2.80 Final / 1.122 AAA`，Forgetting 降低 `2.244`；这是本轮最强证据，说明完整 logits 的 current-B 混杂确实会把 A 的稳定性梯度引向错误方向。
+- INR 同方向但幅度较小：`+0.39 Final / +0.231 AAA / -0.264 F`。Historical-only 仍略低于 HBD `0.36 Final`，但 Forgetting 更低 `0.051`。
+- CUB Historical-only 与 Full-logit 几乎完全相同（Final 均 `84.31`，AAA 差 `0.004`），而两者均明显优于 HBD（Final `+1.29`、AAA `+0.300`、F `-1.816`）。说明 HBD 的历史 branch response 信号并非普遍优于分类 logits，存在数据集依赖。
+- 判断：Historical-only 是当前最合理的 Function-Safe 修正方向，但还不是已证实的主方法升级；需要三 seed 配对验证方差，并补充训练时间/额外前向成本。暂不继续调温度、冲突阈值或 A 结构。

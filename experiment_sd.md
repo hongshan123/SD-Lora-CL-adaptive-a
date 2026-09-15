@@ -878,3 +878,7 @@
 - 三路：`full_logit=function_safe_pareto + scope=full`；`historical_logit=function_safe_pareto + scope=historical`；`hbd=functional_halfspace`。不启用诊断插桩，避免额外前向改变三路运行时间口径。
 - 执行：`run_functional_signal_threeway_single_seed_2gpu.sh` 生成 9 份可审计配置；按数据集分三波，每波三路并行使用 GPU `0,1` / `2,3` / `4,5`。结果待回填。
 - 验收：Historical-only 若在三个数据集均不弱于 Full-logit，说明去除 current-B 混杂有效；若仍不如 HBD，则瓶颈主要是当前任务图像上旧分类 logits 的低信息量，而非 branch scope。
+- 结果：三波均 `status=0`。CIFAR-100：Full-logit `Final/AAA/F=85.33/91.251/8.278`，Historical-only `88.13/92.373/6.033`，HBD `88.29/92.263/6.156`；ImageNet-R：`78.68/81.777/5.851`、`79.07/82.008/5.587`、`79.43/82.151/5.638`；CUB-200：`84.31/89.578/8.610`、`84.31/89.582/8.668`、`83.02/89.282/10.484`。
+- 配对差 Historical-only 减 Full-logit：CIFAR-100 `+2.80/+1.122/-2.244`，ImageNet-R `+0.39/+0.231/-0.264`，CUB-200 `0.00/+0.004/+0.058`（F 越低越好）。Historical-only 在三个数据集均不低于 Full-logit，且 C100 恢复最明显。
+- 与 HBD 比较：Historical-only 在 C100 仅低 `0.16 Final`、AAA 高 `0.110`、F 低 `0.123`；在 INR 低 `0.36/0.143` 但 F 低 `0.051`；在 CUB 高 `1.29/0.300` 且 F 低 `1.816`。因此 HBD 不是跨数据集统一上限，Historical-only 在 CUB 更好。
+- 阶段结论：三路单 seed 支持将 Historical-only 作为 Function-Safe 的默认候选，证明完整 student logits 中 current `sBA` 的混杂是实质问题；但 C100/INR 仍未超过 HBD 的 Final，且只有单 seed，下一步应做配对多 seed，而不是直接宣称普适最优。

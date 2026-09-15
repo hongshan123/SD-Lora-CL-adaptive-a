@@ -243,7 +243,7 @@ Hook calibration into SA_SDLora immediately before its task-ending save_lora_par
 
 Run: python -m pytest tests/test_cuo_lowrank_queue.py tests/test_adaptive_a_queue.py -q
 
-Run: CUDA_VISIBLE_DEVICES=0,1 torchrun --standalone --nproc_per_node=2 main.py --config=exps/cuo_lowrank_r10_c100_seed1993.json --stop_after_task=1
+Run: write a temporary copy of the CIFAR-100 config with `"max_tasks": 1`, then run `CUDA_VISIBLE_DEVICES=0,1 torchrun --standalone --nproc_per_node=2 main.py --config=<temporary-config>`.
 
 Expected: invalid settings fail clearly; Task 0 saves finite CUO and merged state only.
 
@@ -306,4 +306,3 @@ Run:
 - Task 4 enforces compatibility constraints and creates the three protocol-aligned configurations.
 - Task 5 provides honest state accounting, reproducible launch commands, and experimental provenance.
 - Names and shapes are consistent: projection_down [r,d], unified_up [d,r], projected_gram [r,r], batch_z [n,r], batch_y [n,d].
-

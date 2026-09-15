@@ -136,6 +136,25 @@ def test_cuo_task_end_save_rejects_unimplemented_cuo_persistence(tmp_path):
     assert not (run / "sa_state.pt").exists()
 
 
+def test_cuo_direct_merged_save_rejects_before_creating_artifact(tmp_path):
+    merged_dir = tmp_path / "cuo-merged"
+    model = SharedALoRA_ViT_timm(
+        _CUOTaskEndViT(dim=6),
+        r=2,
+        filepath=str(tmp_path / "cuo-run"),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="cuo_lowrank",
+        cumulative_rank=2,
+        cuo_lambda=0.1,
+    )
+
+    with pytest.raises(RuntimeError, match="cuo_lowrank persistence.*Task 3"):
+        model.save_merged_lora(str(merged_dir))
+    assert not merged_dir.exists()
+
+
 def test_cuo_rejects_generic_gauge_state_at_load_boundary(tmp_path):
     run = tmp_path / "legacy-cuo-run"
     run.mkdir()

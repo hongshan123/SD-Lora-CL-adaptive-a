@@ -3455,6 +3455,11 @@ class SharedALoRA_ViT_timm(nn.Module):
 
     def save_merged_lora(self, filename: str) -> None:
         """Store the exact combined bank as one B per layer (storage metric)."""
+        if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+            raise RuntimeError(
+                "cuo_lowrank persistence is unavailable until Task 3; "
+                "refusing the generic merged save path"
+            )
         if not os.path.exists(filename):
             os.makedirs(filename)
         current_task = self.task_id - 1

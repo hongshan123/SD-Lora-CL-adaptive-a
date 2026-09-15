@@ -1698,6 +1698,11 @@ class SharedALoRA_ViT_timm(nn.Module):
                 )
             self.cumulative_state = False
         elif state_version == SA_STATE_VERSION:
+            if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+                raise ValueError(
+                    "cuo_lowrank persistence is unavailable until Task 3; "
+                    "the generic v2 gauge state cannot represent CUO"
+                )
             if self.cumulative_merge in (
                 SA_MERGE_MODE_UNION_SVD,
                 SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
@@ -3117,6 +3122,11 @@ class SharedALoRA_ViT_timm(nn.Module):
 
     def save_lora_parameters(self, filename: str, task_id) -> None:
         if self.cumulative_state:
+            if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+                raise RuntimeError(
+                    "cuo_lowrank persistence is unavailable until Task 3; "
+                    "refusing the generic cumulative save path"
+                )
             if (
                 self.cumulative_merge
                 == SA_MERGE_MODE_LIVE_A_AGGREGATE_B

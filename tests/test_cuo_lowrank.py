@@ -13,7 +13,7 @@ from backbone.cuo_lowrank import (
     solve_projected_cuo,
 )
 from backbone.lora import ParameterWrapper
-from backbone.sa_lora import _CUOLowRankQKV
+from backbone.sa_lora import SharedALoRA_ViT_timm, _CUOLowRankQKV
 from models.sa_sdlora import validate_cuo_lowrank_config
 
 
@@ -43,6 +43,25 @@ def make_cuo_wrapper(dim=8, rank=3):
         scaling,
         layer_index=0,
     )
+
+
+class _CUOTaskEndAttention(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.qkv = nn.Linear(dim, 3 * dim, bias=False)
+
+
+class _CUOTaskEndBlock(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.attn = _CUOTaskEndAttention(dim)
+
+
+class _CUOTaskEndViT(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.blocks = nn.ModuleList([_CUOTaskEndBlock(dim)])
+        self.head = nn.Identity()
 
 
 def test_cuo_historical_branch_uses_fixed_projection_after_a_changes():
@@ -96,6 +115,55 @@ def test_cuo_wrapper_does_not_collect_in_normal_training():
     assert torch.count_nonzero(cross_q) == 0
     assert torch.count_nonzero(gram_v) == 0
     assert torch.count_nonzero(cross_v) == 0
+
+
+def test_cuo_task_end_save_rejects_unimplemented_cuo_persistence(tmp_path):
+    run = tmp_path / "cuo-run"
+    model = SharedALoRA_ViT_timm(
+        _CUOTaskEndViT(dim=6),
+        r=2,
+        filepath=str(run),
+        cur_task_index=0,
+        train_a_all_tasks=True,
+        cumulative_state=True,
+        cumulative_merge="cuo_lowrank",
+        cumulative_rank=2,
+        cuo_lambda=0.1,
+    )
+
+    with pytest.raises(RuntimeError, match="cuo_lowrank persistence.*Task 3"):
+        model.save_lora_parameters(str(run), task_id=0)
+    assert not (run / "sa_state.pt").exists()
+
+
+def test_cuo_rejects_generic_gauge_state_at_load_boundary(tmp_path):
+    run = tmp_path / "legacy-cuo-run"
+    run.mkdir()
+    projection = torch.cat([torch.eye(2), torch.zeros(2, 4)], dim=1)
+    torch.save(
+        {
+            "version": 2,
+            "task_id": 1,
+            "rank": 2,
+            "canonical_down": [projection, projection.clone()],
+            "cumulative_up": [torch.zeros(6, 2), torch.zeros(6, 2)],
+            "triangular_r": [torch.eye(2), torch.eye(2)],
+        },
+        run / "sa_state.pt",
+    )
+
+    with pytest.raises(ValueError, match="cuo_lowrank persistence.*Task 3"):
+        SharedALoRA_ViT_timm(
+            _CUOTaskEndViT(dim=6),
+            r=2,
+            filepath=str(run),
+            cur_task_index=1,
+            train_a_all_tasks=True,
+            cumulative_state=True,
+            cumulative_merge="cuo_lowrank",
+            cumulative_rank=2,
+            cuo_lambda=0.1,
+        )
 
 
 @pytest.mark.parametrize(

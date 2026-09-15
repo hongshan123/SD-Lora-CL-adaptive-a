@@ -882,3 +882,12 @@
 - 配对差 Historical-only 减 Full-logit：CIFAR-100 `+2.80/+1.122/-2.244`，ImageNet-R `+0.39/+0.231/-0.264`，CUB-200 `0.00/+0.004/+0.058`（F 越低越好）。Historical-only 在三个数据集均不低于 Full-logit，且 C100 恢复最明显。
 - 与 HBD 比较：Historical-only 在 C100 仅低 `0.16 Final`、AAA 高 `0.110`、F 低 `0.123`；在 INR 低 `0.36/0.143` 但 F 低 `0.051`；在 CUB 高 `1.29/0.300` 且 F 低 `1.816`。因此 HBD 不是跨数据集统一上限，Historical-only 在 CUB 更好。
 - 阶段结论：三路单 seed 支持将 Historical-only 作为 Function-Safe 的默认候选，证明完整 student logits 中 current `sBA` 的混杂是实质问题；但 C100/INR 仍未超过 HBD 的 Final，且只有单 seed，下一步应做配对多 seed，而不是直接宣称普适最优。
+
+## 2026-09-15：CUO 同预算低秩投影基线（待正式训练）
+
+- 实验标题：固定低秩坐标下的 Cumulative Unified Optimization（CUO）LoRA 对照。
+- 方法：每个 Q/V 分支持久保存固定正交下投影 `P in R^(10x768)`、统一上投影 `H in R^(768x10)` 和投影 Gram 矩阵 `C in R^(10x10)`。训练时历史增量为 `H(Px)`，当前任务保留原始 `sB(Ax)`；任务结束后只用当前任务训练样本的测试预处理做确定性无梯度遍历，累计 `C += Z^T Z`、`D += Y^T Z`，并求解 `H(C+lambda I)=D`，其中 `lambda=1e-5`。
+- 预算：12 个 block 的 Q/V 共 24 个分支。部署 LoRA 因子为 `24 x (768x10 + 10x768)=368,640` 个标量；Gram bookkeeping 为 `24 x 10x10=2,400`；持久总计 `371,040`。报告时必须同时给出二者，不将 Gram 统计隐去。
+- 协议：CIFAR-100 seed1993（10 类/任务）、ImageNet-R seed1995（20 类/任务）、CUB-200 seed1（20 类/任务）；ViT-B/16、rank10、SGD、20 epoch、双卡每卡 batch64（等效128）、prototype classifier，关闭 Dual-B、CoordinateStable/transport、HBD 和 Adaptive-A。
+- 验证：CPU 回归 `74 passed`；两卡 Task0/1 合成 smoke 通过，两个 rank 的 P/H/C 哈希一致，仅写出 `sa_state.pt` 与 `sa_merged_lora.pt`，无 per-task B 文件。该 smoke 仅验证实现和分布式状态，不代表性能结果。
+- 运行：`run_cuo_lowrank_r10_3datasets_2gpu.sh` 使用两组 GPU 并行运行 CIFAR-100 与 ImageNet-R，CIFAR-100 完成后复用该卡对运行 CUB-200；正式 Final/AAA/Forgetting 尚未产生，禁止把本条视为效果结论。

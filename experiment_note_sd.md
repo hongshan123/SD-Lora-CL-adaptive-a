@@ -1061,3 +1061,10 @@
 - INR 同方向但幅度较小：`+0.39 Final / +0.231 AAA / -0.264 F`。Historical-only 仍略低于 HBD `0.36 Final`，但 Forgetting 更低 `0.051`。
 - CUB Historical-only 与 Full-logit 几乎完全相同（Final 均 `84.31`，AAA 差 `0.004`），而两者均明显优于 HBD（Final `+1.29`、AAA `+0.300`、F `-1.816`）。说明 HBD 的历史 branch response 信号并非普遍优于分类 logits，存在数据集依赖。
 - 判断：Historical-only 是当前最合理的 Function-Safe 修正方向，但还不是已证实的主方法升级；需要三 seed 配对验证方差，并补充训练时间/额外前向成本。暂不继续调温度、冲突阈值或 A 结构。
+
+## 2026-09-15 21:14 CUO 低秩基线实现判断
+
+- 判断：CUO 作为外部方法的同预算低秩版本应与当前 CoordinateStable 主方法隔离。它不使用 prototype transport、alignment、NormCap、Dual-B 或 Adaptive-A，以免比较变成组件叠加。
+- 实现状态：每个 Q/V 分支保存固定 P、H、C；任务边界用当前任务测试预处理样本收集 FP64 统计并在 DDP 下 all-reduce。旧交叉项由 `H_old(C_old + lambda I)` 还原，rank0 求解后广播 P/H/C。
+- 已核验：CPU 74 tests 和 2-GPU Task0/1 合成 smoke 通过，后者确认每个 rank 的最终状态哈希一致且没有 per-task B artifact。正式数据集训练尚未启动，因此没有性能判断。
+- 风险：CUO 的固定 P 将后续任务 A 的 row-space 漂移留在临时 current branch，可能在长任务序列中限制可塑性；Ridge 目标拟合的是各层 LoRA 增量而不是端到端分类误差。正式结果必须同时检查 Final、AAA、Forgetting、每任务 ridge residual 和训练时间，不能只看 Final。

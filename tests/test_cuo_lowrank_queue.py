@@ -107,3 +107,12 @@ def test_cuo_queue_uses_two_gpu_torchrun_and_scheduler_visible_devices():
         assert config_path.name in script
     assert "CUDA_VISIBLE_DEVICES" in script
     assert "--nproc_per_node=2" in script
+
+
+def test_cuo_multiseed_queue_uses_requested_pairs_and_three_seeds():
+    script = (ROOT / "run_cuo_lowrank_r10_multiseed_3datasets_2gpu.sh").read_text()
+    for pair in ("0,1", "4,5", "6,7"):
+        assert pair in script
+    assert 'SEEDS=(1 2 3)' in script
+    assert 'conda activate sdlora' in script
+    assert 'nohup env CUDA_VISIBLE_DEVICES=' in script

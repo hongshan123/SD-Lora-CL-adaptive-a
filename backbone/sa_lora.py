@@ -24,6 +24,7 @@ from timm.models.vision_transformer import VisionTransformer as timm_ViT
 from torch import Tensor
 
 from backbone.coordinate_stability import align_live_a_aggregate
+from backbone.cuo_lowrank import row_orthonormal_projection
 from backbone.linears import SimpleLinear
 from backbone.lora import ParameterWrapper
 from backbone.sa_operator_stability import (
@@ -36,9 +37,11 @@ SA_STATE_VERSION = 2
 SA_STATE_VERSION_LEGACY = 1
 SA_STATE_VERSION_UNION = 3
 SA_STATE_VERSION_LIVE_A = 4
+SA_STATE_VERSION_CUO = 5
 SA_MERGE_MODE_GAUGE = "gauge"
 SA_MERGE_MODE_UNION_SVD = "union_svd"
 SA_MERGE_MODE_LIVE_A_AGGREGATE_B = "live_a_aggregate_b"
+SA_MERGE_MODE_CUO_LOWRANK = "cuo_lowrank"
 SA_ABSORB_MODE_NORMALIZED = "normalized_absorb"
 SA_ABSORB_MODE_OPERATOR_PRESERVING = "operator_preserving_absorb"
 SA_ABSORB_MODE_BOUNDED_NORM_CALIBRATED = (
@@ -1205,6 +1208,137 @@ class _CumulativeSharedAQKV(nn.Module):
         return qkv
 
 
+class _CUOLowRankQKV(nn.Module):
+    """QKV wrapper with fixed CUO coordinates and task-local raw LoRA."""
+
+    def __init__(
+        self,
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        projection_q,
+        unified_up_q,
+        projection_v,
+        unified_up_v,
+        scaling_cur,
+        layer_index,
+    ):
+        super().__init__()
+        self.qkv = qkv
+        self.a_q = a_q
+        self.a_v = a_v
+        self.b_q = b_q
+        self.b_v = b_v
+        self.scaling_cur = scaling_cur
+        self.layer_index = layer_index
+        self.dim = qkv.in_features
+        self.register_buffer(
+            "projection_q", projection_q.detach().clone(), persistent=False
+        )
+        self.register_buffer(
+            "unified_up_q", unified_up_q.detach().clone(), persistent=False
+        )
+        self.register_buffer(
+            "projection_v", projection_v.detach().clone(), persistent=False
+        )
+        self.register_buffer(
+            "unified_up_v", unified_up_v.detach().clone(), persistent=False
+        )
+        rank = projection_q.shape[0]
+        self.register_buffer(
+            "_cuo_gram_q",
+            torch.zeros(rank, rank, dtype=torch.float64, device=projection_q.device),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_cuo_cross_q",
+            torch.zeros(self.dim, rank, dtype=torch.float64, device=projection_q.device),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_cuo_gram_v",
+            torch.zeros(rank, rank, dtype=torch.float64, device=projection_v.device),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_cuo_cross_v",
+            torch.zeros(self.dim, rank, dtype=torch.float64, device=projection_v.device),
+            persistent=False,
+        )
+        self._cuo_collecting = False
+        self._cuo_count_q = 0
+        self._cuo_count_v = 0
+
+    def historical_output(self, x):
+        return (
+            F.linear(F.linear(x, self.projection_q), self.unified_up_q),
+            F.linear(F.linear(x, self.projection_v), self.unified_up_v),
+        )
+
+    def current_output(self, x):
+        return (
+            self.scaling_cur[0](self.b_q(self.a_q(x))),
+            self.scaling_cur[0](self.b_v(self.a_v(x))),
+        )
+
+    def begin_cuo_calibration(self):
+        self.clear_cuo_calibration()
+        self._cuo_collecting = True
+
+    def clear_cuo_calibration(self):
+        self._cuo_collecting = False
+        self._cuo_gram_q.zero_()
+        self._cuo_cross_q.zero_()
+        self._cuo_gram_v.zero_()
+        self._cuo_cross_v.zero_()
+        self._cuo_count_q = 0
+        self._cuo_count_v = 0
+
+    def _collect_branch_statistics(self, x, residual, projection, gram, cross):
+        flat_x = x.detach().reshape(-1, self.dim).to(dtype=torch.float64)
+        flat_y = residual.detach().reshape(-1, self.dim).to(dtype=torch.float64)
+        z = flat_x @ projection.detach().to(dtype=torch.float64).T
+        gram.add_(z.T @ z)
+        cross.add_(flat_y.T @ z)
+        return int(z.shape[0])
+
+    def consume_cuo_statistics(self):
+        statistics = (
+            (self._cuo_gram_q.clone(), self._cuo_cross_q.clone(), self._cuo_count_q),
+            (self._cuo_gram_v.clone(), self._cuo_cross_v.clone(), self._cuo_count_v),
+        )
+        self.clear_cuo_calibration()
+        return statistics
+
+    def forward(self, x):
+        historical_q, historical_v = self.historical_output(x)
+        current_q, current_v = self.current_output(x)
+        new_q = historical_q + current_q
+        new_v = historical_v + current_v
+        if self._cuo_collecting:
+            with torch.no_grad():
+                self._cuo_count_q += self._collect_branch_statistics(
+                    x,
+                    new_q,
+                    self.projection_q,
+                    self._cuo_gram_q,
+                    self._cuo_cross_q,
+                )
+                self._cuo_count_v += self._collect_branch_statistics(
+                    x,
+                    new_v,
+                    self.projection_v,
+                    self._cuo_gram_v,
+                    self._cuo_cross_v,
+                )
+        qkv = self.qkv(x)
+        qkv[:, :, : self.dim] += new_q
+        qkv[:, :, -self.dim :] += new_v
+        return qkv
+
+
 class _LiveAAggregateQKV(nn.Module):
     """QKV wrapper for Live-A Aggregate-B.
 
@@ -1348,6 +1482,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         cumulative_gauge=True,
         cumulative_merge=SA_MERGE_MODE_GAUGE,
         cumulative_rank=None,
+        cuo_lambda=0.1,
         freeze_old_scales=False,
         live_a_history_groups=1,
         live_a_coordinate_align=False,
@@ -1373,9 +1508,10 @@ class SharedALoRA_ViT_timm(nn.Module):
             SA_MERGE_MODE_GAUGE,
             SA_MERGE_MODE_UNION_SVD,
             SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
+            SA_MERGE_MODE_CUO_LOWRANK,
         ):
             raise ValueError(
-                "cumulative_merge must be gauge/union_svd/live_a_aggregate_b; "
+                "cumulative_merge must be gauge/union_svd/live_a_aggregate_b/cuo_lowrank; "
                 "got {}".format(
                     cumulative_merge
                 )
@@ -1398,6 +1534,22 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "cumulative_rank must satisfy 0 < rank <= lora_rank; "
                 "got {}".format(self.cumulative_rank)
             )
+        self.cuo_lambda = 0.1
+        if cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+            try:
+                self.cuo_lambda = float(cuo_lambda)
+            except (TypeError, ValueError) as error:
+                raise ValueError("sa_cuo_lambda must be strictly positive and finite") from error
+            if not cumulative_state:
+                raise ValueError("cuo_lowrank requires sa_cumulative_state=True")
+            if not train_a_all_tasks:
+                raise ValueError("cuo_lowrank requires sa_train_a_all_tasks=True")
+            if self.cumulative_rank != r:
+                raise ValueError(
+                    "cuo_lowrank requires sa_cumulative_rank to equal lora_rank"
+                )
+            if not math.isfinite(self.cuo_lambda) or self.cuo_lambda <= 0:
+                raise ValueError("sa_cuo_lambda must be strictly positive and finite")
         self.cumulative_merge = cumulative_merge
         self.freeze_old_scales = bool(freeze_old_scales)
         self.live_a_history_groups = int(live_a_history_groups)
@@ -1848,6 +2000,26 @@ class SharedALoRA_ViT_timm(nn.Module):
                                 "function_safe_pareto",
                             )
                         ),
+                    )
+                elif self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+                    projection_q = row_orthonormal_projection(
+                        a_q.weight.detach().cpu()
+                    )
+                    projection_v = row_orthonormal_projection(
+                        a_v.weight.detach().cpu()
+                    )
+                    blk.attn.qkv = _CUOLowRankQKV(
+                        qkv,
+                        a_q,
+                        a_v,
+                        b_q,
+                        b_v,
+                        projection_q,
+                        torch.zeros(dim, r),
+                        projection_v,
+                        torch.zeros(dim, r),
+                        self.wrapped_param,
+                        layer_index,
                     )
                 else:
                     if offset < len(self.cumulative_up):

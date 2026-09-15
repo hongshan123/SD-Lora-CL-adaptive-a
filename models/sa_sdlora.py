@@ -58,6 +58,47 @@ P0_HASHES_FILENAME = "p0_hashes.json"
 COORDINATE_DIAGNOSTICS_FILENAME = "sa_coordinate_diagnostics.json"
 
 
+def validate_cuo_lowrank_config(args):
+    """Validate the fixed-coordinate CUO mode before model construction."""
+    if args.get("sa_cumulative_merge", "gauge") != "cuo_lowrank":
+        return None
+    if not args.get("sa_cumulative_state", False):
+        raise ValueError("cuo_lowrank requires sa_cumulative_state=True")
+    if not args.get("sa_train_a_all_tasks", False):
+        raise ValueError("cuo_lowrank requires sa_train_a_all_tasks=True")
+    lora_rank = int(args.get("lora_rank", 10))
+    cumulative_rank = args.get("sa_cumulative_rank", lora_rank)
+    if cumulative_rank is None:
+        cumulative_rank = lora_rank
+    if int(cumulative_rank) != lora_rank:
+        raise ValueError(
+            "cuo_lowrank requires sa_cumulative_rank to equal lora_rank"
+        )
+    try:
+        cuo_lambda = float(args.get("sa_cuo_lambda", 0.1))
+    except (TypeError, ValueError) as error:
+        raise ValueError("sa_cuo_lambda must be strictly positive and finite") from error
+    if not math.isfinite(cuo_lambda) or cuo_lambda <= 0:
+        raise ValueError("sa_cuo_lambda must be strictly positive and finite")
+    if (
+        args.get("sa_coordinate_stable_transport", False)
+        or args.get("sa_live_a_coordinate_align", False)
+    ):
+        raise ValueError(
+            "cuo_lowrank is incompatible with CoordinateStable/transport settings"
+        )
+    if args.get("sa_hbd_enabled", False):
+        raise ValueError("cuo_lowrank is incompatible with HBD")
+    if args.get("sa_adaptive_a_enabled", False):
+        raise ValueError("cuo_lowrank is incompatible with Adaptive-A")
+    if args.get("sa_adaptive_a_strategy", "impact_ratio") in (
+        "functional_halfspace",
+        "function_safe_pareto",
+    ):
+        raise ValueError("cuo_lowrank is incompatible with function-safe settings")
+    return cuo_lambda
+
+
 def validate_coordinate_transport_config(
     args, use_prototypes, lrpt_enabled, transport_rank
 ):
@@ -537,6 +578,7 @@ class Learner(SDLoraLearner):
 
     def __init__(self, args):
         super().__init__(args)
+        self._sa_cuo_lambda = validate_cuo_lowrank_config(args)
         adaptive_a_settings = validate_adaptive_a_config(args)
         self._sa_adaptive_a_enabled = adaptive_a_settings["adaptive_a_enabled"]
         self._sa_adaptive_a_strategy = adaptive_a_settings["adaptive_a_strategy"]
@@ -720,6 +762,7 @@ class Learner(SDLoraLearner):
             cumulative_gauge=self.args.get("sa_cumulative_gauge", True),
             cumulative_merge=self.args.get("sa_cumulative_merge", "gauge"),
             cumulative_rank=self.args.get("sa_cumulative_rank", None),
+            cuo_lambda=self.args.get("sa_cuo_lambda", 0.1),
             freeze_old_scales=self.args.get("sa_freeze_old_scales", False),
             live_a_history_groups=self.args.get("sa_live_a_history_groups", 1),
             live_a_coordinate_align=self.args.get(

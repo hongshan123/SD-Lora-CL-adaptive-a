@@ -109,6 +109,45 @@ def test_cuo_queue_uses_two_gpu_torchrun_and_scheduler_visible_devices():
     assert "--nproc_per_node=2" in script
 
 
+def test_initial_cuo_backbone_forwards_regularization_to_saved_state(monkeypatch):
+    """Task 0 must use the same CUO regularization as later rebuilds."""
+    import backbone.sa_lora as sa_lora
+    import utils.inc_net as inc_net
+
+    captured = {}
+
+    class _BaseViT:
+        def eval(self):
+            return self
+
+    class _CapturedSharedA:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        inc_net.timm, "create_model", lambda *args, **kwargs: _BaseViT()
+    )
+    monkeypatch.setattr(sa_lora, "SharedALoRA_ViT_timm", _CapturedSharedA)
+
+    model = inc_net.get_backbone(
+        {
+            "backbone_type": "vit_base_patch16_224",
+            "model_name": "sa_sdlora",
+            "lora_rank": 10,
+            "increment": 20,
+            "filepath": "./unused",
+            "sa_cumulative_state": True,
+            "sa_cumulative_merge": "cuo_lowrank",
+            "sa_cumulative_rank": 10,
+            "sa_train_a_all_tasks": True,
+            "sa_cuo_lambda": 1e-5,
+        }
+    )
+
+    assert model.out_dim == 768
+    assert captured["cuo_lambda"] == 1e-5
+
+
 def test_cuo_multiseed_queue_uses_requested_pairs_and_three_seeds():
     script = (ROOT / "run_cuo_lowrank_r10_multiseed_3datasets_2gpu.sh").read_text()
     for pair in ("0,1", "4,5", "6,7"):

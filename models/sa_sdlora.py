@@ -12,7 +12,7 @@ import torch
 import torch.distributed as dist
 from torch import optim
 from torch.nn import functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from backbone.lrpt import (
     apply_transport,
@@ -34,6 +34,7 @@ from backbone.coordinate_stability import (
 )
 from backbone.sa_lora import (
     SharedALoRA_ViT_timm,
+    cuo_state_scalar_counts,
     hbd_historical_branch_distance,
     live_a_historical_outputs,
     register_live_a_historical_capture_hooks,
@@ -1429,6 +1430,52 @@ class Learner(SDLoraLearner):
             mean("selected_live_fraction"),
         )
 
+    def _before_task_save(self, raw_network, train_loader):
+        """Run CUO's all-rank eval-preprocessed calibration before persistence."""
+        backbone = raw_network.backbone
+        if backbone.cumulative_merge != "cuo_lowrank":
+            return None
+        data_manager = getattr(self, "_cuo_calibration_data_manager", None)
+        if data_manager is None:
+            raise RuntimeError(
+                "cuo_lowrank calibration requires the current task data manager"
+            )
+        cur_classes = np.arange(self._known_classes, self._total_classes)
+        dataset = data_manager.get_dataset(
+            cur_classes, source="train", mode="test"
+        )
+        if dist.is_available() and dist.is_initialized():
+            rank = dist.get_rank()
+            world_size = dist.get_world_size()
+            dataset = Subset(dataset, range(rank, len(dataset), world_size))
+        batch_size = int(
+            self.args.get(
+                "sa_cuo_calibration_batch_size", self.args["batch_size"]
+            )
+        )
+        if batch_size <= 0:
+            raise ValueError("sa_cuo_calibration_batch_size must be positive")
+
+        was_training = raw_network.training
+        raw_network.eval()
+        try:
+            backbone.prepare_cuo_calibration()
+            with rng_preserving(), torch.no_grad():
+                loader = deterministic_loader(
+                    dataset,
+                    batch_size=batch_size,
+                    shuffle=False,
+                    num_workers=self._loader_workers(),
+                    pin_memory=self._device.type == "cuda",
+                    seed=0,
+                )
+                for _, inputs, _ in loader:
+                    raw_network(inputs.to(self._device, non_blocking=True))
+            backbone.finalize_cuo_calibration()
+        finally:
+            raw_network.train(was_training)
+        return None
+
     def incremental_train(self, data_manager):
         self._dual_num_tasks = data_manager.nb_tasks
         if (
@@ -1514,7 +1561,11 @@ class Learner(SDLoraLearner):
                 self._cur_task + 1,
                 self._coordinate_pre_features.shape[0],
             )
-        super().incremental_train(data_manager)
+        self._cuo_calibration_data_manager = data_manager
+        try:
+            super().incremental_train(data_manager)
+        finally:
+            self._cuo_calibration_data_manager = None
         if self._is_main_process():
             self._log_adaptive_a_diagnostics()
         if self._hbd_teacher is not None:
@@ -1527,6 +1578,31 @@ class Learner(SDLoraLearner):
         if self._is_main_process():
             self._log_post_train_hash(self._cur_task)
             backbone = self._raw_network().backbone
+            if (
+                backbone.cumulative_state
+                and backbone.cumulative_merge == "cuo_lowrank"
+            ):
+                stats = backbone._last_cuo_calibration_stats
+                if stats is not None:
+                    counts = cuo_state_scalar_counts(
+                        num_blocks=len(backbone.lora_layer),
+                        rank=backbone.rank,
+                        dim=backbone.w_As[0].weight.shape[1],
+                    )
+                    logging.info(
+                        "[CUO-LowRank] task %d tokens=%d branches=%d "
+                        "max_condition=%.6e max_residual=%.6e "
+                        "lora_factor_scalars=%d gram_scalars=%d "
+                        "persistent_scalar_total=%d",
+                        self._cur_task,
+                        stats["token_count"],
+                        stats["branch_count"],
+                        stats["max_condition_number"],
+                        stats["max_residual_norm"],
+                        counts["lora_factor_scalars"],
+                        counts["gram_scalars"],
+                        counts["persistent_scalar_total"],
+                    )
             if (
                 backbone.cumulative_state
                 and backbone.cumulative_merge == "live_a_aggregate_b"

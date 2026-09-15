@@ -86,6 +86,10 @@ class Learner(BaseLearner):
         """Optional diagnostics immediately after the optimizer step."""
         return None
 
+    def _before_task_save(self, raw_network, train_loader):
+        """Optional all-rank task-boundary work before the rank-zero writer."""
+        return None
+
     def _sync_sum(self, value):
         tensor = torch.tensor(float(value), device=self._device)
         if self._is_distributed():
@@ -257,6 +261,7 @@ class Learner(BaseLearner):
         save_lora_name = self.args['filepath']
 
         raw_network = self._raw_network()
+        self._before_task_save(raw_network, train_loader)
         if self._is_main_process():
             raw_network.backbone.save_lora_parameters(save_lora_name, self._cur_task)
             raw_network.save_fc(save_lora_name, self._cur_task)

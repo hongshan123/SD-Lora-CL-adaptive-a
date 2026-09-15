@@ -24,7 +24,7 @@ from timm.models.vision_transformer import VisionTransformer as timm_ViT
 from torch import Tensor
 
 from backbone.coordinate_stability import align_live_a_aggregate
-from backbone.cuo_lowrank import row_orthonormal_projection
+from backbone.cuo_lowrank import row_orthonormal_projection, solve_projected_cuo
 from backbone.linears import SimpleLinear
 from backbone.lora import ParameterWrapper
 from backbone.sa_operator_stability import (
@@ -130,6 +130,61 @@ def live_a_historical_outputs(model, x, capture_list):
 
 def _join_path(prefix, name):
     return os.path.join(prefix, name)
+
+
+def cuo_state_scalar_counts(num_blocks, rank, dim):
+    """Report CUO deployment factors separately from Gram bookkeeping."""
+    if not all(
+        isinstance(value, int) and value > 0
+        for value in (num_blocks, rank, dim)
+    ):
+        raise ValueError("num_blocks, rank, and dim must be positive integers")
+    branches = 2 * num_blocks
+    lora_factor_scalars = branches * 2 * dim * rank
+    gram_scalars = branches * rank * rank
+    return {
+        "lora_factor_scalars": lora_factor_scalars,
+        "gram_scalars": gram_scalars,
+        "persistent_scalar_total": lora_factor_scalars + gram_scalars,
+    }
+
+
+def combine_cuo_statistics(statistics):
+    """Combine independently collected projected moment tuples once."""
+    if not statistics:
+        raise ValueError("at least one CUO statistic tuple is required")
+    gram, cross, count = statistics[0]
+    if not isinstance(gram, Tensor) or not isinstance(cross, Tensor):
+        raise ValueError("CUO Gram and cross statistics must be tensors")
+    if gram.ndim != 2 or gram.shape[0] != gram.shape[1]:
+        raise ValueError("CUO Gram statistics must be square matrices")
+    if cross.ndim != 2 or cross.shape[1] != gram.shape[0]:
+        raise ValueError("CUO cross statistics must have shape [dim, rank]")
+    if gram.dtype != torch.float64 or cross.dtype != torch.float64:
+        raise ValueError("CUO statistics must use float64")
+    if gram.device != cross.device:
+        raise ValueError("CUO Gram and cross statistics must share a device")
+    total_gram = torch.zeros_like(gram)
+    total_cross = torch.zeros_like(cross)
+    total_count = 0
+    for local_gram, local_cross, local_count in statistics:
+        if (
+            not isinstance(local_gram, Tensor)
+            or not isinstance(local_cross, Tensor)
+            or local_gram.shape != gram.shape
+            or local_cross.shape != cross.shape
+            or local_gram.dtype != torch.float64
+            or local_cross.dtype != torch.float64
+            or local_gram.device != gram.device
+            or local_cross.device != cross.device
+        ):
+            raise ValueError("CUO statistic tuples must have matching FP64 tensors")
+        if not isinstance(local_count, int) or local_count < 0:
+            raise ValueError("CUO statistic counts must be non-negative integers")
+        total_gram.add_(local_gram)
+        total_cross.add_(local_cross)
+        total_count += local_count
+    return total_gram, total_cross, total_count
 
 
 def _fixed_orthogonal_down(in_dim, target_rank, seed, dtype=torch.float32):
@@ -1224,6 +1279,8 @@ class _CUOLowRankQKV(nn.Module):
         unified_up_v,
         scaling_cur,
         layer_index,
+        projected_gram_q=None,
+        projected_gram_v=None,
     ):
         super().__init__()
         self.qkv = qkv
@@ -1247,6 +1304,30 @@ class _CUOLowRankQKV(nn.Module):
             "unified_up_v", unified_up_v.detach().clone(), persistent=False
         )
         rank = projection_q.shape[0]
+        if projected_gram_q is None:
+            projected_gram_q = torch.zeros(
+                rank,
+                rank,
+                dtype=projection_q.dtype,
+                device=projection_q.device,
+            )
+        if projected_gram_v is None:
+            projected_gram_v = torch.zeros(
+                rank,
+                rank,
+                dtype=projection_v.dtype,
+                device=projection_v.device,
+            )
+        self.register_buffer(
+            "projected_gram_q",
+            projected_gram_q.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "projected_gram_v",
+            projected_gram_v.detach().clone(),
+            persistent=False,
+        )
         self.register_buffer(
             "_cuo_gram_q",
             torch.zeros(rank, rank, dtype=torch.float64, device=projection_q.device),
@@ -1700,8 +1781,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         elif state_version == SA_STATE_VERSION:
             if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
                 raise ValueError(
-                    "cuo_lowrank persistence is unavailable until Task 3; "
-                    "the generic v2 gauge state cannot represent CUO"
+                    "cuo_lowrank requires a projected state at version {}; "
+                    "artifact version {} cannot be migrated".format(
+                        SA_STATE_VERSION_CUO, state_version
+                    )
                 )
             if self.cumulative_merge in (
                 SA_MERGE_MODE_UNION_SVD,
@@ -1758,6 +1841,45 @@ class SharedALoRA_ViT_timm(nn.Module):
                     )
                 )
             self.cumulative_state = True
+        elif state_version == SA_STATE_VERSION_CUO:
+            if self.cumulative_merge != SA_MERGE_MODE_CUO_LOWRANK:
+                raise ValueError(
+                    "artifact is v{} cuo_lowrank but "
+                    "sa_cumulative_merge={}".format(
+                        SA_STATE_VERSION_CUO, self.cumulative_merge
+                    )
+                )
+            required_cuo_keys = {
+                "version",
+                "task_id",
+                "rank",
+                "merge_mode",
+                "projection_down",
+                "unified_up",
+                "projected_gram",
+                "cuo_lambda",
+            }
+            if set(state) != required_cuo_keys:
+                raise ValueError(
+                    "cuo_lowrank state must contain only the v{} projected "
+                    "normal-equation fields".format(SA_STATE_VERSION_CUO)
+                )
+            if state["merge_mode"] != SA_MERGE_MODE_CUO_LOWRANK:
+                raise ValueError("cuo_lowrank state has an invalid merge_mode")
+            if int(state["rank"]) != self.rank:
+                raise ValueError("cuo_lowrank state rank does not match lora_rank")
+            state_lambda = float(state["cuo_lambda"])
+            if not math.isfinite(state_lambda) or state_lambda <= 0:
+                raise ValueError("cuo_lowrank state has an invalid cuo_lambda")
+            if not math.isclose(state_lambda, self.cuo_lambda, rel_tol=0.0, abs_tol=0.0):
+                raise ValueError(
+                    "cuo_lowrank state cuo_lambda differs from the requested value"
+                )
+            if self.task_id > 0 and int(state["task_id"]) != self.task_id:
+                raise ValueError(
+                    "cuo_lowrank state task_id does not match the requested task"
+                )
+            self.cumulative_state = True
         elif state_version == -1:
             # Fresh run: the flag decides which version new artifacts use.
             pass
@@ -1769,9 +1891,52 @@ class SharedALoRA_ViT_timm(nn.Module):
         shared_a = state.get("shared_a", [])
         adaptive_a_input_rms = state.get("adaptive_a_input_rms", [])
         adaptive_a_input_counts = state.get("adaptive_a_input_counts", [])
+        self.cuo_projection_down = []
+        self.cuo_unified_up = []
+        self.cuo_projected_gram = []
         if self.cumulative_state:
             expected_branches = 2 * len(self.lora_layer)
-            if self.cumulative_merge == SA_MERGE_MODE_LIVE_A_AGGREGATE_B:
+            if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+                self.cuo_projection_down = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("projection_down", [])
+                ]
+                self.cuo_unified_up = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("unified_up", [])
+                ]
+                self.cuo_projected_gram = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("projected_gram", [])
+                ]
+                self.aggregate_up = []
+                self.cumulative_up = []
+                self.canonical_down = []
+                self.triangular_r = []
+                if self.task_id > 0 and not (
+                    len(self.cuo_projection_down)
+                    == len(self.cuo_unified_up)
+                    == len(self.cuo_projected_gram)
+                    == expected_branches
+                ):
+                    raise ValueError(
+                        "cuo_lowrank state must contain {} Q/V branches; "
+                        "got projection_down={} unified_up={} projected_gram={}".format(
+                            expected_branches,
+                            len(self.cuo_projection_down),
+                            len(self.cuo_unified_up),
+                            len(self.cuo_projected_gram),
+                        )
+                    )
+                if self.task_id > 0 and not self.cuo_projection_down:
+                    raise FileNotFoundError(
+                        "{} is required before training task {}".format(
+                            _join_path(self.save_file, SA_STATE_FILENAME),
+                            self.task_id,
+                        )
+                    )
+                shared_a = list(self.cuo_projection_down)
+            elif self.cumulative_merge == SA_MERGE_MODE_LIVE_A_AGGREGATE_B:
                 self.aggregate_up = [
                     t.detach().cpu().float()
                     for t in state.get("aggregate_up", [])
@@ -1879,6 +2044,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._last_cumulative_gauge_diagnostics = None
         self._last_union_svd_truncation_error = None
         self._last_live_a_save_stats = None
+        self._cuo_calibration_prepared = False
+        self._cuo_calibration_finalized = False
+        self._cuo_deployment_saved = self.task_id > 0
+        self._last_cuo_calibration_stats = None
         # HBD teacher lifecycle (plain attributes; never enter state_dict).
         self._hbd_capture_list = None
         # These values are deliberately task-local and are not buffers or
@@ -2007,12 +2176,24 @@ class SharedALoRA_ViT_timm(nn.Module):
                         ),
                     )
                 elif self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
-                    projection_q = row_orthonormal_projection(
-                        a_q.weight.detach().cpu()
-                    )
-                    projection_v = row_orthonormal_projection(
-                        a_v.weight.detach().cpu()
-                    )
+                    if offset < len(self.cuo_projection_down):
+                        projection_q = self.cuo_projection_down[offset]
+                        unified_up_q = self.cuo_unified_up[offset]
+                        projected_gram_q = self.cuo_projected_gram[offset]
+                        projection_v = self.cuo_projection_down[offset + 1]
+                        unified_up_v = self.cuo_unified_up[offset + 1]
+                        projected_gram_v = self.cuo_projected_gram[offset + 1]
+                    else:
+                        projection_q = row_orthonormal_projection(
+                            a_q.weight.detach().cpu()
+                        )
+                        projection_v = row_orthonormal_projection(
+                            a_v.weight.detach().cpu()
+                        )
+                        unified_up_q = torch.zeros(dim, r)
+                        unified_up_v = torch.zeros(dim, r)
+                        projected_gram_q = torch.zeros(r, r)
+                        projected_gram_v = torch.zeros(r, r)
                     blk.attn.qkv = _CUOLowRankQKV(
                         qkv,
                         a_q,
@@ -2020,11 +2201,13 @@ class SharedALoRA_ViT_timm(nn.Module):
                         b_q,
                         b_v,
                         projection_q,
-                        torch.zeros(dim, r),
+                        unified_up_q,
                         projection_v,
-                        torch.zeros(dim, r),
+                        unified_up_v,
                         self.wrapped_param,
                         layer_index,
+                        projected_gram_q=projected_gram_q,
+                        projected_gram_v=projected_gram_v,
                     )
                 else:
                     if offset < len(self.cumulative_up):
@@ -3104,6 +3287,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 SA_STATE_VERSION,
                 SA_STATE_VERSION_UNION,
                 SA_STATE_VERSION_LIVE_A,
+                SA_STATE_VERSION_CUO,
             ):
                 raise ValueError("unsupported shared-A state version")
             return state
@@ -3117,16 +3301,176 @@ class SharedALoRA_ViT_timm(nn.Module):
         for w_b in self.w_Bs:
             nn.init.zeros_(w_b.weight)
 
+    def _cuo_wrappers(self):
+        wrappers = [
+            block.attn.qkv
+            for block in self.lora_vit.blocks
+            if isinstance(block.attn.qkv, _CUOLowRankQKV)
+        ]
+        if len(wrappers) != len(self.w_As) // 2:
+            raise RuntimeError("cuo_lowrank wrapper topology does not match Q/V factors")
+        return wrappers
+
+    @staticmethod
+    def _cuo_distributed():
+        return dist.is_available() and dist.is_initialized()
+
+    def prepare_cuo_calibration(self):
+        """Freeze Task-0 P from the trained A and begin local FP64 collection."""
+        if self.cumulative_merge != SA_MERGE_MODE_CUO_LOWRANK:
+            raise RuntimeError("prepare_cuo_calibration requires cuo_lowrank")
+        wrappers = self._cuo_wrappers()
+        if self.task_id == 0:
+            is_main = not self._cuo_distributed() or dist.get_rank() == 0
+            if is_main:
+                with torch.no_grad():
+                    for wrapper in wrappers:
+                        projection_q = row_orthonormal_projection(
+                            wrapper.a_q.weight.detach()
+                        ).to(
+                            device=wrapper.projection_q.device,
+                            dtype=wrapper.projection_q.dtype,
+                        )
+                        projection_v = row_orthonormal_projection(
+                            wrapper.a_v.weight.detach()
+                        ).to(
+                            device=wrapper.projection_v.device,
+                            dtype=wrapper.projection_v.dtype,
+                        )
+                        wrapper.projection_q.copy_(projection_q)
+                        wrapper.projection_v.copy_(projection_v)
+            if self._cuo_distributed():
+                for wrapper in wrappers:
+                    dist.broadcast(wrapper.projection_q, src=0)
+                    dist.broadcast(wrapper.projection_v, src=0)
+        for wrapper in wrappers:
+            wrapper.begin_cuo_calibration()
+        self._cuo_calibration_prepared = True
+        self._cuo_calibration_finalized = False
+
+    def _reduce_cuo_branch_statistics(self, gram, cross, count):
+        """All-reduce one branch's C, D, and observation count exactly once."""
+        count_tensor = torch.tensor(
+            [count], dtype=torch.float64, device=gram.device
+        )
+        if self._cuo_distributed():
+            dist.all_reduce(gram, op=dist.ReduceOp.SUM)
+            dist.all_reduce(cross, op=dist.ReduceOp.SUM)
+            dist.all_reduce(count_tensor, op=dist.ReduceOp.SUM)
+        return gram, cross, int(count_tensor.item())
+
+    def _broadcast_cuo_branch_state(self, projection, unified_up, projected_gram):
+        if self._cuo_distributed():
+            dist.broadcast(projection, src=0)
+            dist.broadcast(unified_up, src=0)
+            dist.broadcast(projected_gram, src=0)
+
+    def finalize_cuo_calibration(self):
+        """Advance projected normal equations and synchronize deployment state."""
+        if self.cumulative_merge != SA_MERGE_MODE_CUO_LOWRANK:
+            raise RuntimeError("finalize_cuo_calibration requires cuo_lowrank")
+        if not self._cuo_calibration_prepared:
+            raise RuntimeError(
+                "cuo_lowrank calibration must be prepared before finalization"
+            )
+        is_main = not self._cuo_distributed() or dist.get_rank() == 0
+        branch_stats = []
+        for wrapper in self._cuo_wrappers():
+            q_statistics, v_statistics = wrapper.consume_cuo_statistics()
+            for projection, unified_up, projected_gram, statistics in (
+                (
+                    wrapper.projection_q,
+                    wrapper.unified_up_q,
+                    wrapper.projected_gram_q,
+                    q_statistics,
+                ),
+                (
+                    wrapper.projection_v,
+                    wrapper.unified_up_v,
+                    wrapper.projected_gram_v,
+                    v_statistics,
+                ),
+            ):
+                local_gram, local_cross, local_count = statistics
+                gram, cross, count = self._reduce_cuo_branch_statistics(
+                    local_gram, local_cross, local_count
+                )
+                if is_main:
+                    old_gram = projected_gram.to(dtype=torch.float64)
+                    identity = torch.eye(
+                        old_gram.shape[0],
+                        dtype=torch.float64,
+                        device=old_gram.device,
+                    )
+                    old_cross = unified_up.to(dtype=torch.float64) @ (
+                        old_gram + self.cuo_lambda * identity
+                    )
+                    new_gram = old_gram + gram
+                    new_cross = old_cross + cross
+                    new_up, diagnostics = solve_projected_cuo(
+                        new_gram, new_cross, self.cuo_lambda
+                    )
+                    unified_up.copy_(new_up.to(dtype=unified_up.dtype))
+                    projected_gram.copy_(
+                        new_gram.to(dtype=projected_gram.dtype)
+                    )
+                    branch_stats.append(
+                        {
+                            "token_count": count,
+                            "condition_number": float(
+                                diagnostics["condition_number"].item()
+                            ),
+                            "residual_norm": float(
+                                diagnostics["residual_norm"].item()
+                            ),
+                        }
+                    )
+                self._broadcast_cuo_branch_state(
+                    projection, unified_up, projected_gram
+                )
+        self.cuo_projection_down = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in self._cuo_wrappers()
+            for tensor in (wrapper.projection_q, wrapper.projection_v)
+        ]
+        self.cuo_unified_up = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in self._cuo_wrappers()
+            for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+        ]
+        self.cuo_projected_gram = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in self._cuo_wrappers()
+            for tensor in (wrapper.projected_gram_q, wrapper.projected_gram_v)
+        ]
+        with torch.no_grad():
+            for weight in self.w_Bs:
+                weight.weight.zero_()
+        self._cuo_calibration_prepared = False
+        self._cuo_calibration_finalized = True
+        if is_main:
+            self._last_cuo_calibration_stats = {
+                "token_count": branch_stats[0]["token_count"] if branch_stats else 0,
+                "branch_count": len(branch_stats),
+                "max_condition_number": max(
+                    (item["condition_number"] for item in branch_stats), default=0.0
+                ),
+                "max_residual_norm": max(
+                    (item["residual_norm"] for item in branch_stats), default=0.0
+                ),
+            }
+        else:
+            self._last_cuo_calibration_stats = None
+        return self._last_cuo_calibration_stats
+
     def generate_fc(self, in_dim, out_dim):
         return SimpleLinear(in_dim, out_dim)
 
     def save_lora_parameters(self, filename: str, task_id) -> None:
         if self.cumulative_state:
             if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
-                raise RuntimeError(
-                    "cuo_lowrank persistence is unavailable until Task 3; "
-                    "refusing the generic cumulative save path"
-                )
+                self._save_cuo_lowrank_state(filename, task_id)
+                return
             if (
                 self.cumulative_merge
                 == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
@@ -3156,6 +3500,57 @@ class SharedALoRA_ViT_timm(nn.Module):
             },
             _join_path(filename, SA_STATE_FILENAME),
         )
+        self.save_merged_lora(filename)
+
+    def _save_cuo_lowrank_state(self, filename: str, task_id) -> None:
+        """Persist only CUO's fixed P, solved H, and projected Gram matrices."""
+        if task_id != self.task_id:
+            raise ValueError(
+                "cuo_lowrank state save called with task_id={} but task_id is {}".format(
+                    task_id, self.task_id
+                )
+            )
+        if not self._cuo_calibration_finalized:
+            raise RuntimeError(
+                "cuo_lowrank state save requires finalized all-rank calibration"
+            )
+        if not os.path.exists(filename):
+            os.makedirs(filename)
+        wrappers = self._cuo_wrappers()
+        projection_down = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.projection_q, wrapper.projection_v)
+        ]
+        unified_up = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+        ]
+        projected_gram = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.projected_gram_q, wrapper.projected_gram_v)
+        ]
+        self.task_id += 1
+        state = {
+            "version": SA_STATE_VERSION_CUO,
+            "task_id": self.task_id,
+            "rank": self.rank,
+            "merge_mode": SA_MERGE_MODE_CUO_LOWRANK,
+            "projection_down": projection_down,
+            "unified_up": unified_up,
+            "projected_gram": projected_gram,
+            "cuo_lambda": self.cuo_lambda,
+        }
+        torch.save(state, _join_path(filename, SA_STATE_FILENAME))
+        self.cuo_projection_down = projection_down
+        self.cuo_unified_up = unified_up
+        self.cuo_projected_gram = projected_gram
+        with torch.no_grad():
+            for weight in self.w_Bs:
+                weight.weight.zero_()
+        self._cuo_deployment_saved = True
         self.save_merged_lora(filename)
 
     def _save_cumulative_state(self, filename: str, task_id) -> None:
@@ -3456,10 +3851,39 @@ class SharedALoRA_ViT_timm(nn.Module):
     def save_merged_lora(self, filename: str) -> None:
         """Store the exact combined bank as one B per layer (storage metric)."""
         if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
-            raise RuntimeError(
-                "cuo_lowrank persistence is unavailable until Task 3; "
-                "refusing the generic merged save path"
+            if not (
+                self._cuo_calibration_finalized or self._cuo_deployment_saved
+            ):
+                raise RuntimeError(
+                    "cuo_lowrank merged save requires finalized all-rank calibration"
+                )
+            if not os.path.exists(filename):
+                os.makedirs(filename)
+            wrappers = self._cuo_wrappers()
+            torch.save(
+                {
+                    "version": SA_STATE_VERSION_CUO,
+                    "task_id": (
+                        self.task_id - 1
+                        if self._cuo_deployment_saved
+                        else self.task_id
+                    ),
+                    "rank": self.rank,
+                    "merge_mode": SA_MERGE_MODE_CUO_LOWRANK,
+                    "projection_down": [
+                        tensor.detach().cpu().float().clone()
+                        for wrapper in wrappers
+                        for tensor in (wrapper.projection_q, wrapper.projection_v)
+                    ],
+                    "unified_up": [
+                        tensor.detach().cpu().float().clone()
+                        for wrapper in wrappers
+                        for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+                    ],
+                },
+                _join_path(filename, SA_MERGED_FILENAME),
             )
+            return
         if not os.path.exists(filename):
             os.makedirs(filename)
         current_task = self.task_id - 1

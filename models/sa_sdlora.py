@@ -306,6 +306,120 @@ def validate_functional_student_scope(args):
     return scope
 
 
+def validate_functional_stability_signal(args):
+    """Validate the Function-Safe stability signal and fixed blend weight."""
+    signal = args.get("sa_functional_stability_signal", "historical")
+    choices = ("historical", "fixed_hybrid", "reliability_hybrid")
+    if signal not in choices:
+        raise ValueError(
+            "sa_functional_stability_signal must be historical, "
+            "fixed_hybrid, or reliability_hybrid"
+        )
+    weight = float(args.get("sa_functional_hybrid_weight", 0.5))
+    if not 0.0 <= weight <= 1.0:
+        raise ValueError("sa_functional_hybrid_weight must be in [0, 1]")
+    if signal != "historical":
+        if args.get("sa_adaptive_a_strategy") != "function_safe_pareto":
+            raise ValueError(
+                "hybrid functional stability requires function_safe_pareto"
+            )
+        if args.get("sa_functional_student_scope", "full") != "historical":
+            raise ValueError(
+                "hybrid functional stability requires historical student scope"
+            )
+    return signal, weight
+
+
+def functional_teacher_reliability(
+    teacher_logits, augmented_teacher_logits, temperature=2.0, eps=1e-8
+):
+    """Measure old-head confidence and horizontal-flip consistency."""
+    if teacher_logits.shape != augmented_teacher_logits.shape:
+        raise ValueError("teacher reliability logits must have matching shapes")
+    if teacher_logits.ndim != 2 or teacher_logits.shape[1] < 2:
+        raise ValueError("teacher reliability requires [batch, classes>=2] logits")
+    if temperature <= 0.0:
+        raise ValueError("temperature must be positive")
+    with torch.no_grad():
+        def _standardize(logits):
+            centered = logits - logits.mean(dim=1, keepdim=True)
+            scale = centered.square().mean(dim=1, keepdim=True).sqrt()
+            return centered / scale.clamp_min(eps)
+
+        probabilities = F.softmax(
+            _standardize(teacher_logits) / temperature, dim=1
+        )
+        augmented_probabilities = F.softmax(
+            _standardize(augmented_teacher_logits) / temperature, dim=1
+        )
+        entropy = -(
+            probabilities * probabilities.clamp_min(eps).log()
+        ).sum(dim=1)
+        normalized_entropy = entropy / math.log(probabilities.shape[1])
+        confidence = (1.0 - normalized_entropy).clamp(0.0, 1.0)
+        midpoint = 0.5 * (probabilities + augmented_probabilities)
+        js_divergence = 0.5 * (
+            (
+                probabilities
+                * (
+                    probabilities.clamp_min(eps).log()
+                    - midpoint.clamp_min(eps).log()
+                )
+            ).sum(dim=1)
+            + (
+                augmented_probabilities
+                * (
+                    augmented_probabilities.clamp_min(eps).log()
+                    - midpoint.clamp_min(eps).log()
+                )
+            ).sum(dim=1)
+        )
+        consistency = (1.0 - js_divergence / math.log(2.0)).clamp(0.0, 1.0)
+        top1_agreement = (
+            probabilities.argmax(dim=1)
+            == augmented_probabilities.argmax(dim=1)
+        ).to(consistency)
+        consistency = consistency * top1_agreement
+        weight = (confidence * consistency).mean()
+    return {
+        "weight": weight.detach(),
+        "normalized_entropy": normalized_entropy.mean().detach(),
+        "augmentation_consistency": consistency.mean().detach(),
+    }
+
+
+def _gradient_list_norm(gradients, eps=0.0):
+    terms = [gradient.float().square().sum() for gradient in gradients if gradient is not None]
+    if not terms:
+        return torch.tensor(float(eps))
+    return torch.stack(terms).sum().sqrt().clamp_min(eps)
+
+
+def blend_functional_stability_gradients(
+    historical_gradients, hbd_gradients, historical_weight, eps=1e-12
+):
+    """Blend unit-norm signal gradients so loss scale cannot select the signal."""
+    if len(historical_gradients) != len(hbd_gradients):
+        raise ValueError("functional stability gradient lists must match")
+    if not 0.0 <= float(historical_weight) <= 1.0:
+        raise ValueError("historical_weight must be in [0, 1]")
+    hist_norm = _gradient_list_norm(historical_gradients, eps=eps)
+    hbd_norm = _gradient_list_norm(hbd_gradients, eps=eps)
+    weight = float(historical_weight)
+    blended = []
+    for historical, hbd in zip(historical_gradients, hbd_gradients):
+        if historical is None and hbd is None:
+            blended.append(None)
+            continue
+        if historical is None or hbd is None:
+            raise ValueError("functional stability gradient sparsity must match")
+        blended.append(
+            weight * historical / hist_norm.to(historical)
+            + (1.0 - weight) * hbd / hbd_norm.to(hbd)
+        )
+    return blended
+
+
 def should_capture_functional_diagnostic(task_id, step, interval):
     """Sample diagnostics by optimizer step, independently of cross-fit refreshes."""
     return task_id > 0 and interval > 0 and step % interval == 0
@@ -595,6 +709,10 @@ class Learner(SDLoraLearner):
             "functional_temperature", 2.0
         )
         self._sa_functional_student_scope = validate_functional_student_scope(args)
+        (
+            self._sa_functional_stability_signal,
+            self._sa_functional_hybrid_weight,
+        ) = validate_functional_stability_signal(args)
         self._sa_adaptive_a_crossfit_interval = validate_pareto_crossfit_interval(
             args
         )
@@ -611,6 +729,7 @@ class Learner(SDLoraLearner):
             )
         self._sa_functional_diagnostic_pending = None
         self._sa_functional_diagnostic_observations = []
+        self._sa_functional_signal_observations = []
         self._sa_pareto_schedule_task_id = None
         self._sa_pareto_step = 0
         self._sa_pareto_cached_modes = None
@@ -1147,7 +1266,7 @@ class Learner(SDLoraLearner):
         return gradients
 
     def _functional_old_logit_gradients(self, inputs):
-        """Return held-out old-logit KL gradients for shared A only."""
+        """Return historical-logit or hybrid stability gradients for shared A."""
         if self._cur_task == 0:
             return None
         if self._hbd_teacher is None or self._functional_old_head is None:
@@ -1175,6 +1294,19 @@ class Learner(SDLoraLearner):
         capture_states = [wrapper.capture_input_sketch for wrapper in wrappers]
         for wrapper in wrappers:
             wrapper.capture_input_sketch = False
+        signal = getattr(
+            self, "_sa_functional_stability_signal", "historical"
+        )
+        student_captures = []
+        student_handles = []
+        if signal != "historical":
+            student_handles = register_live_a_historical_capture_hooks(
+                backbone, student_captures
+            )
+            if not self._hbd_teacher_handles:
+                raise RuntimeError(
+                    "hybrid functional stability requires teacher capture hooks"
+                )
         try:
             with (
                 rng_preserving(),
@@ -1189,24 +1321,109 @@ class Learner(SDLoraLearner):
                     else student_output
                 )
                 with torch.no_grad():
+                    if signal != "historical":
+                        self._hbd_teacher_captures.clear()
                     teacher_features = self._hbd_teacher(heldout_inputs)
+                    teacher_historical_outputs = (
+                        list(self._hbd_teacher_captures)
+                        if signal != "historical"
+                        else None
+                    )
                     teacher_output = self._functional_old_head(teacher_features)
                     teacher_logits = (
                         teacher_output["logits"]
                         if isinstance(teacher_output, dict)
                         else teacher_output
                     )
-                stability_loss = old_logits_kl(
+                historical_loss = old_logits_kl(
                     student_logits,
                     teacher_logits,
                     temperature=self._sa_functional_temperature,
                 )
-                gradients = list(
+                historical_gradients = list(
                     torch.autograd.grad(
-                        stability_loss, parameters, allow_unused=True
+                        historical_loss,
+                        parameters,
+                        retain_graph=signal != "historical",
+                        allow_unused=True,
                     )
                 )
+                if signal == "historical":
+                    gradients = historical_gradients
+                else:
+                    hbd_loss = hbd_historical_branch_distance(
+                        student_captures, teacher_historical_outputs
+                    )
+                    hbd_gradients = list(
+                        torch.autograd.grad(
+                            hbd_loss, parameters, allow_unused=True
+                        )
+                    )
+                    if signal == "fixed_hybrid":
+                        reliability = {
+                            "weight": teacher_logits.new_tensor(
+                                self._sa_functional_hybrid_weight
+                            ),
+                            "normalized_entropy": teacher_logits.new_tensor(
+                                float("nan")
+                            ),
+                            "augmentation_consistency": teacher_logits.new_tensor(
+                                float("nan")
+                            ),
+                        }
+                    elif signal == "reliability_hybrid":
+                        if heldout_inputs.ndim < 3:
+                            raise ValueError(
+                                "reliability hybrid requires image-like inputs"
+                            )
+                        with torch.no_grad():
+                            augmented_features = self._hbd_teacher(
+                                torch.flip(heldout_inputs, dims=(-1,))
+                            )
+                            augmented_output = self._functional_old_head(
+                                augmented_features
+                            )
+                            augmented_logits = (
+                                augmented_output["logits"]
+                                if isinstance(augmented_output, dict)
+                                else augmented_output
+                            )
+                        reliability = functional_teacher_reliability(
+                            teacher_logits,
+                            augmented_logits,
+                            temperature=self._sa_functional_temperature,
+                        )
+                    else:
+                        raise RuntimeError(
+                            "unknown functional stability signal: {}".format(
+                                signal
+                            )
+                        )
+                    gradients = blend_functional_stability_gradients(
+                        historical_gradients,
+                        hbd_gradients,
+                        historical_weight=float(reliability["weight"]),
+                    )
+                    self._sa_functional_signal_observations.append(
+                        {
+                            "weight": float(reliability["weight"]),
+                            "normalized_entropy": float(
+                                reliability["normalized_entropy"]
+                            ),
+                            "augmentation_consistency": float(
+                                reliability["augmentation_consistency"]
+                            ),
+                            "historical_gradient_norm": float(
+                                _gradient_list_norm(historical_gradients)
+                            ),
+                            "hbd_gradient_norm": float(
+                                _gradient_list_norm(hbd_gradients)
+                            ),
+                        }
+                    )
         finally:
+            for handle in student_handles:
+                handle.remove()
             for wrapper, capture_state in zip(wrappers, capture_states):
                 wrapper.capture_input_sketch = capture_state
         gradients = [
@@ -1249,6 +1466,7 @@ class Learner(SDLoraLearner):
         self._sa_pareto_task0_skips = 0
         self._sa_functional_diagnostic_pending = None
         self._sa_functional_diagnostic_observations = []
+        self._sa_functional_signal_observations = []
 
     def _crossfit_adaptive_a_gradients(self, inputs, targets):
         """Compute synchronized two-fold CE gradients for Pareto utility."""
@@ -1394,6 +1612,31 @@ class Learner(SDLoraLearner):
                     safety["mean_correction_ratio"],
                 )
                 self._log_functional_step_diagnostics()
+                self._log_functional_signal_diagnostics()
+
+    def _log_functional_signal_diagnostics(self):
+        observations = getattr(
+            self, "_sa_functional_signal_observations", []
+        )
+        if not observations:
+            return
+        mean = lambda key: sum(item[key] for item in observations) / len(
+            observations
+        )
+        logging.info(
+            "[FunctionalSignal] task %d: signal=%s observations=%d "
+            "historical_weight=%.6f teacher_entropy=%.6f "
+            "augmentation_consistency=%.6f historical_grad_norm=%.6e "
+            "hbd_grad_norm=%.6e",
+            self._cur_task,
+            self._sa_functional_stability_signal,
+            len(observations),
+            mean("weight"),
+            mean("normalized_entropy"),
+            mean("augmentation_consistency"),
+            mean("historical_gradient_norm"),
+            mean("hbd_gradient_norm"),
+        )
 
     def _log_functional_step_diagnostics(self):
         observations = getattr(
@@ -1489,6 +1732,15 @@ class Learner(SDLoraLearner):
             if (
                 self._hbd_enabled
                 or getattr(self, "_sa_functional_halfspace_enabled", False)
+                or (
+                    getattr(self, "_sa_function_safe_pareto_enabled", False)
+                    and getattr(
+                        self,
+                        "_sa_functional_stability_signal",
+                        "historical",
+                    )
+                    != "historical"
+                )
             ):
                 self._hbd_teacher_handles = (
                     register_live_a_historical_capture_hooks(

@@ -23,8 +23,11 @@ from models import sa_sdlora as sa_sdlora_module  # noqa: E402
 from models.sa_sdlora import Learner as SharedALearner  # noqa: E402
 from models.sa_sdlora import validate_adaptive_a_config  # noqa: E402
 from models.sa_sdlora import (  # noqa: E402
+    blend_functional_stability_gradients,
+    functional_teacher_reliability,
     should_capture_functional_diagnostic,
     validate_functional_diagnostics_interval,
+    validate_functional_stability_signal,
     validate_functional_student_scope,
 )
 
@@ -749,6 +752,67 @@ def test_old_logits_kl_is_zero_at_teacher_and_backpropagates_only_to_student():
     assert student.grad is not None
     assert torch.linalg.vector_norm(student.grad).item() > 0.0
     assert teacher.grad is None
+
+
+def test_functional_stability_signal_validation_is_explicit():
+    assert validate_functional_stability_signal({}) == ("historical", 0.5)
+    assert validate_functional_stability_signal(
+        {
+            "sa_adaptive_a_strategy": "function_safe_pareto",
+            "sa_functional_student_scope": "historical",
+            "sa_functional_stability_signal": "fixed_hybrid",
+            "sa_functional_hybrid_weight": 0.25,
+        }
+    ) == ("fixed_hybrid", 0.25)
+    with pytest.raises(ValueError, match="sa_functional_stability_signal"):
+        validate_functional_stability_signal(
+            {"sa_functional_stability_signal": "automatic"}
+        )
+    with pytest.raises(ValueError, match="historical student scope"):
+        validate_functional_stability_signal(
+            {
+                "sa_adaptive_a_strategy": "function_safe_pareto",
+                "sa_functional_student_scope": "full",
+                "sa_functional_stability_signal": "reliability_hybrid",
+            }
+        )
+
+
+def test_functional_teacher_reliability_rejects_uniform_or_inconsistent_logits():
+    uniform = torch.zeros(4, 4)
+    uniform_stats = functional_teacher_reliability(uniform, uniform)
+    assert uniform_stats["weight"].item() == pytest.approx(0.0, abs=1e-7)
+
+    confident = torch.tensor([[12.0, -4.0, -4.0, -4.0]]).repeat(4, 1)
+    consistent_stats = functional_teacher_reliability(confident, confident)
+    scaled_stats = functional_teacher_reliability(
+        confident * 1e-3, confident * 1e-3
+    )
+    assert consistent_stats["weight"].item() > 0.1
+    assert scaled_stats["weight"].item() == pytest.approx(
+        consistent_stats["weight"].item(), rel=1e-5, abs=1e-6
+    )
+    assert consistent_stats["augmentation_consistency"].item() > 0.99
+
+    flipped_class = torch.tensor([[-4.0, 12.0, -4.0, -4.0]]).repeat(4, 1)
+    inconsistent_stats = functional_teacher_reliability(
+        confident, flipped_class
+    )
+    assert inconsistent_stats["weight"].item() < 0.05
+
+
+def test_functional_gradient_blend_normalizes_signal_scale():
+    historical = [torch.tensor([[300.0, 400.0]]), None]
+    hbd = [torch.tensor([[0.0, 2.0]]), None]
+
+    blended = blend_functional_stability_gradients(
+        historical, hbd, historical_weight=0.5
+    )
+
+    assert torch.allclose(
+        blended[0], torch.tensor([[0.3, 0.9]]), atol=1e-7, rtol=1e-7
+    )
+    assert blended[1] is None
 
 
 def test_function_safe_pareto_projects_live_per_block_without_global_cancellation(

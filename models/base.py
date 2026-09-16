@@ -103,7 +103,13 @@ class BaseLearner(object):
 
     def _evaluate(self, y_pred, y_true):
         ret = {}
-        grouped = accuracy(y_pred.T[0], y_true, self._known_classes, self.args["increment"])
+        grouped = accuracy(
+            y_pred.T[0],
+            y_true,
+            self._known_classes,
+            self.args["increment"],
+            task_increments=self.args.get("task_increments"),
+        )
         ret["grouped"] = grouped
         ret["top1"] = grouped["total"]
         ret["top{}".format(self.topk)] = np.around(

@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
-from utils.data import iCIFAR10, iCIFAR100, iImageNet100, iImageNet1000, iCIFAR224, iImageNetR,iImageNetA,CUB, objectnet, omnibenchmark, vtab
+from utils.data import iCIFAR10, iCIFAR100, iImageNet100, iImageNet1000, iCIFAR224, iImageNetR,iImageNetA,DomainNet,CUB, objectnet, omnibenchmark, vtab
 
 
 class DataManager(object):
@@ -12,12 +12,30 @@ class DataManager(object):
         self.dataset_name = dataset_name
         self._setup_data(dataset_name, shuffle, seed)
         assert init_cls <= len(self._class_order), "No enough classes."
-        self._increments = [init_cls]
-        while sum(self._increments) + increment < len(self._class_order):
-            self._increments.append(increment)
-        offset = len(self._class_order) - sum(self._increments)
-        if offset > 0:
-            self._increments.append(offset)
+        configured_increments = self.args.get("task_increments")
+        if configured_increments is not None:
+            self._increments = [int(size) for size in configured_increments]
+            if (
+                not self._increments
+                or any(size <= 0 for size in self._increments)
+                or sum(self._increments) != len(self._class_order)
+            ):
+                raise ValueError(
+                    "task_increments must be positive and sum to the number "
+                    "of dataset classes"
+                )
+            if self._increments[0] != int(init_cls):
+                raise ValueError(
+                    "init_cls must match task_increments[0] when an explicit "
+                    "task schedule is provided"
+                )
+        else:
+            self._increments = [init_cls]
+            while sum(self._increments) + increment < len(self._class_order):
+                self._increments.append(increment)
+            offset = len(self._class_order) - sum(self._increments)
+            if offset > 0:
+                self._increments.append(offset)
             
     @property
     def nb_tasks(self):
@@ -229,6 +247,8 @@ def _get_idata(dataset_name, args=None):
         return iImageNetR(args)
     elif name == "imageneta":
         return iImageNetA()
+    elif name == "domainnet":
+        return DomainNet(args)
     elif name == "cub":
         return CUB()
     elif name == "objectnet":

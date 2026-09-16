@@ -1,6 +1,11 @@
 import numpy as np
+import logging
 from torchvision import datasets, transforms
 from utils.toolkit import split_images_labels
+from utils.domainnet import (
+    DEFAULT_DOMAINNET_DOMAINS,
+    prepare_domainnet_data,
+)
 
 
 class iData(object):
@@ -254,6 +259,49 @@ class iImageNetA(iData):
 
         self.train_data, self.train_targets = split_images_labels(train_dset.imgs)
         self.test_data, self.test_targets = split_images_labels(test_dset.imgs)
+
+
+class DomainNet(iData):
+    """Manifest-backed DomainNet class-incremental dataset."""
+
+    use_path = True
+    train_trsf = build_transform(True, None)
+    test_trsf = build_transform(False, None)
+    common_trsf = []
+    class_order = np.arange(200).tolist()
+
+    def __init__(self, args):
+        self.args = args or {}
+        self.use_path = True
+        self.train_trsf = build_transform(True, self.args)
+        self.test_trsf = build_transform(False, self.args)
+        self.common_trsf = []
+        self.class_order = np.arange(
+            int(self.args.get("domainnet_top_classes", 200))
+        ).tolist()
+        self.selected_raw_classes = None
+
+    def download_data(self):
+        root = self.args.get("domainnet_root", "/data/dataset/DomainNet")
+        top_k = int(self.args.get("domainnet_top_classes", 200))
+        domains = self.args.get("domainnet_domains", DEFAULT_DOMAINNET_DOMAINS)
+        (
+            self.train_data,
+            self.train_targets,
+            self.test_data,
+            self.test_targets,
+            self.selected_raw_classes,
+        ) = prepare_domainnet_data(root, top_k=top_k, domains=domains)
+        self.class_order = np.arange(len(self.selected_raw_classes)).tolist()
+        logging.info(
+            "[DomainNet] root=%s domains=%s selected_top_classes=%d "
+            "train=%d test=%d",
+            root,
+            ",".join(domains),
+            len(self.selected_raw_classes),
+            len(self.train_targets),
+            len(self.test_targets),
+        )
 
 
 

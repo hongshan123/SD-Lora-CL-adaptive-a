@@ -24,20 +24,33 @@ def makedirs(path):
         os.makedirs(path)
 
 
-def accuracy(y_pred, y_true, nb_old, increment=10):
+def accuracy(y_pred, y_true, nb_old, increment=10, task_increments=None):
     assert len(y_pred) == len(y_true), "Data length error."
     all_acc = {}
     all_acc["total"] = np.around(
         (y_pred == y_true).sum() * 100 / len(y_true), decimals=2
     )
 
-    # Grouped accuracy
-    for class_id in range(0, np.max(y_true), increment):
+    # Grouped accuracy. Explicit schedules are needed when the class count
+    # does not divide evenly into the requested number of tasks.
+    if task_increments is None:
+        task_ranges = ((class_id, class_id + increment) for class_id in range(0, np.max(y_true), increment))
+    else:
+        task_ranges = []
+        start = 0
+        for task_size in task_increments:
+            task_size = int(task_size)
+            task_ranges.append((start, start + task_size))
+            start += task_size
+
+    for class_id, class_end in task_ranges:
         idxes = np.where(
-            np.logical_and(y_true >= class_id, y_true < class_id + increment)
+            np.logical_and(y_true >= class_id, y_true < class_end)
         )[0]
+        if len(idxes) == 0:
+            continue
         label = "{}-{}".format(
-            str(class_id).rjust(2, "0"), str(class_id + increment - 1).rjust(2, "0")
+            str(class_id).rjust(2, "0"), str(class_end - 1).rjust(2, "0")
         )
         all_acc[label] = np.around(
             (y_pred[idxes] == y_true[idxes]).sum() * 100 / len(idxes), decimals=2

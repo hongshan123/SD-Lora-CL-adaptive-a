@@ -116,6 +116,7 @@ def main(argv):
     runtime_root = Path(argv[2]).resolve()
     config_root = runtime_root / "configs"
     config_root.mkdir(parents=True, exist_ok=True)
+    (runtime_root / "results").mkdir(parents=True, exist_ok=True)
     manifest = []
     for dataset_key in DATASETS:
         source_path = root / "exps" / DATASETS[dataset_key]["source"]

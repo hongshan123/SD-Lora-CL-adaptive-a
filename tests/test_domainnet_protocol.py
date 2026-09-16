@@ -77,3 +77,12 @@ def test_accuracy_omits_unobserved_future_task_groups():
     )
 
     assert list(grouped) == ["total", "00-02", "old", "new"]
+
+
+def test_tasklen_generator_creates_result_parent(tmp_path):
+    from scripts.generate_tasklen_pair_configs import main
+
+    runtime_root = tmp_path / "runtime"
+    main(["generate_tasklen_pair_configs.py", str(Path(__file__).resolve().parents[1]), str(runtime_root)])
+
+    assert (runtime_root / "results").is_dir()

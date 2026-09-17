@@ -112,8 +112,11 @@ class BaseLearner(object):
         )
         ret["grouped"] = grouped
         ret["top1"] = grouped["total"]
+        effective_topk = min(self.topk, y_pred.shape[1])
         ret["top{}".format(self.topk)] = np.around(
-            (y_pred.T == np.tile(y_true, (self.topk, 1))).sum() * 100 / len(y_true),
+            (y_pred[:, :effective_topk].T == np.tile(y_true, (effective_topk, 1))).sum()
+            * 100
+            / len(y_true),
             decimals=2,
         )
 
@@ -171,7 +174,10 @@ class BaseLearner(object):
                 # print('outputs', outputs['logits'])
                 outputs =  self._network.forward(inputs)['logits']
                 # outputs = self._network(inputs)['logits']
-            predicts = torch.topk(outputs, k=self.topk, dim=1, largest=True, sorted=True)[1]  # [bs, topk]
+            effective_topk = min(self.topk, outputs.shape[1])
+            predicts = torch.topk(
+                outputs, k=effective_topk, dim=1, largest=True, sorted=True
+            )[1]  # [bs, min(topk, available_classes)]
             y_pred.append(predicts.cpu().numpy())
             y_true.append(targets.cpu().numpy())
             # print('y_pred', np.concatenate(y_pred))
@@ -186,7 +192,11 @@ class BaseLearner(object):
         dists = cdist(class_means, vectors, "sqeuclidean")  # [nb_classes, N]
         scores = dists.T  # [N, nb_classes], choose the one with the smallest distance
 
-        return np.argsort(scores, axis=1)[:, : self.topk], y_true  # [N, topk]
+        effective_topk = min(self.topk, scores.shape[1])
+        return (
+            np.argsort(scores, axis=1)[:, :effective_topk],
+            y_true,
+        )  # [N, min(topk, available_classes)]
 
     def _extract_vectors(self, loader):
         self._network.eval()

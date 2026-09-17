@@ -33,6 +33,19 @@ def _current_run_succeeded(project_root, job_name):
     return _log_status(Path(project_root) / (job_name + ".log")) == 0
 
 
+def torchrun_command(world_size, config_path):
+    """Run torch.distributed with the interpreter hosting this scheduler."""
+    return [
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        "--nproc_per_node={}".format(world_size),
+        "main.py",
+        "--config={}".format(config_path),
+    ]
+
+
 def old_run_succeeded(project_root, canonical_name):
     """Reuse only an explicitly successful previous two-GPU run."""
     log_path = Path(project_root) / (canonical_name + ".log")
@@ -130,13 +143,7 @@ def run_one(project_root, job, gpu_ids, world_size):
     env["PYTHONUNBUFFERED"] = "1"
     env["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     env["TORCH_DETERMINISTIC"] = "1"
-    command = [
-        "torchrun",
-        "--standalone",
-        "--nproc_per_node={}".format(world_size),
-        "main.py",
-        "--config={}".format(job["config"]),
-    ]
+    command = torchrun_command(world_size, job["config"])
     with log_path.open("w") as stream:
         stream.write(
             "===== START {} GPUs={} canonical={} =====\n".format(

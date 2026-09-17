@@ -7,6 +7,9 @@ import threading
 import time
 from pathlib import Path
 
+import numpy as np
+import torch
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.generate_tasklen_fla_configs import (
@@ -17,6 +20,8 @@ from scripts.generate_tasklen_fla_configs import (
     generate_configs,
 )
 from scripts.tasklen_fla_queue import active_jobs, dispatch_jobs, pending_jobs
+from scripts.tasklen_fla_queue import torchrun_command
+from models.base import BaseLearner
 
 
 def test_generator_covers_requested_lengths_and_methods(tmp_path):
@@ -87,6 +92,40 @@ def test_active_jobs_recovers_started_run_without_end_marker(tmp_path):
     ]
 
 
+def test_cnn_eval_clamps_topk_to_available_classes():
+    class TwoClassNetwork:
+        def eval(self):
+            return self
+
+        def forward(self, inputs):
+            return {"logits": torch.tensor([[2.0, 1.0], [1.0, 2.0]])}
+
+    learner = BaseLearner.__new__(BaseLearner)
+    learner._network = TwoClassNetwork()
+    learner._device = torch.device("cpu")
+    learner.topk = 5
+    loader = [(0, torch.zeros(2, 3), torch.tensor([0, 1]))]
+
+    predictions, targets = learner._eval_cnn(loader)
+
+    assert predictions.shape == (2, 2)
+    assert targets.tolist() == [0, 1]
+
+
+def test_top5_metric_is_defined_when_only_two_classes_are_seen():
+    learner = BaseLearner.__new__(BaseLearner)
+    learner.topk = 5
+    learner._known_classes = 0
+    learner.args = {"increment": 2, "task_increments": [2]}
+
+    result = learner._evaluate(
+        np.asarray([[0, 1], [1, 0]]), np.asarray([0, 1])
+    )
+
+    assert result["top1"] == 100.0
+    assert result["top5"] == 100.0
+
+
 def test_dispatch_reuses_slot_before_other_long_job_finishes():
     events = []
     lock = threading.Lock()
@@ -122,3 +161,9 @@ def test_queue_script_is_directly_executable_from_repository_root():
     )
     assert "--gpu-pairs" in result.stdout
     assert "--resume" in result.stdout
+
+
+def test_torchrun_command_uses_the_scheduler_interpreter():
+    command = torchrun_command(2, "/tmp/config.json")
+
+    assert command[:3] == [sys.executable, "-m", "torch.distributed.run"]

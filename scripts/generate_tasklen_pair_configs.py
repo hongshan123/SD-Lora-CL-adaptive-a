@@ -48,24 +48,32 @@ def _strip_sa_options(config):
             config.pop(key)
 
 
-def build_config(source, dataset_key, task_count, method, runtime_root):
+def build_config(
+    source,
+    dataset_key,
+    task_count,
+    method,
+    runtime_root,
+    batch_size=32,
+    world_size=4,
+):
     spec = DATASETS[dataset_key]
     task_increments = balanced_task_increments(spec["num_classes"], task_count)
-    name = "pair_{}_t{}_{}_seed{}_bs32_4gpu".format(
-        dataset_key, task_count, method, spec["seed"]
+    name = "pair_{}_t{}_{}_seed{}_bs{}_{}gpu".format(
+        dataset_key, task_count, method, spec["seed"], batch_size, world_size
     )
     config = dict(source)
     config.update(
         {
             "prefix": name,
             "dataset": spec["dataset"],
-            "device": ["0", "1", "2", "3"],
+            "device": [str(index) for index in range(world_size)],
             "seed": [spec["seed"]],
             "filepath": str((runtime_root / "results" / name).resolve()) + "/",
             "init_cls": task_increments[0],
             "increment": task_increments[0],
             "task_increments": task_increments,
-            "batch_size": 32,
+            "batch_size": batch_size,
             "lora_rank": 10,
             "sa_deterministic_training": True,
             "sa_resume": False,
@@ -110,10 +118,17 @@ def build_config(source, dataset_key, task_count, method, runtime_root):
 
 
 def main(argv):
-    if len(argv) != 3:
-        raise SystemExit("usage: generate_tasklen_pair_configs.py ROOT RUNTIME_DIR")
+    if len(argv) not in (3, 5):
+        raise SystemExit(
+            "usage: generate_tasklen_pair_configs.py ROOT RUNTIME_DIR "
+            "[BATCH_SIZE WORLD_SIZE]"
+        )
     root = Path(argv[1]).resolve()
     runtime_root = Path(argv[2]).resolve()
+    batch_size = int(argv[3]) if len(argv) == 5 else 32
+    world_size = int(argv[4]) if len(argv) == 5 else 4
+    if batch_size <= 0 or world_size <= 0:
+        raise SystemExit("BATCH_SIZE and WORLD_SIZE must be positive")
     config_root = runtime_root / "configs"
     config_root.mkdir(parents=True, exist_ok=True)
     (runtime_root / "results").mkdir(parents=True, exist_ok=True)
@@ -124,7 +139,13 @@ def main(argv):
         for task_count in TASK_COUNTS:
             for method in METHODS:
                 name, config = build_config(
-                    source, dataset_key, task_count, method, runtime_root
+                    source,
+                    dataset_key,
+                    task_count,
+                    method,
+                    runtime_root,
+                    batch_size=batch_size,
+                    world_size=world_size,
                 )
                 path = config_root / (name + ".json")
                 path.write_text(json.dumps(config, indent=4) + "\n")

@@ -5,6 +5,7 @@ import subprocess
 import sys
 import threading
 import time
+from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
@@ -19,7 +20,8 @@ from scripts.generate_tasklen_fla_configs import (
     build_config,
     generate_configs,
 )
-from scripts.tasklen_fla_queue import active_jobs, dispatch_jobs, pending_jobs
+import scripts.tasklen_fla_queue as queue_module
+from scripts.tasklen_fla_queue import active_jobs, dispatch_jobs, pending_jobs, run_one
 from scripts.tasklen_fla_queue import torchrun_command
 from models.base import BaseLearner
 
@@ -167,3 +169,29 @@ def test_torchrun_command_uses_the_scheduler_interpreter():
     command = torchrun_command(2, "/tmp/config.json")
 
     assert command[:3] == [sys.executable, "-m", "torch.distributed.run"]
+
+
+def test_run_one_archives_stale_result_directory(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    result_dir = tmp_path / "result"
+    result_dir.mkdir()
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"filepath": str(result_dir)}))
+    monkeypatch.setattr(
+        queue_module.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0),
+    )
+
+    job = {
+        "name": "fresh_attempt",
+        "canonical_name": "fresh_attempt",
+        "config": str(config_path),
+    }
+
+    assert run_one(project, job, "0,1", 2) == 0
+    assert not result_dir.exists()
+    archived = list(tmp_path.glob("result.retry_*"))
+    assert len(archived) == 1
+    assert "archived_stale_result_dir=" in (project / "fresh_attempt.log").read_text()

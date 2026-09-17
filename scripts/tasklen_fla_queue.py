@@ -46,6 +46,25 @@ def torchrun_command(world_size, config_path):
     ]
 
 
+def _archive_stale_result_dir(config_path):
+    """Move a prior failed result aside before starting a fresh attempt."""
+    with open(config_path, "r", encoding="utf-8") as stream:
+        config = json.load(stream)
+    filepath = config.get("filepath")
+    if not filepath:
+        return None
+    target = Path(filepath).expanduser()
+    if not target.exists():
+        return None
+    if not target.is_dir():
+        raise RuntimeError("result filepath exists but is not a directory: {}".format(target))
+
+    suffix = ".retry_{}_{}".format(time.strftime("%Y%m%d_%H%M%S"), os.getpid())
+    archived = target.with_name(target.name + suffix)
+    target.rename(archived)
+    return archived
+
+
 def old_run_succeeded(project_root, canonical_name):
     """Reuse only an explicitly successful previous two-GPU run."""
     log_path = Path(project_root) / (canonical_name + ".log")
@@ -138,6 +157,7 @@ def run_one(project_root, job, gpu_ids, world_size):
     """Execute one torchrun and write an independent, auditable log."""
     project_root = Path(project_root)
     log_path = project_root / (job["name"] + ".log")
+    archived_result_dir = _archive_stale_result_dir(job["config"])
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = gpu_ids
     env["PYTHONUNBUFFERED"] = "1"
@@ -151,6 +171,8 @@ def run_one(project_root, job, gpu_ids, world_size):
             )
         )
         stream.write("command={}\n".format(" ".join(command)))
+        if archived_result_dir is not None:
+            stream.write("archived_stale_result_dir={}\n".format(archived_result_dir))
         stream.flush()
         completed = subprocess.run(
             command,

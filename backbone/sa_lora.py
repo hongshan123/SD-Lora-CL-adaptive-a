@@ -744,8 +744,10 @@ def adaptive_a_layer_gradient(
     stability_weight: float,
     gate_floor: float,
     momentum: float,
+    gate_formula: str = "ratio",
     eps: float = 1e-8,
     previous_gate: Tensor | float | None = None,
+    fixed_gate: Tensor | float | None = None,
 ) -> dict[str, Tensor]:
     """Gate one Q/V layer's coordinate-changing shared-A gradients."""
     if not 0.0 <= gate_floor <= 1.0:
@@ -754,6 +756,8 @@ def adaptive_a_layer_gradient(
         raise ValueError("momentum must be in [0, 1)")
     if stability_weight < 0:
         raise ValueError("stability_weight must be non-negative")
+    if gate_formula not in ("ratio", "squared_ratio"):
+        raise ValueError("gate_formula must be ratio or squared_ratio")
     if eps <= 0:
         raise ValueError("eps must be positive")
     if scale.numel() != 1:
@@ -791,7 +795,13 @@ def adaptive_a_layer_gradient(
         }
     if zero_perpendicular:
         raw_gate = one
-        if previous_gate is None:
+        if fixed_gate is not None:
+            gate = torch.as_tensor(
+                fixed_gate, device=raw_gate.device, dtype=raw_gate.dtype
+            )
+            if not bool(torch.isfinite(gate)) or not 0.0 <= float(gate) <= 1.0:
+                raise ValueError("fixed_gate must be finite and in [0, 1]")
+        elif previous_gate is None:
             gate = raw_gate
         else:
             previous_gate = torch.as_tensor(
@@ -841,13 +851,22 @@ def adaptive_a_layer_gradient(
             historical_v, perpendicular_v, eps
         ).square()
     )
+    if gate_formula == "ratio":
+        numerator = current_impact
+        denominator = current_impact + stability_weight * historical_impact
+    else:
+        numerator = current_impact.square()
+        denominator = numerator + stability_weight * historical_impact.square()
     raw_gate = torch.clamp(
-        current_impact
-        / (current_impact + stability_weight * historical_impact + eps),
-        min=gate_floor,
-        max=1.0,
+        numerator / (denominator + eps), min=gate_floor, max=1.0
     )
-    if previous_gate is None:
+    if fixed_gate is not None:
+        gate = torch.as_tensor(
+            fixed_gate, device=raw_gate.device, dtype=raw_gate.dtype
+        )
+        if not bool(torch.isfinite(gate)) or not 0.0 <= float(gate) <= 1.0:
+            raise ValueError("fixed_gate must be finite and in [0, 1]")
+    elif previous_gate is None:
         gate = raw_gate
     else:
         previous_gate = torch.as_tensor(
@@ -1572,6 +1591,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         adaptive_a_stability_weight=1.0,
         adaptive_a_gate_floor=0.05,
         adaptive_a_gate_momentum=0.9,
+        adaptive_a_gate_formula="ratio",
         adaptive_a_eps=1e-8,
         adaptive_a_strategy="impact_ratio",
         adaptive_a_risk_budget=0.05,
@@ -1650,6 +1670,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.adaptive_a_stability_weight = float(adaptive_a_stability_weight)
         self.adaptive_a_gate_floor = float(adaptive_a_gate_floor)
         self.adaptive_a_gate_momentum = float(adaptive_a_gate_momentum)
+        self.adaptive_a_gate_formula = str(adaptive_a_gate_formula)
         self.adaptive_a_eps = float(adaptive_a_eps)
         self.adaptive_a_strategy = str(adaptive_a_strategy)
         self.adaptive_a_risk_budget = float(adaptive_a_risk_budget)
@@ -1663,14 +1684,16 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.functional_temperature = float(functional_temperature)
         if self.adaptive_a_strategy not in (
             "impact_ratio",
+            "tangent",
             "risk_budgeted",
             "pareto_knee",
             "functional_halfspace",
             "function_safe_pareto",
         ):
             raise ValueError(
-                "sa_adaptive_a_strategy must be impact_ratio, risk_budgeted, "
-                "pareto_knee, functional_halfspace, or function_safe_pareto"
+                "sa_adaptive_a_strategy must be impact_ratio, tangent, "
+                "risk_budgeted, pareto_knee, functional_halfspace, or "
+                "function_safe_pareto"
             )
         if self.adaptive_a_risk_budget < 0:
             raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
@@ -1684,6 +1707,10 @@ class SharedALoRA_ViT_timm(nn.Module):
             raise ValueError("sa_adaptive_a_gate_floor must be in [0, 1]")
         if not 0.0 <= self.adaptive_a_gate_momentum < 1.0:
             raise ValueError("sa_adaptive_a_gate_momentum must be in [0, 1)")
+        if self.adaptive_a_gate_formula not in ("ratio", "squared_ratio"):
+            raise ValueError(
+                "sa_adaptive_a_gate_formula must be ratio or squared_ratio"
+            )
         if self.adaptive_a_eps <= 0:
             raise ValueError("sa_adaptive_a_eps must be positive")
         if self.functional_conflict_tol < 0:
@@ -2500,6 +2527,34 @@ class SharedALoRA_ViT_timm(nn.Module):
                 momentum_buffers=momentum_buffers,
                 momentum=momentum,
             )
+        if not 0.0 <= momentum < 1.0:
+            raise ValueError("momentum must be in [0, 1)")
+        momentum_by_parameter = {}
+        if momentum_buffers is not None:
+            if len(momentum_buffers) != len(self.w_As):
+                raise ValueError("momentum_buffers must match shared-A branches")
+            momentum_by_parameter = {
+                id(module.weight): buffer
+                for module, buffer in zip(self.w_As, momentum_buffers)
+            }
+
+        def _effective_gradient(parameter, gradient):
+            buffer = momentum_by_parameter.get(id(parameter))
+            if buffer is None:
+                return gradient
+            return gradient + momentum * buffer.to(
+                device=gradient.device, dtype=gradient.dtype
+            )
+
+        def _raw_gradient(parameter, effective_gradient):
+            buffer = momentum_by_parameter.get(id(parameter))
+            if buffer is None:
+                return effective_gradient
+            return effective_gradient - momentum * buffer.to(
+                device=effective_gradient.device,
+                dtype=effective_gradient.dtype,
+            )
+
         layer_gradients = []
         for block in self.lora_vit.blocks:
             wrapper = block.attn.qkv
@@ -2510,9 +2565,11 @@ class SharedALoRA_ViT_timm(nn.Module):
             if gradient_q is None or gradient_v is None:
                 continue
             has_history = self.task_id > 0
+            effective_q = _effective_gradient(wrapper.a_q.weight, gradient_q)
+            effective_v = _effective_gradient(wrapper.a_v.weight, gradient_v)
             result = adaptive_a_layer_gradient(
-                gradient_q=gradient_q,
-                gradient_v=gradient_v,
+                gradient_q=effective_q,
+                gradient_v=effective_v,
                 shared_a_q=wrapper.a_q.weight,
                 shared_a_v=wrapper.a_v.weight,
                 current_up_q=wrapper.b_q.weight,
@@ -2523,15 +2580,29 @@ class SharedALoRA_ViT_timm(nn.Module):
                 stability_weight=self.adaptive_a_stability_weight,
                 gate_floor=self.adaptive_a_gate_floor,
                 momentum=self.adaptive_a_gate_momentum,
+                gate_formula=self.adaptive_a_gate_formula,
                 eps=self.adaptive_a_eps,
                 previous_gate=self._adaptive_a_gate_ema.get(
                     wrapper.layer_index
                 ),
+                fixed_gate=(
+                    0.0
+                    if has_history and self.adaptive_a_strategy == "tangent"
+                    else None
+                ),
             )
             with torch.no_grad():
                 if has_history:
-                    gradient_q.copy_(result["gradient_q"])
-                    gradient_v.copy_(result["gradient_v"])
+                    gradient_q.copy_(
+                        _raw_gradient(
+                            wrapper.a_q.weight, result["gradient_q"]
+                        )
+                    )
+                    gradient_v.copy_(
+                        _raw_gradient(
+                            wrapper.a_v.weight, result["gradient_v"]
+                        )
+                    )
             gate = float(result["gate"].detach())
             self._adaptive_a_gate_ema[wrapper.layer_index] = gate
             self._adaptive_a_observations.append(

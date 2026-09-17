@@ -134,6 +134,9 @@ def validate_adaptive_a_config(args):
         "adaptive_a_gate_momentum": float(
             args.get("sa_adaptive_a_gate_momentum", 0.9)
         ),
+        "adaptive_a_gate_formula": str(
+            args.get("sa_adaptive_a_gate_formula", "ratio")
+        ),
         "adaptive_a_eps": float(args.get("sa_adaptive_a_eps", 1e-8)),
         "adaptive_a_strategy": str(
             args.get("sa_adaptive_a_strategy", "impact_ratio")
@@ -166,14 +169,20 @@ def validate_adaptive_a_config(args):
         raise ValueError("sa_adaptive_a_eps must be positive")
     if settings["adaptive_a_strategy"] not in (
         "impact_ratio",
+        "tangent",
         "risk_budgeted",
         "pareto_knee",
         "functional_halfspace",
         "function_safe_pareto",
     ):
         raise ValueError(
-            "sa_adaptive_a_strategy must be impact_ratio, risk_budgeted, "
-            "pareto_knee, functional_halfspace, or function_safe_pareto"
+            "sa_adaptive_a_strategy must be impact_ratio, tangent, "
+            "risk_budgeted, pareto_knee, functional_halfspace, or "
+            "function_safe_pareto"
+        )
+    if settings["adaptive_a_gate_formula"] not in ("ratio", "squared_ratio"):
+        raise ValueError(
+            "sa_adaptive_a_gate_formula must be ratio or squared_ratio"
         )
     if (
         settings["adaptive_a_strategy"]
@@ -1020,7 +1029,25 @@ class Learner(SDLoraLearner):
                     )
                 self._sa_pareto_step += 1
         else:
-            backbone.apply_adaptive_a_gradients()
+            momentum = (
+                float(optimizer.param_groups[0].get("momentum", 0.0))
+                if optimizer is not None
+                else 0.0
+            )
+            momentum_buffers = (
+                [
+                    optimizer.state.get(module.weight, {}).get(
+                        "momentum_buffer"
+                    )
+                    for module in backbone.w_As
+                ]
+                if optimizer is not None
+                else None
+            )
+            backbone.apply_adaptive_a_gradients(
+                momentum_buffers=momentum_buffers,
+                momentum=momentum,
+            )
         return None
 
     @staticmethod

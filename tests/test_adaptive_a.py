@@ -315,6 +315,136 @@ def test_adaptive_layer_gradient_applies_floor_and_ema_limits():
     assert current_dominates["gate"].item() == pytest.approx(0.4)
 
 
+@pytest.mark.parametrize(
+    "gate_formula, expected_gate",
+    [("ratio", 1.0 / 3.0), ("squared_ratio", 1.0 / 5.0)],
+)
+def test_adaptive_layer_gradient_supports_ratio_gate_formulas(
+    gate_formula, expected_gate
+):
+    shared_a = torch.tensor([[1.0, 0.0]])
+    perpendicular = torch.tensor([[0.0, 1.0]])
+    current_q = torch.tensor([[2.0], [0.0]])
+    historical_q = torch.tensor([[4.0], [0.0]])
+    zero_up = torch.zeros(2, 1)
+
+    result = _layer_gradient(
+        perpendicular,
+        perpendicular,
+        shared_a,
+        shared_a,
+        current_q,
+        zero_up,
+        historical_q,
+        zero_up,
+        gate_floor=0.0,
+        momentum=0.0,
+        gate_formula=gate_formula,
+    )
+
+    assert result["current_impact"].item() == pytest.approx(2.0)
+    assert result["historical_impact"].item() == pytest.approx(4.0)
+    assert result["raw_gate"].item() == pytest.approx(expected_gate)
+    assert result["gate"].item() == pytest.approx(expected_gate)
+
+
+def test_adaptive_layer_gradient_rejects_unknown_gate_formula():
+    shared_a = torch.tensor([[1.0, 0.0]])
+    gradient = torch.tensor([[0.0, 1.0]])
+    up = torch.ones(2, 1)
+
+    with pytest.raises(ValueError, match="gate_formula"):
+        _layer_gradient(
+            gradient,
+            gradient,
+            shared_a,
+            shared_a,
+            up,
+            up,
+            up,
+            up,
+            gate_formula="cubic_ratio",
+        )
+
+
+def test_tangent_strategy_cancels_perpendicular_sgd_momentum(tmp_path):
+    model = _adaptive_model(
+        tmp_path,
+        adaptive_a_strategy="tangent",
+        adaptive_a_gate_floor=0.0,
+        adaptive_a_gate_momentum=0.0,
+    )
+    model.task_id = 1
+    with torch.no_grad():
+        for module in model.w_As:
+            module.weight.zero_()
+            module.weight[0, 0] = 1.0
+            module.weight[1, 1] = 1.0
+
+    buffers = []
+    for module in model.w_As:
+        module.weight.grad = torch.zeros_like(module.weight)
+        buffer = torch.zeros_like(module.weight)
+        buffer[0, 2] = 2.0
+        buffer[1, 3] = -3.0
+        buffers.append(buffer)
+
+    result = model.apply_adaptive_a_gradients(
+        momentum_buffers=buffers,
+        momentum=0.9,
+    )
+
+    assert result is not None
+    assert result["mean_gate"] == pytest.approx(0.0)
+    for module, buffer in zip(model.w_As, buffers):
+        effective_direction = module.weight.grad + 0.9 * buffer
+        assert torch.count_nonzero(effective_direction) == 0
+
+
+def test_impact_ratio_gates_effective_sgd_momentum_direction(tmp_path):
+    model = _adaptive_model(
+        tmp_path,
+        adaptive_a_gate_floor=0.0,
+        adaptive_a_gate_momentum=0.0,
+        adaptive_a_gate_formula="ratio",
+    )
+    model.task_id = 1
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+    with torch.no_grad():
+        for module in model.w_As:
+            module.weight.zero_()
+            module.weight[0, 0] = 1.0
+            module.weight[1, 1] = 1.0
+        wrapper.b_q.weight.fill_(1.0)
+        wrapper.b_v.weight.fill_(1.0)
+        wrapper.aggregate_q.fill_(4.0)
+        wrapper.aggregate_v.fill_(4.0)
+
+    buffers = []
+    for module in model.w_As:
+        module.weight.grad = torch.zeros_like(module.weight)
+        buffer = torch.zeros_like(module.weight)
+        buffer[:, 2:] = 1.0
+        buffers.append(buffer)
+
+    result = model.apply_adaptive_a_gradients(
+        momentum_buffers=buffers,
+        momentum=0.9,
+    )
+
+    layer = result["layer_gradients"][0]
+    gate = layer["gate"]
+    for branch, module, buffer in zip(("q", "v"), model.w_As, buffers):
+        effective_direction = module.weight.grad + 0.9 * buffer
+        expected = gate * 0.9 * buffer
+        assert torch.allclose(effective_direction, expected, atol=1e-7)
+        assert torch.allclose(
+            effective_direction,
+            layer["gradient_{}".format(branch)],
+            atol=1e-7,
+        )
+
+
 def test_model_applies_one_layer_gate_to_q_and_v_gradients(tmp_path):
     model = _adaptive_model(tmp_path, adaptive_a_gate_floor=0.1)
     wrapper = model.lora_vit.blocks[0].attn.qkv
@@ -1009,7 +1139,7 @@ class _AdaptiveBackbone(nn.Module):
         super().__init__()
         self.events = events if events is not None else []
 
-    def apply_adaptive_a_gradients(self):
+    def apply_adaptive_a_gradients(self, **kwargs):
         self.events.append("adaptive")
 
     def adaptive_a_diagnostics(self):
@@ -1046,9 +1176,21 @@ class _GradientBearingAdaptiveBackbone(nn.Module):
     def forward(self, inputs):
         return inputs @ self.weight.t()
 
-    def apply_adaptive_a_gradients(self):
+    def apply_adaptive_a_gradients(self, **kwargs):
         self.apply_calls += 1
         self.weight.grad.zero_()
+
+
+class _MomentumCapturingAdaptiveBackbone(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.w_As = nn.ModuleList(
+            [nn.Linear(2, 1, bias=False), nn.Linear(2, 1, bias=False)]
+        )
+        self.received = None
+
+    def apply_adaptive_a_gradients(self, **kwargs):
+        self.received = kwargs
 
 
 def _two_rank_adaptive_a_ddp_worker(rank, init_file, result_queue):
@@ -1144,6 +1286,25 @@ def test_shared_a_hook_reaches_backbone_through_local_network_wrappers(wrapped):
     assert events == ["adaptive"]
 
 
+@pytest.mark.parametrize("strategy", ["impact_ratio", "tangent"])
+def test_shared_a_hook_forwards_optimizer_momentum_to_impact_paths(strategy):
+    learner = object.__new__(SharedALearner)
+    learner._sa_adaptive_a_enabled = True
+    learner._sa_adaptive_a_strategy = strategy
+    backbone = _MomentumCapturingAdaptiveBackbone()
+    learner._network = _BackboneHolder(backbone)
+    optimizer = optim.SGD(backbone.parameters(), lr=0.1, momentum=0.9)
+    buffers = []
+    for module in backbone.w_As:
+        buffer = torch.full_like(module.weight, 2.0)
+        optimizer.state[module.weight]["momentum_buffer"] = buffer
+        buffers.append(buffer)
+
+    assert learner._after_backward(optimizer=optimizer) is None
+    assert backbone.received["momentum"] == pytest.approx(0.9)
+    assert backbone.received["momentum_buffers"] == buffers
+
+
 @pytest.mark.skipif(
     not dist.is_available() or not dist.is_gloo_available(),
     reason="torch.distributed Gloo is unavailable",
@@ -1222,6 +1383,7 @@ def test_shared_a_hook_gates_synchronized_gradients_on_two_gloo_ranks(tmp_path):
         ({"sa_cumulative_merge": "gauge"}, "live_a_aggregate_b"),
         ({"sa_live_a_coordinate_align": False}, "coordinate_align"),
         ({"sa_adaptive_a_gate_floor": 1.1}, "gate_floor"),
+        ({"sa_adaptive_a_gate_formula": "cubic_ratio"}, "gate_formula"),
     ],
 )
 def test_learner_validates_enabled_adaptive_a_configuration(settings, message):
@@ -1247,6 +1409,7 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
         "adaptive_a_stability_weight": 1.0,
         "adaptive_a_gate_floor": 0.05,
         "adaptive_a_gate_momentum": 0.9,
+        "adaptive_a_gate_formula": "ratio",
         "adaptive_a_eps": 1e-8,
         "adaptive_a_strategy": "impact_ratio",
         "adaptive_a_risk_budget": 0.05,
@@ -1271,6 +1434,7 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
             "sa_adaptive_a_stability_weight": 2.5,
             "sa_adaptive_a_gate_floor": 0.2,
             "sa_adaptive_a_gate_momentum": 0.6,
+            "sa_adaptive_a_gate_formula": "squared_ratio",
             "sa_adaptive_a_eps": 1e-6,
             "sa_adaptive_a_strategy": "risk_budgeted",
             "sa_adaptive_a_risk_budget": 0.025,
@@ -1282,6 +1446,7 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
     assert backbone.adaptive_a_stability_weight == pytest.approx(2.5)
     assert backbone.adaptive_a_gate_floor == pytest.approx(0.2)
     assert backbone.adaptive_a_gate_momentum == pytest.approx(0.6)
+    assert backbone.adaptive_a_gate_formula == "squared_ratio"
     assert backbone.adaptive_a_eps == pytest.approx(1e-6)
     assert backbone.adaptive_a_strategy == "risk_budgeted"
     assert backbone.adaptive_a_risk_budget == pytest.approx(0.025)
@@ -1307,6 +1472,7 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
         "sa_adaptive_a_stability_weight": 2.5,
         "sa_adaptive_a_gate_floor": 0.2,
         "sa_adaptive_a_gate_momentum": 0.6,
+        "sa_adaptive_a_gate_formula": "squared_ratio",
         "sa_adaptive_a_eps": 1e-6,
         "sa_adaptive_a_strategy": "risk_budgeted",
         "sa_adaptive_a_risk_budget": 0.025,
@@ -1331,6 +1497,7 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
             "adaptive_a_stability_weight",
             "adaptive_a_gate_floor",
             "adaptive_a_gate_momentum",
+            "adaptive_a_gate_formula",
             "adaptive_a_eps",
             "adaptive_a_strategy",
             "adaptive_a_risk_budget",
@@ -1341,6 +1508,7 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
         "adaptive_a_stability_weight": 2.5,
         "adaptive_a_gate_floor": 0.2,
         "adaptive_a_gate_momentum": 0.6,
+        "adaptive_a_gate_formula": "squared_ratio",
         "adaptive_a_eps": 1e-6,
         "adaptive_a_strategy": "risk_budgeted",
         "adaptive_a_risk_budget": 0.025,

@@ -23,6 +23,7 @@ from xml.etree import ElementTree as ET
 ROOT_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 
 ET.register_namespace("", ROOT_NS)
 ET.register_namespace("r", REL_NS)
@@ -249,13 +250,13 @@ def make_sheet(rows: list[dict[str, str]], headers: list[str]) -> bytes:
 
 def write_xlsx(path: Path, sheets: list[tuple[str, list[dict[str, str]], list[str]]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    content_types = ET.Element(f"{{{ROOT_NS}}}Types")
-    ET.SubElement(content_types, f"{{{ROOT_NS}}}Default", {"Extension": "rels", "ContentType": "application/vnd.openxmlformats-package.relationships+xml"})
-    ET.SubElement(content_types, f"{{{ROOT_NS}}}Default", {"Extension": "xml", "ContentType": "application/xml"})
-    ET.SubElement(content_types, f"{{{ROOT_NS}}}Override", {"PartName": "/xl/workbook.xml", "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"})
-    ET.SubElement(content_types, f"{{{ROOT_NS}}}Override", {"PartName": "/xl/styles.xml", "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"})
+    content_types = ET.Element(f"{{{CONTENT_TYPES_NS}}}Types")
+    ET.SubElement(content_types, f"{{{CONTENT_TYPES_NS}}}Default", {"Extension": "rels", "ContentType": "application/vnd.openxmlformats-package.relationships+xml"})
+    ET.SubElement(content_types, f"{{{CONTENT_TYPES_NS}}}Default", {"Extension": "xml", "ContentType": "application/xml"})
+    ET.SubElement(content_types, f"{{{CONTENT_TYPES_NS}}}Override", {"PartName": "/xl/workbook.xml", "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"})
+    ET.SubElement(content_types, f"{{{CONTENT_TYPES_NS}}}Override", {"PartName": "/xl/styles.xml", "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"})
     for index in range(len(sheets)):
-        ET.SubElement(content_types, f"{{{ROOT_NS}}}Override", {"PartName": f"/xl/worksheets/sheet{index + 1}.xml", "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"})
+        ET.SubElement(content_types, f"{{{CONTENT_TYPES_NS}}}Override", {"PartName": f"/xl/worksheets/sheet{index + 1}.xml", "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"})
 
     workbook = ET.Element(f"{{{ROOT_NS}}}workbook")
     sheets_node = ET.SubElement(workbook, f"{{{ROOT_NS}}}sheets")
@@ -264,8 +265,8 @@ def write_xlsx(path: Path, sheets: list[tuple[str, list[dict[str, str]], list[st
 
     rels = ET.Element(f"{{{PKG_REL_NS}}}Relationships")
     ET.SubElement(rels, f"{{{PKG_REL_NS}}}Relationship", {"Id": "rId1", "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument", "Target": "xl/workbook.xml"})
-    ET.SubElement(rels, f"{{{PKG_REL_NS}}}Relationship", {"Id": "rId2", "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles", "Target": "styles.xml"})
     workbook_rels = ET.Element(f"{{{PKG_REL_NS}}}Relationships")
+    ET.SubElement(workbook_rels, f"{{{PKG_REL_NS}}}Relationship", {"Id": "rId1", "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles", "Target": "styles.xml"})
     for index in range(len(sheets)):
         ET.SubElement(workbook_rels, f"{{{PKG_REL_NS}}}Relationship", {"Id": f"rId{index + 2}", "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet", "Target": f"worksheets/sheet{index + 1}.xml"})
 

@@ -35,12 +35,14 @@ DATASETS = {
 }
 
 
-def build_config(source, dataset_key, runtime_root, run_tag):
+def build_config(source, dataset_key, runtime_root, run_tag, task_count=10):
     """Build one theoretical-main config without mutating its source."""
+    if task_count <= 0:
+        raise ValueError("task_count must be positive")
     spec = DATASETS[dataset_key]
-    increments = balanced_task_increments(spec["num_classes"], 10)
-    name = "momentum_adaptive_a_{}_t10_seed{}_bs128_2gpu_{}".format(
-        dataset_key, spec["seed"], run_tag
+    increments = balanced_task_increments(spec["num_classes"], task_count)
+    name = "momentum_adaptive_a_{}_t{}_seed{}_bs128_2gpu_{}".format(
+        dataset_key, task_count, spec["seed"], run_tag
     )
     config = dict(source)
     for key in list(config):
@@ -57,7 +59,7 @@ def build_config(source, dataset_key, runtime_root, run_tag):
             "init_cls": increments[0],
             "increment": increments[0],
             "task_increments": increments,
-            "max_tasks": 10,
+            "max_tasks": task_count,
             "batch_size": 64,
             "lora_rank": 10,
             "model_name": "sa_sdlora",

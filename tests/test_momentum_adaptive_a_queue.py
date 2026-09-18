@@ -12,6 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scripts.generate_momentum_adaptive_a_configs import generate_configs
+from scripts.generate_momentum_adaptive_a_tasklen_configs import (
+    TASK_COUNTS,
+    generate_configs as generate_tasklen_configs,
+)
 
 
 @pytest.mark.parametrize(
@@ -99,3 +103,25 @@ def test_launcher_has_valid_shell_syntax_and_prepare_only_mode(tmp_path):
     assert "PREPARE_ONLY complete" in result.stdout
     manifest = json.loads((runtime / "manifest.json").read_text())
     assert [entry["gpu_ids"] for entry in manifest] == ["0,1", "4,5", "6,7"]
+
+
+def test_tasklen_generator_builds_three_dataset_four_length_manifest(tmp_path):
+    manifest = generate_tasklen_configs(ROOT, tmp_path, "tasklen")
+
+    assert len(manifest) == 12
+    assert [entry["tasks"] for entry in manifest[:4]] == list(TASK_COUNTS)
+    assert [entry["dataset"] for entry in manifest[:4]] == ["c100"] * 4
+    assert [entry["dataset"] for entry in manifest[4:8]] == ["inr"] * 4
+    assert [entry["dataset"] for entry in manifest[8:]] == ["cub"] * 4
+    assert {entry["gpu_ids"] for entry in manifest[:4]} == {"0,1"}
+    assert {entry["gpu_ids"] for entry in manifest[4:8]} == {"4,5"}
+    assert {entry["gpu_ids"] for entry in manifest[8:]} == {"6,7"}
+
+    for entry in manifest:
+        config = json.loads(Path(entry["config"]).read_text())
+        assert config["max_tasks"] == entry["tasks"]
+        assert len(config["task_increments"]) == entry["tasks"]
+        assert sum(config["task_increments"]) in (100, 200)
+        assert config["batch_size"] == 64
+        assert config["sa_adaptive_a_gate_floor"] == pytest.approx(0.0)
+        assert config["sa_adaptive_a_gate_momentum"] == pytest.approx(0.0)

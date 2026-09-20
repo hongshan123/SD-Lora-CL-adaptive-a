@@ -1237,9 +1237,15 @@ class _SharedAQKV(nn.Module):
         new_q = new_q + self.scaling_cur[0](self.b_q(self.a_q(x)))
         new_v = new_v + self.scaling_cur[0](self.b_v(self.a_v(x)))
 
-        qkv = self.qkv(x)
-        qkv[:, :, : self.dim] += new_q
-        qkv[:, :, -self.dim :] += new_v
+        base_qkv = self.qkv(x)
+        qkv = torch.cat(
+            (
+                base_qkv[:, :, : self.dim] + new_q,
+                base_qkv[:, :, self.dim : -self.dim],
+                base_qkv[:, :, -self.dim :] + new_v,
+            ),
+            dim=-1,
+        )
         return qkv
 
 

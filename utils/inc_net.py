@@ -88,6 +88,25 @@ def get_backbone(args, pretrained=False):
                 adaptive_a_risk_budget_mode=args.get(
                     "sa_adaptive_a_risk_budget_mode", "absolute"
                 ),
+                recoverability_stage=args.get(
+                    "sa_recoverability_stage", "global_budget"
+                ),
+                recoverability_budget=args.get(
+                    "sa_recoverability_budget", 0.01
+                ),
+                recoverability_step_size=args.get(
+                    "sa_recoverability_step_size", 0.1
+                ),
+                recoverability_interval=args.get(
+                    "sa_recoverability_interval", 4
+                ),
+                recoverability_sketch_rank=args.get(
+                    "sa_recoverability_sketch_rank", 16
+                ),
+                recoverability_gammas=args.get(
+                    "sa_recoverability_gammas",
+                    (0.0, 0.25, 0.5, 0.75, 1.0),
+                ),
                 resume=args.get("sa_resume", False),
             )
         else:

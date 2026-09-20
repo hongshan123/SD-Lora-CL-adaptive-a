@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from backbone.recoverability import align_to_anchor
 from backbone.sa_lora import SA_STATE_FILENAME, SharedALoRA_ViT_timm
 from models.sa_sdlora import validate_adaptive_a_config
+from utils import inc_net
 
 
 class _TinyAttention(nn.Module):
@@ -101,6 +102,44 @@ def test_recoverability_configuration_exposes_ordered_stages():
         validate_adaptive_a_config(
             {**base, "sa_recoverability_stage": "unknown"}
         )
+
+
+def test_task_zero_backbone_receives_recoverability_configuration(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        inc_net.timm,
+        "create_model",
+        lambda *args, **kwargs: _TinyViT(),
+    )
+    args = {
+        "backbone_type": "vit_base_patch16_224",
+        "model_name": "sa_sdlora",
+        "increment": 10,
+        "filepath": str(tmp_path / "run"),
+        "lora_rank": 2,
+        "sa_train_a_all_tasks": True,
+        "sa_cumulative_state": True,
+        "sa_cumulative_merge": "live_a_aggregate_b",
+        "sa_live_a_coordinate_align": True,
+        "sa_adaptive_a_enabled": True,
+        "sa_adaptive_a_strategy": "recoverability",
+        "sa_recoverability_stage": "exact_risk",
+        "sa_recoverability_budget": 0.02,
+        "sa_recoverability_step_size": 0.15,
+        "sa_recoverability_interval": 8,
+        "sa_recoverability_sketch_rank": 3,
+        "sa_recoverability_gammas": [0.0, 0.5, 1.0],
+    }
+
+    model = inc_net.get_backbone(args, pretrained=False)
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+
+    assert model.recoverability_stage == "exact_risk"
+    assert model.recoverability_budget == pytest.approx(0.02)
+    assert model.recoverability_step_size == pytest.approx(0.15)
+    assert model.recoverability_interval == 8
+    assert model.recoverability_sketch_rank == 3
+    assert model.recoverability_gammas == (0.0, 0.5, 1.0)
+    assert wrapper.capture_effective_gradient is False
 
 
 def test_effective_weight_gradient_is_captured_when_current_b_is_zero(tmp_path):

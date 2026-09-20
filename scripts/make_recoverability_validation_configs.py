@@ -60,6 +60,7 @@ def build_stage_configs(
                 "sa_recoverability_interval": int(interval),
                 "sa_recoverability_sketch_rank": int(sketch_rank),
                 "sa_recoverability_gammas": [float(value) for value in gammas],
+                "sa_live_a_absorb_mode": "operator_preserving_absorb",
             }
         )
         configs[stage] = config

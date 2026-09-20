@@ -49,7 +49,7 @@ def test_stage_configs_are_cumulative_and_preserve_training_protocol():
         assert config["sa_recoverability_interval"] == 8
         assert config["sa_recoverability_sketch_rank"] == 12
         assert config["optimizer"] == "sgd"
-        assert config["sa_live_a_absorb_mode"] == "bounded_norm_calibrated_absorb"
+        assert config["sa_live_a_absorb_mode"] == "operator_preserving_absorb"
         assert config["sa_coordinate_stable_transport"] is True
         assert config["sa_dual_head"] is False
         assert stage in config["prefix"]

@@ -152,6 +152,7 @@ assert c["sa_train_a_all_tasks"] is True
 assert c["sa_cumulative_state"] is True
 assert c["sa_cumulative_merge"] == "live_a_aggregate_b"
 assert c["sa_live_a_coordinate_align"] is True
+assert c["sa_live_a_absorb_mode"] == "operator_preserving_absorb"
 assert c["sa_resume"] is False
 PY
 }

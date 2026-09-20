@@ -66,6 +66,7 @@ def _model(tmp_path, stage="global_budget", task_id=0, **kwargs):
         **settings,
     )
     model.task_id = task_id
+    model._set_recoverability_capture_for_next_step()
     return model
 
 
@@ -143,7 +144,7 @@ def test_task_zero_backbone_receives_recoverability_configuration(monkeypatch, t
 
 
 def test_effective_weight_gradient_is_captured_when_current_b_is_zero(tmp_path):
-    model = _model(tmp_path, stage="accessibility")
+    model = _model(tmp_path, stage="accessibility", task_id=1)
     wrapper = model.lora_vit.blocks[0].attn.qkv
     assert torch.count_nonzero(wrapper.b_q.weight) == 0
     assert torch.count_nonzero(wrapper.b_v.weight) == 0
@@ -159,7 +160,7 @@ def test_effective_weight_gradient_is_captured_when_current_b_is_zero(tmp_path):
 
 
 def test_effective_weight_gradient_accumulates_multiple_loss_forwards(tmp_path):
-    model = _model(tmp_path, stage="accessibility")
+    model = _model(tmp_path, stage="accessibility", task_id=1)
     wrapper = model.lora_vit.blocks[0].attn.qkv
     torch.manual_seed(42)
     first = torch.randn(2, 3, 4)
@@ -207,22 +208,24 @@ def test_canonicalization_preserves_historical_and_current_operators(tmp_path):
         )
 
 
-def test_accessibility_stage_prepares_full_task_zero_rotation_with_zero_b(tmp_path):
+def test_task_zero_bypasses_recoverability_and_keeps_sgd_gradient(tmp_path):
     model = _model(tmp_path, stage="accessibility", task_id=0)
-    before = [module.weight.detach().clone() for module in model.w_As]
+    wrapper = model.lora_vit.blocks[0].attn.qkv
     _backward_once(model)
+    gradients = [module.weight.grad.detach().clone() for module in model.w_As]
 
     result = model.prepare_recoverability_step(step_size=0.01)
 
-    assert result["selected_gammas"] == [1.0, 1.0]
-    assert all(torch.count_nonzero(module.weight.grad) == 0 for module in model.w_As)
-    assert any(
-        not torch.allclose(candidate, old)
-        for candidate, old in zip(model._recoverability_pending_bases, before)
-    )
+    assert result["skipped"] is True
+    assert result["reason"] == "task_zero"
+    assert result["selected_gammas"] == []
+    assert wrapper.capture_effective_gradient is False
+    assert model._recoverability_pending_bases is None
+    for module, expected in zip(model.w_As, gradients):
+        assert torch.allclose(module.weight.grad, expected)
 
 
-def test_task_zero_forces_full_candidate_even_when_large_step_reduces_utility(tmp_path):
+def test_task_zero_bypasses_recoverability_even_with_large_step(tmp_path):
     model = _model(
         tmp_path,
         stage="accessibility",
@@ -233,13 +236,69 @@ def test_task_zero_forces_full_candidate_even_when_large_step_reduces_utility(tm
 
     result = model.prepare_recoverability_step(step_size=0.01)
 
-    assert result["selected_gammas"] == [1.0, 1.0]
+    assert result["skipped"] is True
+    assert result["reason"] == "task_zero"
+    assert model._recoverability_pending_bases is None
+
+
+def test_exact_risk_warms_up_zero_b_before_rotating_a(tmp_path):
+    model = _model(tmp_path, stage="exact_risk", task_id=1)
+    for module in model.w_As:
+        module.weight.grad = torch.ones_like(module.weight)
+
+    warmup = model.prepare_recoverability_step(step_size=0.1)
+
+    assert warmup["skipped"] is True
+    assert warmup["reason"] == "current_b_zero_warmup"
+    assert model._recoverability_pending_bases is None
+    assert all(torch.count_nonzero(module.weight.grad) == 0 for module in model.w_As)
+
+    with torch.no_grad():
+        for module in model.w_Bs:
+            module.weight.fill_(0.01)
+    for module in model.w_As:
+        module.weight.grad = torch.tensor(
+            [[0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]]
+        )
+
+    result = model.prepare_recoverability_step(step_size=0.1)
+
+    assert result["skipped"] is False
+    assert model._recoverability_pending_bases is not None
+
+
+def test_qkv_forward_does_not_mutate_leaf_output_in_place(tmp_path):
+    class _LeafQKV(nn.Module):
+        in_features = 4
+
+        def forward(self, inputs):
+            return torch.zeros(
+                *inputs.shape[:-1],
+                12,
+                device=inputs.device,
+                dtype=inputs.dtype,
+                requires_grad=True,
+            )
+
+    model = _model(tmp_path, stage="accessibility", task_id=1)
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+    wrapper.qkv = _LeafQKV()
+    inputs = torch.randn(2, 3, 4)
+
+    output = model(inputs)
+    output.sum().backward()
+
+    q_gradient, v_gradient = wrapper.consume_effective_weight_gradients()
+    assert q_gradient is not None
+    assert v_gradient is not None
 
 
 def test_exact_risk_stage_uses_original_gradient_direction(tmp_path):
     model = _model(tmp_path, stage="exact_risk", task_id=1)
     wrapper = model.lora_vit.blocks[0].attn.qkv
     with torch.no_grad():
+        wrapper.b_q.weight.fill_(0.01)
+        wrapper.b_v.weight.fill_(0.01)
         wrapper.recoverability_anchor_up_q.fill_(1.0)
         wrapper.recoverability_anchor_up_v.fill_(1.0)
         wrapper.aggregate_q.fill_(1.0)
@@ -313,7 +372,7 @@ def test_apply_step_retracts_basis_clears_momentum_and_realigns(tmp_path):
 
 
 def test_recoverability_diagnostics_report_stage_budget_and_gate_distribution(tmp_path):
-    model = _model(tmp_path, stage="global_budget", task_id=0)
+    model = _model(tmp_path, stage="global_budget", task_id=1)
     _backward_once(model)
     model.prepare_recoverability_step(step_size=0.01)
 

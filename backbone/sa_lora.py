@@ -1586,36 +1586,42 @@ class _LiveAAggregateQKV(nn.Module):
         if self.current_branch_enabled:
             new_q = new_q + self.scaling_cur[0](self.b_q(self.a_q(x)))
             new_v = new_v + self.scaling_cur[0](self.b_v(self.a_v(x)))
-        qkv = self.qkv(x)
-        qkv[:, :, : self.dim] += new_q
-        qkv[:, :, -self.dim :] += new_v
         if (
             self.training
             and self.capture_effective_gradient
-            and qkv.requires_grad
+            and new_q.requires_grad
+            and new_v.requires_grad
         ):
             flat_input = x.detach().reshape(-1, self.dim)
 
-            def _capture_effective_gradient(gradient):
-                flat_gradient = gradient.detach().reshape(-1, 3 * self.dim)
-                projected_q = flat_gradient[:, : self.dim] @ (
-                    self.recoverability_output_sketch_q.to(flat_gradient.dtype)
+            def _capture_q_gradient(gradient):
+                flat_gradient = gradient.detach().reshape(-1, self.dim)
+                projected = flat_gradient @ self.recoverability_output_sketch_q.to(
+                    device=flat_gradient.device, dtype=flat_gradient.dtype
                 )
-                projected_v = flat_gradient[:, -self.dim :] @ (
-                    self.recoverability_output_sketch_v.to(flat_gradient.dtype)
-                )
-                effective_q = projected_q.t() @ flat_input
-                effective_v = projected_v.t() @ flat_input
+                effective = projected.t() @ flat_input
                 if self._effective_weight_gradient_q is None:
-                    self._effective_weight_gradient_q = effective_q
-                    self._effective_weight_gradient_v = effective_v
+                    self._effective_weight_gradient_q = effective
                 else:
-                    self._effective_weight_gradient_q.add_(effective_q)
-                    self._effective_weight_gradient_v.add_(effective_v)
+                    self._effective_weight_gradient_q.add_(effective)
                 return gradient
 
-            qkv.register_hook(_capture_effective_gradient)
-        return qkv
+            def _capture_v_gradient(gradient):
+                flat_gradient = gradient.detach().reshape(-1, self.dim)
+                projected = flat_gradient @ self.recoverability_output_sketch_v.to(
+                    device=flat_gradient.device, dtype=flat_gradient.dtype
+                )
+                effective = projected.t() @ flat_input
+                if self._effective_weight_gradient_v is None:
+                    self._effective_weight_gradient_v = effective
+                else:
+                    self._effective_weight_gradient_v.add_(effective)
+                return gradient
+
+            new_q.register_hook(_capture_q_gradient)
+            new_v.register_hook(_capture_v_gradient)
+        base_q, base_k, base_v = self.qkv(x).split(self.dim, dim=-1)
+        return torch.cat((base_q + new_q, base_k, base_v + new_v), dim=-1)
 
     def consume_effective_weight_gradients(self):
         gradients = (
@@ -2256,6 +2262,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._recoverability_step = 0
         self._recoverability_pending_bases = None
         self._recoverability_observations = []
+        self._recoverability_exact_b_warmup_checked = False
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -2370,6 +2377,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                             self.adaptive_a_enabled
                             and self.adaptive_a_strategy == "recoverability"
                             and self.recoverability_stage != "exact_risk"
+                            and self.task_id > 0
                         ),
                         recoverability_sketch_rank=self.recoverability_sketch_rank,
                     )
@@ -2538,7 +2546,8 @@ class SharedALoRA_ViT_timm(nn.Module):
 
     def _set_recoverability_capture_for_next_step(self):
         enabled = (
-            self.recoverability_stage != "exact_risk"
+            self.task_id > 0
+            and self.recoverability_stage != "exact_risk"
             and self._recoverability_step % self.recoverability_interval == 0
         )
         for wrapper in self._recoverability_wrappers():
@@ -2550,7 +2559,36 @@ class SharedALoRA_ViT_timm(nn.Module):
             return None
         if self._recoverability_pending_bases is not None:
             raise RuntimeError("previous recoverability step has not been applied")
+        if self.task_id == 0:
+            self._set_recoverability_capture_for_next_step()
+            return {
+                "stage": self.recoverability_stage,
+                "skipped": True,
+                "reason": "task_zero",
+                "selected_gammas": [],
+            }
         wrappers = self._recoverability_wrappers()
+        if (
+            self.recoverability_stage == "exact_risk"
+            and not self._recoverability_exact_b_warmup_checked
+        ):
+            current_b_is_zero = all(
+                torch.count_nonzero(module.weight.detach()) == 0
+                for module in self.w_Bs
+            )
+            self._recoverability_exact_b_warmup_checked = True
+            if current_b_is_zero:
+                for module in self.w_As:
+                    if module.weight.grad is not None:
+                        module.weight.grad.zero_()
+                self._recoverability_step += 1
+                self._set_recoverability_capture_for_next_step()
+                return {
+                    "stage": self.recoverability_stage,
+                    "skipped": True,
+                    "reason": "current_b_zero_warmup",
+                    "selected_gammas": [],
+                }
         branch_records = []
         effective_gradients = []
         if self.recoverability_stage != "exact_risk":

@@ -13,8 +13,9 @@ C100_GPUS="${C100_GPUS:-0,1}"
 INR_GPUS="${INR_GPUS:-4,5}"
 CUB_GPUS="${CUB_GPUS:-6,7}"
 DATASETS="${DATASETS:-c100 inr cub}"
+STAGES="${STAGES:-exact_risk accessibility anchor_realign global_budget}"
 
-export C100_GPUS INR_GPUS CUB_GPUS DATASETS
+export C100_GPUS INR_GPUS CUB_GPUS DATASETS STAGES
 
 if [ ! -x "$PYTHON_BIN" ] || [ ! -x "$TORCHRUN_BIN" ]; then
     echo "Missing sdlora Python or torchrun: $PYTHON_BIN $TORCHRUN_BIN" >&2
@@ -58,9 +59,25 @@ available_datasets = (
     ),
 )
 selected = os.environ["DATASETS"].split()
+requested_stages = os.environ["STAGES"].split()
+stage_order = {
+    "exact_risk": 1,
+    "accessibility": 2,
+    "anchor_realign": 3,
+    "global_budget": 4,
+}
 known = {entry[0] for entry in available_datasets}
 if not selected or len(selected) != len(set(selected)) or set(selected) - known:
     raise ValueError("DATASETS must contain unique values from c100/inr/cub")
+if (
+    not requested_stages
+    or len(requested_stages) != len(set(requested_stages))
+    or set(requested_stages) - set(stage_order)
+):
+    raise ValueError(
+        "STAGES must contain unique values from exact_risk/accessibility/"
+        "anchor_realign/global_budget"
+    )
 datasets = [entry for entry in available_datasets if entry[0] in selected]
 manifest = []
 for dataset, source_name, seed, gpu_ids in datasets:
@@ -69,14 +86,19 @@ for dataset, source_name, seed, gpu_ids in datasets:
         raise ValueError(f"unsupported GPU list for {dataset}: {gpu_ids}")
     batch_size = 128 // world_size
     source = json.loads((root / "exps" / source_name).read_text())
-    configs = build_stage_configs(
+    all_configs = build_stage_configs(
         source,
         budget=0.01,
         step_size=0.1,
         interval=4,
         sketch_rank=16,
     )
-    for stage_index, (stage, config) in enumerate(configs.items(), start=1):
+    configs = {
+        stage: all_configs[stage]
+        for stage in requested_stages
+    }
+    for stage, config in configs.items():
+        stage_index = stage_order[stage]
         name = (
             f"rga_{dataset}_s{stage_index}_{stage}_seed{seed}"
             f"_t10_bs128_{world_size}gpu_{run_tag}"

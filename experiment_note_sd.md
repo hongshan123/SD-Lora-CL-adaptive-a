@@ -1068,3 +1068,11 @@
 - 实现状态：每个 Q/V 分支保存固定 P、H、C；任务边界用当前任务测试预处理样本收集 FP64 统计并在 DDP 下 all-reduce。旧交叉项由 `H_old(C_old + lambda I)` 还原，rank0 求解后广播 P/H/C。
 - 已核验：CPU 74 tests 和 2-GPU Task0/1 合成 smoke 通过，后者确认每个 rank 的最终状态哈希一致且没有 per-task B artifact。正式数据集训练尚未启动，因此没有性能判断。
 - 风险：CUO 的固定 P 将后续任务 A 的 row-space 漂移留在临时 current branch，可能在长任务序列中限制可塑性；Ridge 目标拟合的是各层 LoRA 增量而不是端到端分类误差。正式结果必须同时检查 Final、AAA、Forgetting、每任务 ridge residual 和训练时间，不能只看 Final。
+
+## 2026-09-20 14:45 Recoverability 正式训练启动判断
+
+- 首次三路启动同时 SIGSEGV。用单卡 `PYTHONFAULTHANDLER=1` 定位到 `_LiveAAggregateQKV.forward()` 的 `qkv.register_hook`，不是 NCCL 或数据集故障。
+- 执行代码审计发现 Task0 通过 `utils/inc_net.py::get_backbone()` 构造，而该路径遗漏全部 `sa_recoverability_*` 参数，导致配置为 `exact_risk` 时实际采用默认 `global_budget` 并错误开启 hook。hook 又注册在已做原地切片加法的 qkv tensor 上，触发 PyTorch 2.4 段错误。
+- 修复后 Task0 与后续任务使用同一配置；qkv 更新改为非原地拼接后再注册 hook。CPU 完整测试 359 passed，四阶段 CUDA 单步 smoke 均通过。
+- 第二次 C100 OOM 经 PID 核对来自 GPU0/1 上 14:34 启动的外部 SLCA，而不是本实验泄漏。未终止外部进程；保留 INR/CUB 健康队列，将 C100 改为 GPU2 单卡 batch128。
+- 当前观察：INR 已进入 Task1、CUB 已进入 Task4，证明 exact-risk controller 和任务边界保存已被真实执行；C100 Task0 正常。暂不根据中途准确率选择阶段或改预算，必须等待四阶段完整结果。

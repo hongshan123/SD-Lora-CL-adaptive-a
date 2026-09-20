@@ -891,3 +891,14 @@
 - 协议：CIFAR-100 seed1993（10 类/任务）、ImageNet-R seed1995（20 类/任务）、CUB-200 seed1（20 类/任务）；ViT-B/16、rank10、SGD、20 epoch、双卡每卡 batch64（等效128）、prototype classifier，关闭 Dual-B、CoordinateStable/transport、HBD 和 Adaptive-A。
 - 验证：CPU 回归 `74 passed`；两卡 Task0/1 合成 smoke 通过，两个 rank 的 P/H/C 哈希一致，仅写出 `sa_state.pt` 与 `sa_merged_lora.pt`，无 per-task B 文件。该 smoke 仅验证实现和分布式状态，不代表性能结果。
 - 运行：`run_cuo_lowrank_r10_3datasets_2gpu.sh` 使用两组 GPU 并行运行 CIFAR-100 与 ImageNet-R，CIFAR-100 完成后复用该卡对运行 CUB-200；正式 Final/AAA/Forgetting 尚未产生，禁止把本条视为效果结论。
+
+## 2026-09-20：Recoverability-Constrained Accessibility Adaptive-A 正式分阶段验证
+
+- 实验标题：从精确历史算子可恢复性到全局预算控制的四阶段累计验证。
+- 理论依据：旧 impact gate 只衡量特定 LoRA 因子坐标下的算子变化。本方法以固定 task-start 历史算子为 anchor，用 LS 对齐后的不可恢复能量定义历史风险；当前任务塑性由 effective-weight gradient 在候选 row space 中的 accessibility gain 衡量。完整方法在全网络 Q/V 分支间分配一个历史算子能量预算。
+- 四阶段：S1 `exact_risk`；S2 `accessibility`；S3 `anchor_realign`；S4 `global_budget`。前三项为累计机制消融，S4 为完整方法。
+- 固定协议：CIFAR-100 seed1993、ImageNet-R seed1995、CUB-200 seed1；T=10、rank10、SGD、20 epoch、等效 batch128；继承 CoordinateStable、prototype transport、bounded NormCap 和 Dual-B，只改变 Recoverability Adaptive-A 字段。
+- 正式入口：`run_recoverability_formal_3datasets_2gpu.sh`。INR 使用 GPU 4,5，CUB 使用 6,7，每卡 batch64；因 GPU 0,1 被外部 SLCA 占用，C100 使用 GPU2 单卡 batch128。每个数据集内部严格 S1->S4，失败即停止。
+- 实现与修复：几何实现提交 `7c44f87`，控制器 `feb8773`；Task0 配置传播与安全 gradient-hook 修复 `4d937a9`；灵活 GPU 调度 `bf9a9db`。完整测试 `359 passed`，四阶段 CUDA smoke 通过。
+- 无效运行：标签 `20260920_142740` 因 Task0 配置未传入且 hook 挂在原地修改 tensor 上发生 SIGSEGV；标签 `20260920_143539` 中 C100 首次运行因 GPU 0,1 已有外部进程而 OOM。二者不得计入结果统计。
+- 有效运行：INR/CUB 标签 `20260920_143539`，C100 标签 `20260920_143956`。截至记录时 C100 S1 已到 Task0 Epoch10，INR S1 已进入 Task1，CUB S1 已进入 Task4，均无训练错误；最终指标待回填。

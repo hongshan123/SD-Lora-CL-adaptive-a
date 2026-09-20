@@ -152,6 +152,34 @@ def test_dispatch_reuses_slot_before_other_long_job_finishes():
     assert start["replacement"] < end["long"]
 
 
+def test_dispatch_stop_on_failure_does_not_launch_pending_jobs():
+    started = []
+
+    def fake_runner(_root, job, _gpu_ids, _world_size):
+        started.append(job["name"])
+        if job["name"] == "failure":
+            return 1
+        time.sleep(0.02)
+        return 0
+
+    jobs = [
+        {"name": "failure"},
+        {"name": "already_active"},
+        {"name": "must_not_start"},
+    ]
+    status = dispatch_jobs(
+        ".",
+        jobs,
+        ("0", "1"),
+        1,
+        runner=fake_runner,
+        stop_on_failure=True,
+    )
+
+    assert status == 1
+    assert set(started) == {"failure", "already_active"}
+
+
 def test_queue_script_is_directly_executable_from_repository_root():
     root = Path(__file__).resolve().parents[1]
     result = subprocess.run(

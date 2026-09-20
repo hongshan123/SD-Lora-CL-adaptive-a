@@ -196,6 +196,7 @@ def dispatch_jobs(
     runner=run_one,
     initial_active=(),
     existing_runner=wait_for_existing,
+    stop_on_failure=False,
 ):
     """Keep every slot full and submit the next job on each completion."""
     if not gpu_pairs:
@@ -204,6 +205,7 @@ def dispatch_jobs(
     next_index = 0
     active = {}
     active_by_gpu = {gpu_ids: job for job, gpu_ids in initial_active}
+    stop_scheduling = False
     with ThreadPoolExecutor(max_workers=len(gpu_pairs)) as executor:
         for slot, gpu_ids in enumerate(gpu_pairs):
             if gpu_ids in active_by_gpu:
@@ -227,8 +229,11 @@ def dispatch_jobs(
             done, _ = wait(active, return_when=FIRST_COMPLETED)
             for future in done:
                 slot, gpu_ids, _job = active.pop(future)
-                statuses.append(future.result())
-                if next_index < len(jobs):
+                status = future.result()
+                statuses.append(status)
+                if stop_on_failure and status != 0:
+                    stop_scheduling = True
+                if not stop_scheduling and next_index < len(jobs):
                     next_job = jobs[next_index]
                     replacement = executor.submit(
                         runner, project_root, next_job, gpu_ids, world_size

@@ -63,6 +63,7 @@ def main():
         gpu_slots,
         1,
         initial_active=active_runs,
+        stop_on_failure=True,
     )
     with queue_log.open("a") as stream:
         stream.write("QUEUE END status={} completed_pending={}\n".format(status, len(jobs)))

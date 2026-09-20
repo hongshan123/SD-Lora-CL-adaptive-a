@@ -24,24 +24,28 @@ DATASETS = {
 METHODS = {
     "sa_lora_bank": {
         "sa_cumulative_state": False,
+        "sa_cumulative_merge": "gauge",
         "sa_freeze_old_scales": False,
         "sa_normalize_current_branch": True,
         "sa_live_a_absorb_mode": "normalized_absorb",
     },
     "frozen_b_bank": {
         "sa_cumulative_state": False,
+        "sa_cumulative_merge": "gauge",
         "sa_freeze_old_scales": True,
         "sa_normalize_current_branch": True,
         "sa_live_a_absorb_mode": "normalized_absorb",
     },
     "exact_g": {
         "sa_cumulative_state": True,
+        "sa_cumulative_merge": "live_a_aggregate_b",
         "sa_freeze_old_scales": True,
         "sa_normalize_current_branch": True,
         "sa_live_a_absorb_mode": "normalized_absorb",
     },
     "bounded_g": {
         "sa_cumulative_state": True,
+        "sa_cumulative_merge": "live_a_aggregate_b",
         "sa_freeze_old_scales": True,
         "sa_normalize_current_branch": False,
         "sa_live_a_absorb_mode": "bounded_norm_calibrated_absorb",
@@ -72,7 +76,6 @@ def build_config(source, method, dataset_key, runtime_root, run_tag, batch_size)
             "sa_train_a_all_tasks": False,
             "sa_delete_per_task_files": bool(METHODS[method]["sa_cumulative_state"]),
             "sa_use_prototype_classifier": True,
-            "sa_cumulative_merge": "live_a_aggregate_b",
             "sa_live_a_history_groups": 1,
             "sa_live_a_coordinate_align": False,
             "sa_coordinate_stable_transport": False,

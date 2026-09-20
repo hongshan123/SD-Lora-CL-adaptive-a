@@ -34,12 +34,16 @@ def test_anchor_subspace_screening_matrix_is_matched(tmp_path):
         exact_g = configs[(dataset, "exact_g")]
         bounded_g = configs[(dataset, "bounded_g")]
         assert sa_lora["sa_cumulative_state"] is False
+        assert sa_lora["sa_cumulative_merge"] == "gauge"
         assert sa_lora["sa_freeze_old_scales"] is False
         assert frozen_bank["sa_freeze_old_scales"] is True
+        assert frozen_bank["sa_cumulative_merge"] == "gauge"
         assert frozen_bank["sa_normalize_current_branch"] is True
         assert exact_g["sa_cumulative_state"] is True
+        assert exact_g["sa_cumulative_merge"] == "live_a_aggregate_b"
         assert exact_g["sa_normalize_current_branch"] is True
         assert exact_g["sa_live_a_absorb_mode"] == "normalized_absorb"
         assert bounded_g["sa_cumulative_state"] is True
+        assert bounded_g["sa_cumulative_merge"] == "live_a_aggregate_b"
         assert bounded_g["sa_normalize_current_branch"] is False
         assert bounded_g["sa_live_a_absorb_mode"] == "bounded_norm_calibrated_absorb"

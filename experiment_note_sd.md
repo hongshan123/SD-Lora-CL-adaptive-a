@@ -1084,3 +1084,5 @@
 - 风险：零初始化 B 的归一化首步梯度会受 epsilon 缩放，这是 SA-LoRA 参数化自身的数值性质。首个真实日志必须检查 loss、NaN/Inf 和 B norm；发现异常时停止该结构组，不静默更换初始化。
 - GPU 审计：0、1、4、5 空闲；2、3、6、7 为外部 SLCA/SLCA++ 进程，本队列不占用也不终止这些进程。
 - 首次调度在模型构造前失败：非 cumulative 的两个 B-bank 仍继承 `sa_cumulative_merge=live_a_aggregate_b`，触发配置校验。未产生训练 epoch 或有效结果。已将 bank 的占位 merge 改为 `gauge`，并令该研究队列遇到首个失败后不再派发新任务；24 项相关回归测试通过。
+- 有效队列已于 2026-09-21 00:34 启动：runtime 为 `.runtime_anchor_subspace_screen_20260921_002825`，scheduler PID `2395517`，单卡槽为 GPU 0/1/4/5。首次四任务是三数据集 `sa_lora_bank` 与 C100 `frozen_b_bank`。
+- 首轮 sanity：C100 两个 bank 的 Task0 Epoch1 均为 `Loss 0.865 / Test 94.10`，说明 scale 冻结差异尚未介入时配对确定性成立；INR Task0 Epoch1 为 `Loss 2.083 / Test 77.63`，CUB 到 Epoch5 为 `Loss 0.321`。四路均无 NaN/Inf/Traceback。

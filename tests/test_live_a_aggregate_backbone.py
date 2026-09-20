@@ -116,6 +116,85 @@ def test_live_a_bank_vs_aggregate_forward_and_a_grad():
     assert torch.allclose(grad_agg, grad_bank, atol=1e-5)
 
 
+def test_normalized_current_bank_matches_exact_aggregate_absorption():
+    """A normalized task branch must fold exactly into the fixed-size G state."""
+    torch.manual_seed(17)
+    dim, rank = 8, 3
+    qkv, a_q, a_v, b_q, b_v = _make_qkv(dim, rank)
+    with torch.no_grad():
+        b_q.weight.copy_(torch.randn_like(b_q.weight))
+        b_v.weight.copy_(torch.randn_like(b_v.weight))
+    scale = torch.tensor([0.7])
+    scaling_cur = nn.ModuleList(
+        [ParameterWrapper(nn.Parameter(scale.clone()))]
+    )
+    bank = _SharedAQKV(
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        [],
+        [],
+        scaling_cur,
+        nn.ModuleList(),
+        0,
+        normalize_current_branch=True,
+    )
+    aggregate_q = scale * b_q.weight.detach() / (
+        torch.linalg.vector_norm(b_q.weight.detach()) + 1e-8
+    )
+    aggregate_v = scale * b_v.weight.detach() / (
+        torch.linalg.vector_norm(b_v.weight.detach()) + 1e-8
+    )
+    aggregate = _LiveAAggregateQKV(
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        aggregate_q,
+        aggregate_v,
+        scaling_cur,
+        0,
+        normalize_current_branch=True,
+    )
+    aggregate.current_branch_enabled = False
+
+    x = torch.randn(4, 6, dim)
+    with torch.no_grad():
+        bank_output = bank(x)
+        aggregate_output = aggregate(x)
+    assert torch.allclose(bank_output, aggregate_output, atol=1e-6, rtol=1e-6)
+
+
+def test_normalized_zero_initialized_b_has_finite_first_gradient():
+    dim, rank = 6, 2
+    torch.manual_seed(19)
+    qkv, a_q, a_v, b_q, b_v = _make_qkv(dim, rank)
+    scaling_cur = nn.ModuleList(
+        [ParameterWrapper(nn.Parameter(torch.tensor([0.8])))]
+    )
+    bank = _SharedAQKV(
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        [],
+        [],
+        scaling_cur,
+        nn.ModuleList(),
+        0,
+        normalize_current_branch=True,
+    )
+    bank(torch.randn(2, 3, dim)).sum().backward()
+    assert torch.isfinite(b_q.weight.grad).all()
+    assert torch.isfinite(b_v.weight.grad).all()
+    assert torch.linalg.vector_norm(b_q.weight.grad) > 0
+    assert torch.linalg.vector_norm(b_v.weight.grad) > 0
+
+
 def test_historical_only_forward_removes_current_branch_and_restores_it(tmp_path):
     """Leaking the diagnostic scope would silently change ordinary training."""
     torch.manual_seed(13)

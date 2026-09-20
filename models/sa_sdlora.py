@@ -963,6 +963,9 @@ class Learner(SDLoraLearner):
             cumulative_rank=self.args.get("sa_cumulative_rank", None),
             cuo_lambda=self.args.get("sa_cuo_lambda", 0.1),
             freeze_old_scales=self.args.get("sa_freeze_old_scales", False),
+            normalize_current_branch=self.args.get(
+                "sa_normalize_current_branch", False
+            ),
             live_a_history_groups=self.args.get("sa_live_a_history_groups", 1),
             live_a_coordinate_align=self.args.get(
                 "sa_live_a_coordinate_align", False

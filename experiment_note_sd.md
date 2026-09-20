@@ -1076,3 +1076,10 @@
 - 修复后 Task0 与后续任务使用同一配置；qkv 更新改为非原地拼接后再注册 hook。CPU 完整测试 359 passed，四阶段 CUDA 单步 smoke 均通过。
 - 第二次 C100 OOM 经 PID 核对来自 GPU0/1 上 14:34 启动的外部 SLCA，而不是本实验泄漏。未终止外部进程；保留 INR/CUB 健康队列，将 C100 改为 GPU2 单卡 batch128。
 - 当前观察：INR 已进入 Task1、CUB 已进入 Task4，证明 exact-risk controller 和任务边界保存已被真实执行；C100 Task0 正常。暂不根据中途准确率选择阶段或改预算，必须等待四阶段完整结果。
+
+## 2026-09-21 首任务锚定实验启动前审计
+
+- 执行代码显示历史 B-bank 使用 separate normalization，但 current branch 原为 raw `sBA`；因此旧实现不能作为严格 SA-LoRA 对照，也不能与 `normalized_absorb` 的 G 做逐算子等价比较。
+- SA-LoRA 论文明确写明 A/B 分别归一化、B 零初始化、所有 scale 联合优化。新增开关只服务本轮结构对照，默认值保持旧行为。
+- 风险：零初始化 B 的归一化首步梯度会受 epsilon 缩放，这是 SA-LoRA 参数化自身的数值性质。首个真实日志必须检查 loss、NaN/Inf 和 B norm；发现异常时停止该结构组，不静默更换初始化。
+- GPU 审计：0、1、4、5 空闲；2、3、6、7 为外部 SLCA/SLCA++ 进程，本队列不占用也不终止这些进程。

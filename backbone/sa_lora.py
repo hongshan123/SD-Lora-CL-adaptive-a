@@ -1197,6 +1197,7 @@ class _SharedAQKV(nn.Module):
         scaling_cur,
         scaling_prev,
         layer_index,
+        normalize_current_branch=False,
     ):
         super().__init__()
         self.qkv = qkv
@@ -1207,6 +1208,7 @@ class _SharedAQKV(nn.Module):
         self.scaling_cur = scaling_cur
         self.scaling_prev = scaling_prev
         self.layer_index = layer_index
+        self.normalize_current_branch = bool(normalize_current_branch)
         self.dim = qkv.in_features
         self.saved_b_q = list(saved_b_q)
         self.saved_b_v = list(saved_b_v)
@@ -1234,8 +1236,14 @@ class _SharedAQKV(nn.Module):
                 self._norm_lora(x, a_v_w, b_v_w)
             )
 
-        new_q = new_q + self.scaling_cur[0](self.b_q(self.a_q(x)))
-        new_v = new_v + self.scaling_cur[0](self.b_v(self.a_v(x)))
+        if self.normalize_current_branch:
+            current_q = self._norm_lora(x, a_q_w, self.b_q.weight)
+            current_v = self._norm_lora(x, a_v_w, self.b_v.weight)
+        else:
+            current_q = self.b_q(self.a_q(x))
+            current_v = self.b_v(self.a_v(x))
+        new_q = new_q + self.scaling_cur[0](current_q)
+        new_v = new_v + self.scaling_cur[0](current_v)
 
         base_qkv = self.qkv(x)
         qkv = torch.cat(
@@ -1483,6 +1491,7 @@ class _LiveAAggregateQKV(nn.Module):
         capture_input_sketch=False,
         capture_effective_gradient=False,
         recoverability_sketch_rank=16,
+        normalize_current_branch=False,
     ):
         super().__init__()
         self.qkv = qkv
@@ -1496,6 +1505,7 @@ class _LiveAAggregateQKV(nn.Module):
         self.history_groups = int(history_groups)
         self.capture_input_sketch = bool(capture_input_sketch)
         self.capture_effective_gradient = bool(capture_effective_gradient)
+        self.normalize_current_branch = bool(normalize_current_branch)
         self._effective_weight_gradient_q = None
         self._effective_weight_gradient_v = None
         sketch_rank = min(int(recoverability_sketch_rank), self.dim)
@@ -1575,6 +1585,17 @@ class _LiveAAggregateQKV(nn.Module):
         denom = torch.linalg.vector_norm(a_weight) + 1e-8
         return F.linear(F.linear(x, a_weight), aggregate / denom)
 
+    def _current_lora(self, x, a_module, b_module):
+        output = b_module(a_module(x))
+        if not self.normalize_current_branch:
+            return output
+        denom = (
+            torch.linalg.vector_norm(a_module.weight)
+            * torch.linalg.vector_norm(b_module.weight)
+            + 1e-8
+        )
+        return output / denom
+
     def forward(self, x):
         if self.training and self.capture_input_sketch:
             with torch.no_grad():
@@ -1584,8 +1605,12 @@ class _LiveAAggregateQKV(nn.Module):
         new_q = self._norm_live_a(x, self.a_q.weight, self.aggregate_q)
         new_v = self._norm_live_a(x, self.a_v.weight, self.aggregate_v)
         if self.current_branch_enabled:
-            new_q = new_q + self.scaling_cur[0](self.b_q(self.a_q(x)))
-            new_v = new_v + self.scaling_cur[0](self.b_v(self.a_v(x)))
+            new_q = new_q + self.scaling_cur[0](
+                self._current_lora(x, self.a_q, self.b_q)
+            )
+            new_v = new_v + self.scaling_cur[0](
+                self._current_lora(x, self.a_v, self.b_v)
+            )
         if (
             self.training
             and self.capture_effective_gradient
@@ -1683,8 +1708,8 @@ class _LiveAAggregateQKV(nn.Module):
 
     def current_output(self, x):
         return (
-            self.scaling_cur[0](self.b_q(self.a_q(x))),
-            self.scaling_cur[0](self.b_v(self.a_v(x))),
+            self.scaling_cur[0](self._current_lora(x, self.a_q, self.b_q)),
+            self.scaling_cur[0](self._current_lora(x, self.a_v, self.b_v)),
         )
 
 
@@ -1709,6 +1734,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         cumulative_rank=None,
         cuo_lambda=0.1,
         freeze_old_scales=False,
+        normalize_current_branch=False,
         live_a_history_groups=1,
         live_a_coordinate_align=False,
         live_a_absorb_mode=SA_ABSORB_MODE_OPERATOR_PRESERVING,
@@ -1784,6 +1810,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 raise ValueError("sa_cuo_lambda must be strictly positive and finite")
         self.cumulative_merge = cumulative_merge
         self.freeze_old_scales = bool(freeze_old_scales)
+        self.normalize_current_branch = bool(normalize_current_branch)
         self.live_a_history_groups = int(live_a_history_groups)
         self.live_a_coordinate_align = bool(live_a_coordinate_align)
         if live_a_absorb_mode not in (
@@ -2380,6 +2407,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                             and self.task_id > 0
                         ),
                         recoverability_sketch_rank=self.recoverability_sketch_rank,
+                        normalize_current_branch=self.normalize_current_branch,
                     )
                 elif self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
                     if offset < len(self.cuo_projection_down):
@@ -2463,6 +2491,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                     self.wrapped_param,
                     self.wrapped_param_prev,
                     layer_index,
+                    normalize_current_branch=self.normalize_current_branch,
                 )
 
         self.reset_parameters()

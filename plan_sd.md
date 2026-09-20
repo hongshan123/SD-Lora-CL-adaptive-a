@@ -217,3 +217,14 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 状态边界：teacher、旧 head 和梯度缓存均在任务内释放，不进入 checkpoint；CoordinateStable、prototype transport、bounded NormCap 和分类头逻辑不变。
 - 首轮矩阵：CIFAR-100 seed1993、ImageNet-R seed1995、CUB-200 seed1，均为 T=10、20 epoch、双卡每卡 batch64、关闭 Dual-B；仅与相同协议的 Pareto-Knee、Live-A、Frozen-A 配对比较。
 - 验收：三数据集 Final/AAA 不低于 Pareto-Knee，并检查冲突触发率、投影修正率和运行开销。若单 seed 无一致方向，不扫描 cosine threshold 或 temperature。
+
+## 15. 首任务锚定子空间与固定状态聚合筛选（2026-09-21）
+
+- 目标：检验 Task0 学得的共享 down-projection 是否能长期复用，并区分性能来自共享 A、历史 scale 联合优化，还是固定状态 G 聚合。
+- 首轮矩阵：CIFAR-100 seed1993、ImageNet-R seed1995、CUB-200 seed1；每个数据集运行 `sa_lora_bank`、`frozen_b_bank`、`exact_g`、`bounded_g`，共 12 个单 seed 实验。
+- 公共协议：T=10、rank10、20 epoch、单卡 batch128、SGD、原数据集学习率与任务顺序、prototype classifier；关闭 Dual-B、classifier transport、HBD 和 Adaptive-A。
+- `sa_lora_bank`：共享 A 在 Task0 后冻结，保存每任务 B，全部历史 scale 继续联合更新，当前与历史分支均采用 separate normalization。
+- `frozen_b_bank`：与上项相同，但冻结历史 scale，作为可严格折叠的 O(T) 参照。
+- `exact_g`：归一化当前分支并用 `normalized_absorb` 折叠到单个 G；应与 `frozen_b_bank` 保持相同算子语义，但持久 LoRA 状态为 O(1)。
+- `bounded_g`：保留当前主方法的 raw current branch 与 `bounded_norm_calibrated_absorb`，用于判断显式边界衰减相对精确折叠是否带来收益。
+- 判定：先比较 `frozen_b_bank` 与 `exact_g` 的 Final/AAA/Forgetting，再比较 `exact_g` 与 `bounded_g`。仅在跨三个数据集有一致价值后扩展多 seed、task length、task order 和 operator coverage 分析。

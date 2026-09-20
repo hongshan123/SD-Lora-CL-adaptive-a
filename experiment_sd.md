@@ -902,3 +902,11 @@
 - 实现与修复：几何实现提交 `7c44f87`，控制器 `feb8773`；Task0 配置传播与安全 gradient-hook 修复 `4d937a9`；灵活 GPU 调度 `bf9a9db`。完整测试 `359 passed`，四阶段 CUDA smoke 通过。
 - 无效运行：标签 `20260920_142740` 因 Task0 配置未传入且 hook 挂在原地修改 tensor 上发生 SIGSEGV；标签 `20260920_143539` 中 C100 首次运行因 GPU 0,1 已有外部进程而 OOM。二者不得计入结果统计。
 - 有效运行：INR/CUB 标签 `20260920_143539`，C100 标签 `20260920_143956`。截至记录时 C100 S1 已到 Task0 Epoch10，INR S1 已进入 Task1，CUB S1 已进入 Task4，均无训练错误；最终指标待回填。
+
+## 2026-09-21：首任务锚定子空间四路结构筛选（待完成）
+
+- 实验标题：SA-LoRA B-bank 与固定状态 cumulative-G 的同协议因果拆分。
+- 理论依据：若 Task0 学得的 A 是长期可复用子空间，则后续仅训练 B/scale 不应依赖 A 旋转。把冻结历史 scale 的归一化 B-bank 精确折叠为一个 G，可进一步检验 O(T) 专家存储是否必要；bounded-G 则测试显式 task-boundary attenuation 是否优于算子精确折叠。
+- 实现修正：新增默认关闭的 `sa_normalize_current_branch`。开启后 current branch 使用 `s(B/||B||)(A/||A||)x`，与 SA-LoRA 的 separate normalization 一致；`normalized_absorb` 后的历史算子与该 current branch 严格一致。默认关闭保证历史实验语义不变。
+- 对照边界：SA-LoRA 论文使用 Adam，且 ImageNet-R 为 30 epoch；本轮为控制变量采用本项目 SGD/20 epoch，因此结果只能称“同协议结构复现”，不能冒充论文原始数值复现。
+- 运行协议：三数据集 T=10、rank10、单卡 batch128；GPU 0、1、4、5 动态派发，空闲卡完成一个任务后立即领取下一个。结果待回填。

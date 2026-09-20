@@ -87,7 +87,7 @@ The implementation uses a configurable finite candidate grid \(\Gamma\), includi
 U_l(\gamma)=J_l(H_l,A_l(\gamma))-J_l(H_l,A_l).
 \]
 
-Q/V effective-weight gradients are represented by the current minibatch input \(X\) and output gradient \(Z\), where \(H=Z^\top X\). No dense \(d\times d\) gradient is stored.
+Q/V effective-weight gradients are represented by a fixed random output sketch \(\widetilde H=R^\top H\), where \(H=Z^\top X\) and \(R_{ij}\sim\mathcal N(0,1/k)\). This preserves gradient energies in expectation and stores only \(k\times d\) values per branch. Setting \(k\ge d_{\rm out}\) selects the identity sketch and recovers the exact effective gradient for controlled ablations.
 
 ## Global Budget
 

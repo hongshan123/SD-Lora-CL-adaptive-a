@@ -15,7 +15,8 @@
 - Existing Adaptive-A strategies remain behaviorally unchanged.
 - Persistent deployment state remains the existing shared `A` and aggregate `G` per branch.
 - Task-start anchors are transient and never serialized.
-- Effective-weight gradients are represented by minibatch factors, not dense `d x d` tensors.
+- Effective-weight gradients are represented by a deterministic random output
+  sketch of shape `sketch_rank x d`, not dense `d x d` tensors.
 - Prototype transport, classifier, Dual-B, and absorption logic are unchanged.
 
 ## Review Focus
@@ -37,10 +38,10 @@
 **Interfaces:**
 - Produces: `row_polar_retraction`, `recoverability_energies`, `align_to_anchor`, and `operator_weighted_recoverability`.
 
-- [ ] Write tests comparing the low-rank risk and alignment with explicit dense least squares, including gauge transforms, equal-Grassmann unequal-energy candidates, zero history, and rank deficiency.
-- [ ] Run `pytest tests/test_recoverability.py -q` and verify failure because the module does not exist.
-- [ ] Implement the low-rank formulas using FP64 internal Gram algebra and thresholded symmetric pseudoinverses.
-- [ ] Run the focused tests and commit the independently passing geometry component.
+- [x] Write tests comparing the low-rank risk and alignment with explicit dense least squares, including gauge transforms, equal-Grassmann unequal-energy candidates, zero history, and rank deficiency.
+- [x] Run `pytest tests/test_recoverability.py -q` and verify failure because the module does not exist.
+- [x] Implement the low-rank formulas using FP64 internal Gram algebra and thresholded symmetric pseudoinverses.
+- [x] Run the focused tests and commit the independently passing geometry component.
 
 ### Task 2: Accessibility Geometry
 
@@ -51,10 +52,10 @@
 **Interfaces:**
 - Produces: `effective_gradient_cross`, `grassmann_accessibility_direction`, `accessibility_energy`, and `accessibility_candidates`.
 
-- [ ] Write failing tests comparing factorized statistics against a dense effective-weight gradient and finite-difference checking the Grassmann ascent direction.
-- [ ] Run the focused tests and verify the expected missing-interface failures.
-- [ ] Implement exact minibatch-factor computations and polar-retracted candidate generation.
-- [ ] Run the focused tests and commit the accessibility component.
+- [x] Write failing tests comparing factorized statistics against a dense effective-weight gradient and finite-difference checking the Grassmann ascent direction.
+- [x] Run the focused tests and verify the expected missing-interface failures.
+- [x] Implement exact minibatch-factor computations and polar-retracted candidate generation.
+- [x] Run the focused tests and commit the accessibility component.
 
 ### Task 3: Fixed-Anchor Online Controller
 
@@ -66,10 +67,10 @@
 **Interfaces:**
 - Produces: wrapper factor capture, task-local anchors, `prepare_recoverability_step`, and `apply_recoverability_step`.
 
-- [ ] Write failing tests proving that stage 1 uses exact risk, stage 2 works with zero current B, and stage 3 repeatedly aligns to the unchanged task-start anchor.
-- [ ] Run the focused tests and verify the expected missing-strategy failures.
-- [ ] Add opt-in capture buffers, candidate preparation after backward, polar application after optimizer step, and online aggregate realignment.
-- [ ] Run the focused tests and commit the integrated controller.
+- [x] Write failing tests proving that stage 1 uses exact risk, stage 2 works with zero current B, and stage 3 repeatedly aligns to the unchanged task-start anchor.
+- [x] Run the focused tests and verify the expected missing-strategy failures.
+- [x] Add opt-in capture buffers, candidate preparation after backward, polar application after optimizer step, and online aggregate realignment.
+- [x] Run the focused tests and commit the integrated controller.
 
 ### Task 4: Global Budget And Configuration
 
@@ -83,10 +84,10 @@
 **Interfaces:**
 - Produces: `choose_global_recoverability_candidates` and validated `sa_recoverability_*` configuration.
 
-- [ ] Write failing tests for exact global energy weighting, deterministic Pareto selection, invalid configuration, task-0 full selection, and budget compliance.
-- [ ] Run the focused tests and verify failures for missing selector/configuration.
-- [ ] Implement stage-4 global allocation, diagnostics, and model wiring.
-- [ ] Run focused integration tests and commit the full strategy.
+- [x] Write failing tests for exact global energy weighting, deterministic Pareto selection, invalid configuration, task-0 full selection, and budget compliance.
+- [x] Run the focused tests and verify failures for missing selector/configuration.
+- [x] Implement stage-4 global allocation, diagnostics, and model wiring.
+- [x] Run focused integration tests and commit the full strategy.
 
 ### Task 5: Ordered Validation Artifacts
 
@@ -98,8 +99,7 @@
 **Interfaces:**
 - Produces: deterministic stage 1-4 experiment configurations from an existing baseline and a CPU toy diagnostic.
 
-- [ ] Write failing tests for cumulative stage configs and the equal-chordal/different-operator-energy toy result.
-- [ ] Run focused tests and verify expected failures.
-- [ ] Implement the generator and documented validation commands without launching expensive training.
-- [ ] Run all recoverability tests, then the full pytest suite, and commit validation artifacts.
-
+- [x] Write failing tests for cumulative stage configs and the equal-chordal/different-operator-energy toy result.
+- [x] Run focused tests and verify expected failures.
+- [x] Implement the generator and documented validation commands without launching expensive training.
+- [x] Run all recoverability tests, then the full pytest suite, and commit validation artifacts.

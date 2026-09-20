@@ -188,6 +188,19 @@ def grassmann_accessibility_direction(
     """Return ``A H^T H (I-P_A)`` for a row-orthonormal basis."""
     _validate_matrix("basis", basis)
     h = effective_weight_gradient(inputs, output_grad)
+    return grassmann_accessibility_direction_from_gradient(h, basis)
+
+
+def grassmann_accessibility_direction_from_gradient(
+    effective_gradient: Tensor,
+    basis: Tensor,
+) -> Tensor:
+    """Return the horizontal accessibility ascent from an effective gradient."""
+    _validate_matrix("effective_gradient", effective_gradient)
+    _validate_matrix("basis", basis)
+    if effective_gradient.shape[1] != basis.shape[1]:
+        raise ValueError("effective gradient and basis input dimensions must match")
+    h = effective_gradient
     work_basis = basis.to(device=h.device, dtype=h.dtype)
     raw = (h.t() @ (h @ work_basis.t())).t()
     normal = raw - (raw @ work_basis.t()) @ work_basis
@@ -326,4 +339,3 @@ def choose_global_recoverability_candidates(
         "utility": selected[1],
         "risk": selected[0] / (total_history + eps) if total_history > 0 else 0.0,
     }
-

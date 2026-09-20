@@ -27,6 +27,16 @@ from backbone.coordinate_stability import align_live_a_aggregate
 from backbone.cuo_lowrank import row_orthonormal_projection, solve_projected_cuo
 from backbone.linears import SimpleLinear
 from backbone.lora import ParameterWrapper
+from backbone.recoverability import (
+    accessibility_candidates,
+    accessibility_energy,
+    align_to_anchor,
+    choose_global_recoverability_candidates,
+    choose_local_recoverability_candidates,
+    grassmann_accessibility_direction_from_gradient,
+    recoverability_energies,
+    row_polar_retraction,
+)
 from backbone.sa_operator_stability import (
     aggregate_normalized_up_projections,
     relative_effective_operator_drift,
@@ -1465,6 +1475,8 @@ class _LiveAAggregateQKV(nn.Module):
         historical_input_rms=None,
         historical_input_count=0.0,
         capture_input_sketch=False,
+        capture_effective_gradient=False,
+        recoverability_sketch_rank=16,
     ):
         super().__init__()
         self.qkv = qkv
@@ -1477,6 +1489,36 @@ class _LiveAAggregateQKV(nn.Module):
         self.dim = qkv.in_features
         self.history_groups = int(history_groups)
         self.capture_input_sketch = bool(capture_input_sketch)
+        self.capture_effective_gradient = bool(capture_effective_gradient)
+        self._effective_weight_gradient_q = None
+        self._effective_weight_gradient_v = None
+        sketch_rank = min(int(recoverability_sketch_rank), self.dim)
+        if sketch_rank <= 0:
+            raise ValueError("recoverability_sketch_rank must be positive")
+        if sketch_rank == self.dim:
+            output_sketch_q = torch.eye(self.dim)
+            output_sketch_v = torch.eye(self.dim)
+        else:
+            generator_q = torch.Generator(device="cpu")
+            generator_v = torch.Generator(device="cpu")
+            generator_q.manual_seed(7919 + 2 * int(layer_index))
+            generator_v.manual_seed(7920 + 2 * int(layer_index))
+            output_sketch_q = torch.randn(
+                self.dim, sketch_rank, generator=generator_q
+            ) / math.sqrt(sketch_rank)
+            output_sketch_v = torch.randn(
+                self.dim, sketch_rank, generator=generator_v
+            ) / math.sqrt(sketch_rank)
+        self.register_buffer(
+            "recoverability_output_sketch_q",
+            output_sketch_q,
+            persistent=False,
+        )
+        self.register_buffer(
+            "recoverability_output_sketch_v",
+            output_sketch_v,
+            persistent=False,
+        )
         self.current_branch_enabled = True
         if historical_input_rms is None:
             historical_input_rms = torch.ones(self.dim)
@@ -1500,6 +1542,28 @@ class _LiveAAggregateQKV(nn.Module):
         self.register_buffer(
             "aggregate_v", aggregate_v.clone(), persistent=False
         )
+        self.register_buffer(
+            "recoverability_anchor_a_q",
+            a_q.weight.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "recoverability_anchor_a_v",
+            a_v.weight.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "recoverability_anchor_up_q",
+            aggregate_q.detach().clone()
+            / (torch.linalg.vector_norm(a_q.weight.detach()) + 1e-8),
+            persistent=False,
+        )
+        self.register_buffer(
+            "recoverability_anchor_up_v",
+            aggregate_v.detach().clone()
+            / (torch.linalg.vector_norm(a_v.weight.detach()) + 1e-8),
+            persistent=False,
+        )
 
     def _norm_live_a(self, x, a_weight, aggregate):
         denom = torch.linalg.vector_norm(a_weight) + 1e-8
@@ -1519,7 +1583,56 @@ class _LiveAAggregateQKV(nn.Module):
         qkv = self.qkv(x)
         qkv[:, :, : self.dim] += new_q
         qkv[:, :, -self.dim :] += new_v
+        if (
+            self.training
+            and self.capture_effective_gradient
+            and qkv.requires_grad
+        ):
+            flat_input = x.detach().reshape(-1, self.dim)
+
+            def _capture_effective_gradient(gradient):
+                flat_gradient = gradient.detach().reshape(-1, 3 * self.dim)
+                projected_q = flat_gradient[:, : self.dim] @ (
+                    self.recoverability_output_sketch_q.to(flat_gradient.dtype)
+                )
+                projected_v = flat_gradient[:, -self.dim :] @ (
+                    self.recoverability_output_sketch_v.to(flat_gradient.dtype)
+                )
+                effective_q = projected_q.t() @ flat_input
+                effective_v = projected_v.t() @ flat_input
+                if self._effective_weight_gradient_q is None:
+                    self._effective_weight_gradient_q = effective_q
+                    self._effective_weight_gradient_v = effective_v
+                else:
+                    self._effective_weight_gradient_q.add_(effective_q)
+                    self._effective_weight_gradient_v.add_(effective_v)
+                return gradient
+
+            qkv.register_hook(_capture_effective_gradient)
         return qkv
+
+    def consume_effective_weight_gradients(self):
+        gradients = (
+            self._effective_weight_gradient_q,
+            self._effective_weight_gradient_v,
+        )
+        self._effective_weight_gradient_q = None
+        self._effective_weight_gradient_v = None
+        return gradients
+
+    def set_recoverability_anchor(self):
+        """Freeze the current normalized historical operator for this task."""
+        with torch.no_grad():
+            self.recoverability_anchor_a_q.copy_(self.a_q.weight)
+            self.recoverability_anchor_a_v.copy_(self.a_v.weight)
+            self.recoverability_anchor_up_q.copy_(
+                self.aggregate_q
+                / (torch.linalg.vector_norm(self.a_q.weight) + 1e-8)
+            )
+            self.recoverability_anchor_up_v.copy_(
+                self.aggregate_v
+                / (torch.linalg.vector_norm(self.a_v.weight) + 1e-8)
+            )
 
     def consume_input_sketch(self):
         """Synchronize one pending minibatch and add it to task statistics."""
@@ -1596,6 +1709,12 @@ class SharedALoRA_ViT_timm(nn.Module):
         adaptive_a_strategy="impact_ratio",
         adaptive_a_risk_budget=0.05,
         adaptive_a_risk_budget_mode="absolute",
+        recoverability_stage="global_budget",
+        recoverability_budget=0.01,
+        recoverability_step_size=0.1,
+        recoverability_interval=4,
+        recoverability_sketch_rank=16,
+        recoverability_gammas=(0.0, 0.25, 0.5, 0.75, 1.0),
         functional_conflict_tol=1e-12,
         functional_conflict_cosine=0.05,
         functional_normal_tol=1e-12,
@@ -1675,6 +1794,14 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.adaptive_a_strategy = str(adaptive_a_strategy)
         self.adaptive_a_risk_budget = float(adaptive_a_risk_budget)
         self.adaptive_a_risk_budget_mode = str(adaptive_a_risk_budget_mode)
+        self.recoverability_stage = str(recoverability_stage)
+        self.recoverability_budget = float(recoverability_budget)
+        self.recoverability_step_size = float(recoverability_step_size)
+        self.recoverability_interval = int(recoverability_interval)
+        self.recoverability_sketch_rank = int(recoverability_sketch_rank)
+        self.recoverability_gammas = tuple(
+            float(value) for value in recoverability_gammas
+        )
         self.functional_conflict_tol = float(functional_conflict_tol)
         self.functional_conflict_cosine = float(functional_conflict_cosine)
         self.functional_normal_tol = float(functional_normal_tol)
@@ -1689,11 +1816,40 @@ class SharedALoRA_ViT_timm(nn.Module):
             "pareto_knee",
             "functional_halfspace",
             "function_safe_pareto",
+            "recoverability",
         ):
             raise ValueError(
                 "sa_adaptive_a_strategy must be impact_ratio, tangent, "
-                "risk_budgeted, pareto_knee, functional_halfspace, or "
-                "function_safe_pareto"
+                "risk_budgeted, pareto_knee, functional_halfspace, "
+                "function_safe_pareto, or recoverability"
+            )
+        if self.recoverability_stage not in (
+            "exact_risk",
+            "accessibility",
+            "anchor_realign",
+            "global_budget",
+        ):
+            raise ValueError(
+                "recoverability_stage must be exact_risk, accessibility, "
+                "anchor_realign, or global_budget"
+            )
+        if self.recoverability_budget < 0:
+            raise ValueError("recoverability_budget must be non-negative")
+        if self.recoverability_step_size < 0:
+            raise ValueError("recoverability_step_size must be non-negative")
+        if self.recoverability_interval <= 0:
+            raise ValueError("recoverability_interval must be positive")
+        if self.recoverability_sketch_rank <= 0:
+            raise ValueError("recoverability_sketch_rank must be positive")
+        if (
+            not self.recoverability_gammas
+            or self.recoverability_gammas
+            != tuple(sorted(set(self.recoverability_gammas)))
+            or self.recoverability_gammas[0] != 0.0
+            or self.recoverability_gammas[-1] != 1.0
+        ):
+            raise ValueError(
+                "recoverability_gammas must be sorted unique values including 0 and 1"
             )
         if self.adaptive_a_risk_budget < 0:
             raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
@@ -2091,6 +2247,9 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._adaptive_a_risk_ratios = []
         self._adaptive_a_pareto_point_counts = []
         self._functional_halfspace_observations = []
+        self._recoverability_step = 0
+        self._recoverability_pending_bases = None
+        self._recoverability_observations = []
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -2201,6 +2360,12 @@ class SharedALoRA_ViT_timm(nn.Module):
                                 "function_safe_pareto",
                             )
                         ),
+                        capture_effective_gradient=(
+                            self.adaptive_a_enabled
+                            and self.adaptive_a_strategy == "recoverability"
+                            and self.recoverability_stage != "exact_risk"
+                        ),
+                        recoverability_sketch_rank=self.recoverability_sketch_rank,
                     )
                 elif self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
                     if offset < len(self.cuo_projection_down):
@@ -2296,6 +2461,275 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.lora_vit = vit_model
         self.lora_vit.head = nn.Identity()
         self.out_dim = 768
+        if self.adaptive_a_strategy == "recoverability":
+            self._initialize_recoverability_state()
+
+    def _recoverability_wrappers(self):
+        wrappers = [
+            block.attn.qkv
+            for block in self.lora_vit.blocks
+            if isinstance(block.attn.qkv, _LiveAAggregateQKV)
+        ]
+        if len(wrappers) * 2 != len(self.w_As):
+            raise RuntimeError(
+                "recoverability wrapper topology does not match shared-A branches"
+            )
+        return wrappers
+
+    def _initialize_recoverability_state(self):
+        """Canonicalize row bases and freeze one task-local operator anchor."""
+        wrappers = self._recoverability_wrappers()
+        canonical_aggregate = []
+        with torch.no_grad():
+            for wrapper in wrappers:
+                for a_module, b_module, aggregate in (
+                    (wrapper.a_q, wrapper.b_q, wrapper.aggregate_q),
+                    (wrapper.a_v, wrapper.b_v, wrapper.aggregate_v),
+                ):
+                    old_a = a_module.weight.detach().clone()
+                    old_norm = torch.linalg.vector_norm(old_a) + self.adaptive_a_eps
+                    canonical_a, triangular = canonical_down_projection(old_a)
+                    canonical_a = canonical_a.to(
+                        device=old_a.device, dtype=old_a.dtype
+                    )
+                    triangular = triangular.to(
+                        device=old_a.device, dtype=old_a.dtype
+                    )
+                    canonical_norm = torch.linalg.vector_norm(canonical_a)
+                    aggregate_new = (
+                        aggregate.to(device=old_a.device, dtype=old_a.dtype)
+                        @ triangular.t()
+                        * (canonical_norm / old_norm)
+                    )
+                    b_module.weight.copy_(b_module.weight @ triangular.t())
+                    a_module.weight.copy_(canonical_a)
+                    aggregate.copy_(aggregate_new.to(aggregate.dtype))
+                    canonical_aggregate.append(aggregate.detach().cpu().float().clone())
+                wrapper.set_recoverability_anchor()
+            self.aggregate_up = canonical_aggregate
+            self._live_a_previous_shared_a = [
+                module.weight.detach().cpu().float().clone()
+                for module in self.w_As
+            ]
+
+    @staticmethod
+    def _distributed_average_tensors(tensors):
+        if not tensors:
+            return tensors
+        if not (dist.is_available() and dist.is_initialized()):
+            return tensors
+        shapes = [tensor.shape for tensor in tensors]
+        sizes = [tensor.numel() for tensor in tensors]
+        packed = torch.cat([tensor.reshape(-1) for tensor in tensors])
+        dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+        packed.div_(dist.get_world_size())
+        outputs = []
+        offset = 0
+        for shape, size in zip(shapes, sizes):
+            outputs.append(packed[offset : offset + size].reshape(shape))
+            offset += size
+        return outputs
+
+    def _set_recoverability_capture_for_next_step(self):
+        enabled = (
+            self.recoverability_stage != "exact_risk"
+            and self._recoverability_step % self.recoverability_interval == 0
+        )
+        for wrapper in self._recoverability_wrappers():
+            wrapper.capture_effective_gradient = enabled
+
+    def prepare_recoverability_step(self, step_size=1.0):
+        """Prepare a post-optimizer row-space update from synchronized signals."""
+        if self.adaptive_a_strategy != "recoverability":
+            return None
+        if self._recoverability_pending_bases is not None:
+            raise RuntimeError("previous recoverability step has not been applied")
+        wrappers = self._recoverability_wrappers()
+        branch_records = []
+        effective_gradients = []
+        if self.recoverability_stage != "exact_risk":
+            for wrapper in wrappers:
+                effective_gradients.extend(
+                    wrapper.consume_effective_weight_gradients()
+                )
+            if any(gradient is None for gradient in effective_gradients):
+                for module in self.w_As:
+                    if module.weight.grad is not None:
+                        module.weight.grad.zero_()
+                self._recoverability_step += 1
+                self._set_recoverability_capture_for_next_step()
+                return {
+                    "stage": self.recoverability_stage,
+                    "skipped": True,
+                    "selected_gammas": [],
+                }
+            effective_gradients = self._distributed_average_tensors(
+                effective_gradients
+            )
+
+        branch_index = 0
+        for wrapper in wrappers:
+            for a_module, anchor_a, anchor_up in (
+                (
+                    wrapper.a_q,
+                    wrapper.recoverability_anchor_a_q,
+                    wrapper.recoverability_anchor_up_q,
+                ),
+                (
+                    wrapper.a_v,
+                    wrapper.recoverability_anchor_a_v,
+                    wrapper.recoverability_anchor_up_v,
+                ),
+            ):
+                basis = a_module.weight.detach()
+                if self.recoverability_stage == "exact_risk":
+                    gradient = a_module.weight.grad
+                    if gradient is None:
+                        raise RuntimeError(
+                            "exact recoverability requires synchronized shared-A gradients"
+                        )
+                    normal_gradient = gradient - (
+                        gradient @ basis.t()
+                    ) @ basis
+                    candidates = []
+                    for gamma in self.recoverability_gammas:
+                        if gamma == 0.0:
+                            candidate = basis.clone()
+                        else:
+                            candidate = row_polar_retraction(
+                                basis - float(step_size) * gamma * normal_gradient
+                            )
+                        utility = -float(
+                            torch.sum(gradient.detach() * (candidate - basis))
+                        )
+                        candidates.append((gamma, candidate, utility))
+                else:
+                    h = effective_gradients[branch_index]
+                    direction = grassmann_accessibility_direction_from_gradient(
+                        h, basis
+                    )
+                    h_energy = h.square().sum()
+                    generated = accessibility_candidates(
+                        basis,
+                        direction,
+                        gradient_energy=h_energy,
+                        gammas=self.recoverability_gammas,
+                        step_size=self.recoverability_step_size,
+                        eps=self.adaptive_a_eps,
+                    )
+                    baseline = accessibility_energy(h @ basis.t(), basis)
+                    candidates = []
+                    for gamma, candidate in generated:
+                        value = accessibility_energy(
+                            h @ candidate.t(), candidate
+                        )
+                        candidates.append(
+                            (gamma, candidate, float(value - baseline))
+                        )
+
+                entries = []
+                for gamma, candidate, utility in candidates:
+                    history, _, residual = recoverability_energies(
+                        anchor_up, anchor_a, candidate
+                    )
+                    entries.append(
+                        {
+                            "gamma": float(gamma),
+                            "utility": float(utility),
+                            "residual": float(residual),
+                            "history": float(history),
+                        }
+                    )
+                branch_records.append(
+                    {"module": a_module, "candidates": candidates, "entries": entries}
+                )
+                branch_index += 1
+
+        layers = [record["entries"] for record in branch_records]
+        if self.task_id == 0:
+            indices = [len(layer) - 1 for layer in layers]
+            selection = {
+                "indices": indices,
+                "utility": sum(
+                    float(layer[index]["utility"])
+                    for layer, index in zip(layers, indices)
+                ),
+                "risk": 0.0,
+            }
+        elif self.recoverability_stage == "global_budget":
+            selection = choose_global_recoverability_candidates(
+                layers, risk_budget=self.recoverability_budget
+            )
+        else:
+            selection = choose_local_recoverability_candidates(
+                layers, risk_budget=self.recoverability_budget
+            )
+        pending = []
+        selected_gammas = []
+        for record, selected_index in zip(branch_records, selection["indices"]):
+            gamma, candidate, _ = record["candidates"][selected_index]
+            pending.append(candidate.detach().clone())
+            selected_gammas.append(float(gamma))
+            if record["module"].weight.grad is not None:
+                record["module"].weight.grad.zero_()
+        self._recoverability_pending_bases = pending
+        observation = {
+            "stage": self.recoverability_stage,
+            "selected_gammas": selected_gammas,
+            "risk": float(selection["risk"]),
+            "utility": float(selection["utility"]),
+            "skipped": False,
+        }
+        self._recoverability_observations.append(observation)
+        self._recoverability_step += 1
+        self._set_recoverability_capture_for_next_step()
+        return observation
+
+    def realign_recoverability_history(self):
+        """Express the immutable task-start anchor in each current row basis."""
+        if self.recoverability_stage not in (
+            "anchor_realign",
+            "global_budget",
+        ):
+            return
+        with torch.no_grad():
+            for wrapper in self._recoverability_wrappers():
+                for a_module, aggregate, anchor_a, anchor_up in (
+                    (
+                        wrapper.a_q,
+                        wrapper.aggregate_q,
+                        wrapper.recoverability_anchor_a_q,
+                        wrapper.recoverability_anchor_up_q,
+                    ),
+                    (
+                        wrapper.a_v,
+                        wrapper.aggregate_v,
+                        wrapper.recoverability_anchor_a_v,
+                        wrapper.recoverability_anchor_up_v,
+                    ),
+                ):
+                    aligned_effective = align_to_anchor(
+                        anchor_up, anchor_a, a_module.weight
+                    )
+                    raw_aggregate = aligned_effective * torch.linalg.vector_norm(
+                        a_module.weight
+                    )
+                    aggregate.copy_(raw_aggregate.to(aggregate.dtype))
+
+    def apply_recoverability_step(self, optimizer=None):
+        """Install the accepted basis after SGD and optionally realign history."""
+        if self._recoverability_pending_bases is None:
+            return None
+        with torch.no_grad():
+            for module, candidate in zip(
+                self.w_As, self._recoverability_pending_bases
+            ):
+                module.weight.copy_(candidate)
+                if optimizer is not None:
+                    optimizer.state[module.weight].clear()
+        self._recoverability_pending_bases = None
+        self.realign_recoverability_history()
+        return self._recoverability_observations[-1]
 
     def _capture_old_operator_reference(self):
         """Snapshot the historical LoRA operator before shared A is updated."""
@@ -3078,6 +3512,42 @@ class SharedALoRA_ViT_timm(nn.Module):
 
     def adaptive_a_diagnostics(self) -> dict | None:
         """Return aggregate task-local Adaptive-A gate diagnostics."""
+        if self.adaptive_a_strategy == "recoverability":
+            observations = self._recoverability_observations
+            if not observations:
+                return None
+            gammas = [
+                gamma
+                for observation in observations
+                for gamma in observation["selected_gammas"]
+            ]
+            return {
+                "strategy": "recoverability",
+                "stage": self.recoverability_stage,
+                "observations": len(observations),
+                "budget": self.recoverability_budget,
+                "step_size": self.recoverability_step_size,
+                "interval": self.recoverability_interval,
+                "sketch_rank": self.recoverability_sketch_rank,
+                "mean_gamma": sum(gammas) / len(gammas) if gammas else 0.0,
+                "min_gamma": min(gammas) if gammas else 0.0,
+                "max_gamma": max(gammas) if gammas else 0.0,
+                "fraction_zero_gamma": (
+                    sum(gamma == 0.0 for gamma in gammas) / len(gammas)
+                    if gammas
+                    else 0.0
+                ),
+                "fraction_full_gamma": (
+                    sum(gamma == 1.0 for gamma in gammas) / len(gammas)
+                    if gammas
+                    else 0.0
+                ),
+                "mean_risk": sum(item["risk"] for item in observations)
+                / len(observations),
+                "max_risk": max(item["risk"] for item in observations),
+                "mean_utility": sum(item["utility"] for item in observations)
+                / len(observations),
+            }
         if self.adaptive_a_strategy == "functional_halfspace":
             observations = self._functional_halfspace_observations
             if not observations:
@@ -3776,6 +4246,16 @@ class SharedALoRA_ViT_timm(nn.Module):
         consolidation_gain_max = 0.0
         absorption_error = 0.0
         coordinate_diagnostics = []
+        recoverability_online_aligned = (
+            self.adaptive_a_strategy == "recoverability"
+            and self.recoverability_stage
+            in ("anchor_realign", "global_budget")
+        )
+        live_wrappers = (
+            self._recoverability_wrappers()
+            if recoverability_online_aligned
+            else []
+        )
         for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
             b = w_b.weight.detach().cpu().float()
             current_a = w_a.weight.detach().cpu().float()
@@ -3786,14 +4266,25 @@ class SharedALoRA_ViT_timm(nn.Module):
                 .float()
                 .reshape(())
             )
-            g_old = (
-                self.aggregate_up[idx]
-                if idx < len(self.aggregate_up)
-                else torch.zeros_like(b)
-            )
+            if recoverability_online_aligned:
+                wrapper = live_wrappers[idx // 2]
+                source = (
+                    wrapper.aggregate_q
+                    if idx % 2 == 0
+                    else wrapper.aggregate_v
+                )
+                g_old = source.detach().cpu().float()
+            else:
+                g_old = (
+                    self.aggregate_up[idx]
+                    if idx < len(self.aggregate_up)
+                    else torch.zeros_like(b)
+                )
             g_history = g_old
-            if self.live_a_coordinate_align and idx < len(
-                self._live_a_previous_shared_a
+            if (
+                not recoverability_online_aligned
+                and self.live_a_coordinate_align
+                and idx < len(self._live_a_previous_shared_a)
             ):
                 g_history, diagnostics = align_live_a_aggregate(
                     g_old,

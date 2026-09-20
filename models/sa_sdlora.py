@@ -174,12 +174,81 @@ def validate_adaptive_a_config(args):
         "pareto_knee",
         "functional_halfspace",
         "function_safe_pareto",
+        "recoverability",
     ):
         raise ValueError(
             "sa_adaptive_a_strategy must be impact_ratio, tangent, "
-            "risk_budgeted, pareto_knee, functional_halfspace, or "
-            "function_safe_pareto"
+            "risk_budgeted, pareto_knee, functional_halfspace, "
+            "function_safe_pareto, or recoverability"
         )
+    if settings["adaptive_a_strategy"] == "recoverability":
+        recoverability = {
+            "recoverability_stage": str(
+                args.get("sa_recoverability_stage", "global_budget")
+            ),
+            "recoverability_budget": float(
+                args.get("sa_recoverability_budget", 0.01)
+            ),
+            "recoverability_step_size": float(
+                args.get("sa_recoverability_step_size", 0.1)
+            ),
+            "recoverability_interval": args.get(
+                "sa_recoverability_interval", 4
+            ),
+            "recoverability_sketch_rank": args.get(
+                "sa_recoverability_sketch_rank", 16
+            ),
+            "recoverability_gammas": tuple(
+                float(value)
+                for value in args.get(
+                    "sa_recoverability_gammas",
+                    [0.0, 0.25, 0.5, 0.75, 1.0],
+                )
+            ),
+        }
+        if recoverability["recoverability_stage"] not in (
+            "exact_risk",
+            "accessibility",
+            "anchor_realign",
+            "global_budget",
+        ):
+            raise ValueError(
+                "sa_recoverability_stage must be exact_risk, accessibility, "
+                "anchor_realign, or global_budget"
+            )
+        if recoverability["recoverability_budget"] < 0:
+            raise ValueError("sa_recoverability_budget must be non-negative")
+        if recoverability["recoverability_step_size"] < 0:
+            raise ValueError("sa_recoverability_step_size must be non-negative")
+        interval = recoverability["recoverability_interval"]
+        if (
+            isinstance(interval, bool)
+            or not isinstance(interval, Integral)
+            or interval <= 0
+        ):
+            raise ValueError("sa_recoverability_interval must be a positive integer")
+        recoverability["recoverability_interval"] = int(interval)
+        sketch_rank = recoverability["recoverability_sketch_rank"]
+        if (
+            isinstance(sketch_rank, bool)
+            or not isinstance(sketch_rank, Integral)
+            or sketch_rank <= 0
+        ):
+            raise ValueError("sa_recoverability_sketch_rank must be a positive integer")
+        recoverability["recoverability_sketch_rank"] = int(sketch_rank)
+        gammas = recoverability["recoverability_gammas"]
+        if (
+            not gammas
+            or gammas != tuple(sorted(set(gammas)))
+            or gammas[0] != 0.0
+            or gammas[-1] != 1.0
+            or any(not 0.0 <= value <= 1.0 for value in gammas)
+        ):
+            raise ValueError(
+                "sa_recoverability_gammas must be sorted unique values in [0, 1] "
+                "including 0 and 1"
+            )
+        settings.update(recoverability)
     if settings["adaptive_a_gate_formula"] not in ("ratio", "squared_ratio"):
         raise ValueError(
             "sa_adaptive_a_gate_formula must be ratio or squared_ratio"
@@ -266,6 +335,7 @@ def validate_adaptive_a_config(args):
             "pareto_knee",
             "functional_halfspace",
             "function_safe_pareto",
+            "recoverability",
         )
         and args.get("optimizer", "sgd").lower() != "sgd"
     ):
@@ -913,6 +983,13 @@ class Learner(SDLoraLearner):
         raw_network = self._raw_network()
         backbone = raw_network.backbone
         strategy = getattr(self, "_sa_adaptive_a_strategy", "impact_ratio")
+        if strategy == "recoverability":
+            step_size = (
+                float(optimizer.param_groups[0]["lr"])
+                if optimizer is not None
+                else 1.0
+            )
+            return backbone.prepare_recoverability_step(step_size=step_size)
         if strategy == "functional_halfspace":
             momentum = (
                 float(optimizer.param_groups[0].get("momentum", 0.0))
@@ -1132,11 +1209,13 @@ class Learner(SDLoraLearner):
         return output["logits"] if isinstance(output, dict) else output
 
     def _after_optimizer_step(self, inputs=None, targets=None, optimizer=None):
+        backbone = self._raw_network().backbone
+        if getattr(self, "_sa_adaptive_a_strategy", None) == "recoverability":
+            backbone.apply_recoverability_step(optimizer)
         pending = getattr(self, "_sa_functional_diagnostic_pending", None)
         if pending is None:
             return None
         self._sa_functional_diagnostic_pending = None
-        backbone = self._raw_network().backbone
         before = pending["state"]
         after = self._snapshot_functional_lora_state(backbone)
         diagnostic_backbone = copy.deepcopy(backbone).eval()
@@ -1537,6 +1616,30 @@ class Learner(SDLoraLearner):
         """Log task-local Adaptive-A aggregates without serializing them."""
         diagnostics = self._raw_network().backbone.adaptive_a_diagnostics()
         if diagnostics is None:
+            return
+        if diagnostics.get("strategy") == "recoverability":
+            logging.info(
+                "[Recoverability-AdaptiveA] task %d: stage=%s observations=%d "
+                "budget=%.6e step_size=%.6e interval=%d sketch_rank=%d "
+                "mean_gamma=%.6f min_gamma=%.6f max_gamma=%.6f "
+                "zero_fraction=%.6f full_fraction=%.6f mean_risk=%.6e "
+                "max_risk=%.6e mean_utility=%.6e",
+                self._cur_task,
+                diagnostics["stage"],
+                diagnostics["observations"],
+                diagnostics["budget"],
+                diagnostics["step_size"],
+                diagnostics["interval"],
+                diagnostics["sketch_rank"],
+                diagnostics["mean_gamma"],
+                diagnostics["min_gamma"],
+                diagnostics["max_gamma"],
+                diagnostics["fraction_zero_gamma"],
+                diagnostics["fraction_full_gamma"],
+                diagnostics["mean_risk"],
+                diagnostics["max_risk"],
+                diagnostics["mean_utility"],
+            )
             return
         if diagnostics.get("strategy") == "functional_halfspace":
             logging.info(

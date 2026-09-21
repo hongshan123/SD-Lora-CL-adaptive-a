@@ -930,3 +930,5 @@
 - 控制变量：统一 prototype classifier、固定 `(A,G)`、`live_a_aggregate_b`、LS coordinate alignment 和 `operator_preserving_absorb`；统一关闭 prototype transport、Dual-B、HBD 与 current-branch normalization。HOEP 的全局历史能量预算固定为 5%。
 - 运行信息：提交 `1b9d28d`；runtime `.runtime_hoep_p3_20260921_1500`；GPU 双卡槽为 `0,1`、`2,3`、`4,5`，共 12 项自动调度。
 - 当前结果：三条 Frozen-A 首批任务已经进入 Task0 且无运行错误。Final、AAA 和 Forgetting 待完整队列结束后统一回填；中途指标不用于选择方法或预算。
+- 中断记录：首轮 runtime `.runtime_hoep_p3_20260921_1500` 因服务器中断终止，没有任何完整 T=10 结果。C100/INR/CUB Frozen-A 分别仅完成 Task0-6、Task0-2、Task0-8；这些中途曲线不得进入最终表格。
+- 重启记录：新 runtime `.runtime_hoep_p3_20260921_164138_no23` 使用提交 `6380f77`，先运行三数据集 HOEP-A，再依次运行 Frozen-A、Live-A、ratio Adaptive-A。仅使用 GPU `0,1`、`4,5`、`6,7`，继续保持双卡每卡 batch64。

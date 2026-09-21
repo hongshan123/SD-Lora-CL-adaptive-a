@@ -1105,3 +1105,6 @@
 - 协议为 T=10、rank10、20 epoch；CIFAR-100/ImageNet-R/CUB-200 分别使用 seed 1993/1995/1。prototype classifier、固定 `(A,G)`、LS alignment 与 operator-preserving absorption 保持一致，关闭 transport、Dual-B、HBD 和 current-branch normalization。
 - runtime 为 `.runtime_hoep_p3_20260921_1500`，tmux session 为 `hoep_p3_20260921`。调度器会在每个双卡槽完成后自动派发下一项。
 - 启动核验：三个实际 JSON 的 `batch_size` 均为 64；三路 Frozen-A 已正常进入 Task0，未出现 Traceback、OOM 或 NCCL 错误。当前尚无完整性能结果。
+- 原 runtime `.runtime_hoep_p3_20260921_1500` 随服务器中断停止：C100/INR/CUB Frozen-A 分别只完整到 Task6/Task2/Task8，均不得作为最终结果；HOEP/Live/ratio 尚未开始。
+- 2026-09-21 16:41 使用提交 `6380f77` 从头启动新队列 `.runtime_hoep_p3_20260921_164138_no23`。方法顺序改为 HOEP-A、Frozen-A、Live-A、ratio Adaptive-A，双卡槽固定为 `0,1`、`4,5`、`6,7`，完全避开 GPU 2、3。
+- 新一轮启动核验：三条 HOEP-A 已进入 Task0；每个实际配置 `batch_size=64`、策略为 `operator_energy_partition`、全局历史能量预算为 0.05，GPU 2、3 无训练进程。

@@ -306,6 +306,6 @@ P3 通过条件：
 - [x] 全量测试通过（378 passed）；
 - [x] 完成两 rank NCCL task-boundary/rebuild smoke；
 - [x] 完成三个真实数据集各 Task 0/1 的两卡 P2 smoke，三组均 status 0、DDP/hash/state/风险上界检查通过；
-- [ ] 完成 P3 三数据集单 seed 训练并与 Frozen/Live/ratio Adaptive-A 配对（已于 2026-09-21 启动；双卡每卡 batch64，12 项自动队列运行中）。
+- [ ] 完成 P3 三数据集单 seed 训练并与 Frozen/Live/ratio Adaptive-A 配对（首轮随服务器中断；已从头重启新方法优先队列，仅使用 0,1/4,5/6,7，双卡每卡 batch64）。
 
 详细审计与数值表见 `hoep_prior_art_implementation_audit.md` 和 `hoep_p2_real_data_smoke_results.md`。

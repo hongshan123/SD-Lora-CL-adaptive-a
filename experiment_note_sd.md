@@ -1088,3 +1088,12 @@
 - 首轮 sanity：C100 两个 bank 的 Task0 Epoch1 均为 `Loss 0.865 / Test 94.10`，说明 scale 冻结差异尚未介入时配对确定性成立；INR Task0 Epoch1 为 `Loss 2.083 / Test 77.63`，CUB 到 Epoch5 为 `Loss 0.321`。四路均无 NaN/Inf/Traceback。
 - 完成后审计：三条 `sa_lora_bank` 都在 Task5 首次前向 OOM，单进程占用约 23.54GiB；共同原因是历史 scale 可训练，使每个历史归一化 B 分支均保留反向图，显存随任务数增长。`frozen_b_bank/C100` 因历史 scale 冻结可完整运行，得到 `82.17/87.959/6.622`。
 - 原 12-run 队列因 fail-fast 停止，Exact-G 与 bounded-G 没有正式结果。后续重跑改成四组双卡槽、每卡 batch64，所有方法保持相同并行协议与有效 batch128；并启用 PyTorch expandable segments 减少碎片风险。
+
+## 2026-09-21 HOEP-A 立项判断
+
+- 观察：旧 Adaptive-A 用一个 scalar gate 同时缩放所有 A 的 normal directions，无法区分历史高能量和低能量坐标；这解释了它容易整体靠近 Frozen 或 Live，而难以稳定超过两个端点。
+- 新假设：对 canonical 历史有效算子做 `C^T C` 谱分解后，只释放低能量方向，可能在同一层内同时实现高能量知识保护与低能量容量复用。其风险预算可直接写成部署算子能量比例。
+- 数学风险：重复特征值中的单个 eigenvector 没有唯一含义；必须按完整特征值簇选择，否则方法仍依赖任意 gauge。训练中的 plastic rows 还必须在 stable rows 的正交补内 retraction，不能只做普通 gradient mask。
+- 新颖性风险：SplitLoRA、LoDA、Geo-LoRA 和 Share 都已覆盖“能量/核心-剩余/共享子空间演化”的宽泛叙事。可保留的差异只可能是固定状态历史部署算子能量、跨层全局预算和 LS recoverability bound 的组合，且必须经过公式级审计。
+- 实验纪律：主预算固定为 5%，不允许针对 CIFAR-100、ImageNet-R、CUB-200 分别挑 epsilon；先离线看已有 G 的谱。如果主预算下多数层 `k=0` 或 `k=r`，直接判定方法退化，不消耗正式训练资源。
+- 关系定位：HOEP-A 是新的候选研究线，不覆盖正在运行的首任务锚定筛选，也不自动替换当前 Frozen/Live/CoordinateStable 结果。只有三数据集同协议与多 seed 门槛通过后才允许升级为论文主线。

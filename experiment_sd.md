@@ -912,3 +912,12 @@
 - 运行协议：三数据集 T=10、rank10、单卡 batch128；GPU 0、1、4、5 动态派发，空闲卡完成一个任务后立即领取下一个。结果待回填。
 - 首次有效运行结果：仅 `frozen_b_bank/C100` 完整结束，Final/AAA/Forgetting 为 `82.17/87.959/6.622`。三条 `sa_lora_bank` 均在进入 Task5 时单卡 OOM；该值可作为独立完成结果，但在 Exact-G/bounded-G 缺失时不能用于方法结论。
 - 重跑修正：四路全部统一为两卡、每卡 batch64（有效 batch128），避免 SA-LoRA 可训练历史 scale 的 O(T) 前向图在单卡 batch128 下超过 24GB；不修改模型、优化器、epoch 或任务顺序。
+
+## 2026-09-21：HOEP-A 研究立项（尚未训练）
+
+- 实验标题：历史有效算子能量驱动的稳定/可塑 A 坐标分区。
+- 尝试方法：先把共享 A canonicalize 为 row-orthonormal basis，并对规范历史系数的 `C^T C` 做谱分解；跨全部 Q/V 分支选择累计能量不超过 5% 的低能量坐标作为可塑集合，其余 A 行在当前任务中固定。任务边界继续使用 LS alignment 和 operator-preserving absorption。
+- 理论依据：在规范坐标中，每个特征值精确等于该方向对部署历史算子 Frobenius 能量的贡献；若只移动被选低能量方向，LS alignment 后不可恢复历史算子能量由所选谱能量之和上界控制。该机制是方向选择，不是旧 Adaptive-A 的全方向 scalar gate。
+- 现有论文支持与风险：SplitLoRA 已按历史梯度奇异值划分 major/minor space；LoDA 已从 projection energy 构造共享/隔离子空间；Geo-LoRA 已做 shared LoRA 的几何 core/slack 演化；Share 已动态维护共享 foundational subspace。故本项目仅把“部署历史算子能量 + 固定 O(1) 状态 + 全局 LS recoverability bound”的组合视为待验证差异。
+- 当前结果：无。此条仅记录预注册设计，禁止在后续汇总中计作性能实验。
+- 下一步：先做 P0 公式级 prior-art 审计和已有 checkpoint 谱诊断；只有谱呈现可用的中间分区，才实现训练路径。

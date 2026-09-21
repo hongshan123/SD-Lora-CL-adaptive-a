@@ -228,3 +228,15 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - `exact_g`：归一化当前分支并用 `normalized_absorb` 折叠到单个 G；应与 `frozen_b_bank` 保持相同算子语义，但持久 LoRA 状态为 O(1)。
 - `bounded_g`：保留当前主方法的 raw current branch 与 `bounded_norm_calibrated_absorb`，用于判断显式边界衰减相对精确折叠是否带来收益。
 - 判定：先比较 `frozen_b_bank` 与 `exact_g` 的 Final/AAA/Forgetting，再比较 `exact_g` 与 `bounded_g`。仅在跨三个数据集有一致价值后扩展多 seed、task length、task order 和 operator coverage 分析。
+
+## 16. HOEP-A：历史算子能量分区（2026-09-21）
+
+- 项目文件：`goal_operator_energy_partition_sd.md`。
+- 核心假设：旧 Adaptive-A 的全方向 scalar gate 过于粗糙；应在 canonical LoRA 坐标中分解部署历史算子 `G A` 的方向能量，只释放满足全局历史能量预算的低风险坐标。
+- 固定状态：每个 Q/V 分支仍只保存 A 与 G；任务内谱、mask 和 anchor 不持久化，除分类头外 active/stored/continual-adaptation state 均对任务数 O(1)。
+- 主预算：跨层统一 `epsilon=0.05`；Task0 正常训练，Task1+ 固定高能量坐标，只在其正交补内更新低能量坐标。
+- 必须保留：task-boundary LS alignment 与 operator-preserving absorption；机制筛选阶段关闭 prototype transport、Dual-B、HBD 与 bounded NormCap。
+- 立项顺序：P0 近邻工作公式审计与现有 G 谱诊断；P1 CPU 数学测试；P2 两任务 smoke；P3 三数据集单 seed；通过后才做 epsilon 敏感性、多 seed 与长序列。
+- 关键验收：三个数据集不低于最佳 Frozen/Live 端点超过 0.30，且至少两个数据集 Final 或 AAA 提升至少 0.30；不得按数据集选择 epsilon。
+- 新颖性边界：不宣称首次提出能量分解或稳定/可塑子空间。候选差异是“直接分解固定状态部署历史算子的规范坐标能量，并给出 LS alignment 后不可恢复能量的全局预算上界”；须正面对照 SplitLoRA、LoDA、Geo-LoRA 与 Share。
+- 当前状态：有条件立项，尚未修改训练代码、尚未产生性能结果，不替换冻结主方法。

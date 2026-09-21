@@ -1086,3 +1086,5 @@
 - 首次调度在模型构造前失败：非 cumulative 的两个 B-bank 仍继承 `sa_cumulative_merge=live_a_aggregate_b`，触发配置校验。未产生训练 epoch 或有效结果。已将 bank 的占位 merge 改为 `gauge`，并令该研究队列遇到首个失败后不再派发新任务；24 项相关回归测试通过。
 - 有效队列已于 2026-09-21 00:34 启动：runtime 为 `.runtime_anchor_subspace_screen_20260921_002825`，scheduler PID `2395517`，单卡槽为 GPU 0/1/4/5。首次四任务是三数据集 `sa_lora_bank` 与 C100 `frozen_b_bank`。
 - 首轮 sanity：C100 两个 bank 的 Task0 Epoch1 均为 `Loss 0.865 / Test 94.10`，说明 scale 冻结差异尚未介入时配对确定性成立；INR Task0 Epoch1 为 `Loss 2.083 / Test 77.63`，CUB 到 Epoch5 为 `Loss 0.321`。四路均无 NaN/Inf/Traceback。
+- 完成后审计：三条 `sa_lora_bank` 都在 Task5 首次前向 OOM，单进程占用约 23.54GiB；共同原因是历史 scale 可训练，使每个历史归一化 B 分支均保留反向图，显存随任务数增长。`frozen_b_bank/C100` 因历史 scale 冻结可完整运行，得到 `82.17/87.959/6.622`。
+- 原 12-run 队列因 fail-fast 停止，Exact-G 与 bounded-G 没有正式结果。后续重跑改成四组双卡槽、每卡 batch64，所有方法保持相同并行协议与有效 batch128；并启用 PyTorch expandable segments 减少碎片风险。

@@ -53,10 +53,12 @@ METHODS = {
 }
 
 
-def build_config(source, method, dataset_key, runtime_root, run_tag, batch_size):
+def build_config(
+    source, method, dataset_key, runtime_root, run_tag, batch_size, world_size
+):
     spec = DATASETS[dataset_key]
-    name = "anchor_{}_{}_seed{}_bs{}_1gpu_{}".format(
-        method, dataset_key, spec["seed"], batch_size, run_tag
+    name = "anchor_{}_{}_seed{}_bs{}_{}gpu_{}".format(
+        method, dataset_key, spec["seed"], batch_size, world_size, run_tag
     )
     config = dict(source)
     for key in list(config):
@@ -66,7 +68,7 @@ def build_config(source, method, dataset_key, runtime_root, run_tag, batch_size)
     config.update(
         {
             "prefix": name,
-            "device": ["0"],
+            "device": [str(index) for index in range(world_size)],
             "seed": [spec["seed"]],
             "filepath": str((runtime_root / "results" / name).resolve()) + "/",
             "batch_size": int(batch_size),
@@ -90,7 +92,7 @@ def build_config(source, method, dataset_key, runtime_root, run_tag, batch_size)
     return name, config
 
 
-def generate_configs(root, runtime_root, run_tag, batch_size=128):
+def generate_configs(root, runtime_root, run_tag, batch_size=128, world_size=1):
     root = Path(root).resolve()
     runtime_root = Path(runtime_root).resolve()
     config_root = runtime_root / "configs"
@@ -101,7 +103,13 @@ def generate_configs(root, runtime_root, run_tag, batch_size=128):
         for dataset_key, spec in DATASETS.items():
             source = json.loads((root / "exps" / spec["source"]).read_text())
             name, config = build_config(
-                source, method, dataset_key, runtime_root, run_tag, batch_size
+                source,
+                method,
+                dataset_key,
+                runtime_root,
+                run_tag,
+                batch_size,
+                world_size,
             )
             config_path = config_root / (name + ".json")
             config_path.write_text(json.dumps(config, indent=4) + "\n")
@@ -123,13 +131,18 @@ def generate_configs(root, runtime_root, run_tag, batch_size=128):
 
 
 def main(argv):
-    if len(argv) not in (4, 5):
+    if len(argv) not in (4, 5, 6):
         raise SystemExit(
             "usage: generate_anchor_subspace_configs.py ROOT RUNTIME_DIR "
-            "RUN_TAG [BATCH_SIZE]"
+            "RUN_TAG [BATCH_SIZE] [WORLD_SIZE]"
         )
     batch_size = int(argv[4]) if len(argv) == 5 else 128
-    manifest = generate_configs(argv[1], argv[2], argv[3], batch_size)
+    if len(argv) == 6:
+        batch_size = int(argv[4])
+    world_size = int(argv[5]) if len(argv) == 6 else 1
+    manifest = generate_configs(
+        argv[1], argv[2], argv[3], batch_size, world_size
+    )
     print("generated {} configs".format(len(manifest)))
 
 

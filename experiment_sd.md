@@ -910,3 +910,5 @@
 - 实现修正：新增默认关闭的 `sa_normalize_current_branch`。开启后 current branch 使用 `s(B/||B||)(A/||A||)x`，与 SA-LoRA 的 separate normalization 一致；`normalized_absorb` 后的历史算子与该 current branch 严格一致。默认关闭保证历史实验语义不变。
 - 对照边界：SA-LoRA 论文使用 Adam，且 ImageNet-R 为 30 epoch；本轮为控制变量采用本项目 SGD/20 epoch，因此结果只能称“同协议结构复现”，不能冒充论文原始数值复现。
 - 运行协议：三数据集 T=10、rank10、单卡 batch128；GPU 0、1、4、5 动态派发，空闲卡完成一个任务后立即领取下一个。结果待回填。
+- 首次有效运行结果：仅 `frozen_b_bank/C100` 完整结束，Final/AAA/Forgetting 为 `82.17/87.959/6.622`。三条 `sa_lora_bank` 均在进入 Task5 时单卡 OOM；该值可作为独立完成结果，但在 Exact-G/bounded-G 缺失时不能用于方法结论。
+- 重跑修正：四路全部统一为两卡、每卡 batch64（有效 batch128），避免 SA-LoRA 可训练历史 scale 的 O(T) 前向图在单卡 batch128 下超过 24GB；不修改模型、优化器、epoch 或任务顺序。

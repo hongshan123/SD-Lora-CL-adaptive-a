@@ -16,8 +16,9 @@ def parse_args():
     parser.add_argument("--project-root", required=True)
     parser.add_argument("--runtime-dir", required=True)
     parser.add_argument("--run-tag", required=True)
-    parser.add_argument("--batch-size", type=int, default=128)
-    parser.add_argument("--gpu-ids", default="0,1,4,5")
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--world-size", type=int, default=2)
+    parser.add_argument("--gpu-pairs", default="0,1;2,3;4,5;6,7")
     parser.add_argument("--resume", action="store_true")
     return parser.parse_args()
 
@@ -26,12 +27,20 @@ def main():
     args = parse_args()
     project_root = Path(args.project_root).resolve()
     runtime_dir = Path(args.runtime_dir).resolve()
-    gpu_slots = tuple(value.strip() for value in args.gpu_ids.split(",") if value.strip())
+    gpu_slots = tuple(
+        value.strip() for value in args.gpu_pairs.split(";") if value.strip()
+    )
     if not gpu_slots:
-        raise SystemExit("at least one GPU ID is required")
+        raise SystemExit("at least one GPU pair is required")
+    if any(len(slot.split(",")) != args.world_size for slot in gpu_slots):
+        raise SystemExit("each GPU pair must contain world-size GPU IDs")
     runtime_dir.mkdir(parents=True, exist_ok=True)
     manifest = generate_configs(
-        project_root, runtime_dir, args.run_tag, batch_size=args.batch_size
+        project_root,
+        runtime_dir,
+        args.run_tag,
+        batch_size=args.batch_size,
+        world_size=args.world_size,
     )
     pending = pending_jobs(project_root, manifest)
     active_runs = active_jobs(project_root, pending)
@@ -61,7 +70,7 @@ def main():
         project_root,
         jobs,
         gpu_slots,
-        1,
+        args.world_size,
         initial_active=active_runs,
         stop_on_failure=True,
     )

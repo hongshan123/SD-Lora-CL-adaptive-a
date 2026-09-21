@@ -47,3 +47,15 @@ def test_anchor_subspace_screening_matrix_is_matched(tmp_path):
         assert bounded_g["sa_cumulative_merge"] == "live_a_aggregate_b"
         assert bounded_g["sa_normalize_current_branch"] is False
         assert bounded_g["sa_live_a_absorb_mode"] == "bounded_norm_calibrated_absorb"
+
+
+def test_anchor_subspace_two_gpu_configs_preserve_effective_batch(tmp_path):
+    manifest = generate_configs(
+        ROOT, tmp_path / "two_gpu", "unit2", batch_size=64, world_size=2
+    )
+    assert len(manifest) == 12
+    for item in manifest:
+        config = json.loads(Path(item["config"]).read_text())
+        assert config["batch_size"] == 64
+        assert config["device"] == ["0", "1"]
+        assert "_bs64_2gpu_" in item["name"]

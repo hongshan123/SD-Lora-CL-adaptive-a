@@ -163,6 +163,7 @@ def run_one(project_root, job, gpu_ids, world_size):
     env["PYTHONUNBUFFERED"] = "1"
     env["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     env["TORCH_DETERMINISTIC"] = "1"
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     command = torchrun_command(world_size, job["config"])
     with log_path.open("w") as stream:
         stream.write(

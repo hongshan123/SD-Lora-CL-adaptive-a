@@ -23,9 +23,9 @@ DATASETS = {
     },
 }
 
-# This order fills three two-GPU slots with Frozen for all datasets first.
-# HOEP, Live, and prior scalar-ratio controls are dispatched as slots free up.
-METHOD_ORDER = ("frozen", "hoep", "live", "ratio")
+# Run the proposed method on all three datasets before dispatching controls.
+# This also makes a restarted queue produce the primary result first.
+METHOD_ORDER = ("hoep", "frozen", "live", "ratio")
 
 
 def _method_settings(method):

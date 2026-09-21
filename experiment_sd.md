@@ -921,3 +921,12 @@
 - 现有论文支持与风险：SplitLoRA 已按历史梯度奇异值划分 major/minor space；LoDA 已从 projection energy 构造共享/隔离子空间；Geo-LoRA 已做 shared LoRA 的几何 core/slack 演化；Share 已动态维护共享 foundational subspace。故本项目仅把“部署历史算子能量 + 固定 O(1) 状态 + 全局 LS recoverability bound”的组合视为待验证差异。
 - 当前结果：无。此条仅记录预注册设计，禁止在后续汇总中计作性能实验。
 - 下一步：先做 P0 公式级 prior-art 审计和已有 checkpoint 谱诊断；只有谱呈现可用的中间分区，才实现训练路径。
+
+## 2026-09-21：HOEP-A P3 三数据集端点配对（运行中）
+
+- 实验标题：HOEP-A 与 Frozen-A、Live-A、ratio Adaptive-A 的同协议单 seed 筛选。
+- 理论依据：P3 检验按历史部署算子能量释放低能量 A 坐标，是否能在不改变固定状态、任务边界对齐和吸收规则的情况下改善 Frozen/Live 两个端点的折中。
+- 配置：CIFAR-100 seed1993、ImageNet-R seed1995、CUB-200 seed1；T=10、rank10、SGD、20 epoch。全部使用双卡 DDP、每卡 batch64，等效 batch128，不使用单卡 batch128。
+- 控制变量：统一 prototype classifier、固定 `(A,G)`、`live_a_aggregate_b`、LS coordinate alignment 和 `operator_preserving_absorb`；统一关闭 prototype transport、Dual-B、HBD 与 current-branch normalization。HOEP 的全局历史能量预算固定为 5%。
+- 运行信息：提交 `1b9d28d`；runtime `.runtime_hoep_p3_20260921_1500`；GPU 双卡槽为 `0,1`、`2,3`、`4,5`，共 12 项自动调度。
+- 当前结果：三条 Frozen-A 首批任务已经进入 Task0 且无运行错误。Final、AAA 和 Forgetting 待完整队列结束后统一回填；中途指标不用于选择方法或预算。

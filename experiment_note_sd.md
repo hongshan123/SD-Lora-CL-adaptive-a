@@ -1097,3 +1097,11 @@
 - 新颖性风险：SplitLoRA、LoDA、Geo-LoRA 和 Share 都已覆盖“能量/核心-剩余/共享子空间演化”的宽泛叙事。可保留的差异只可能是固定状态历史部署算子能量、跨层全局预算和 LS recoverability bound 的组合，且必须经过公式级审计。
 - 实验纪律：主预算固定为 5%，不允许针对 CIFAR-100、ImageNet-R、CUB-200 分别挑 epsilon；先离线看已有 G 的谱。如果主预算下多数层 `k=0` 或 `k=r`，直接判定方法退化，不消耗正式训练资源。
 - 关系定位：HOEP-A 是新的候选研究线，不覆盖正在运行的首任务锚定筛选，也不自动替换当前 Frozen/Live/CoordinateStable 结果。只有三数据集同协议与多 seed 门槛通过后才允许升级为论文主线。
+
+## 2026-09-21 HOEP-A P3 配对实验启动
+
+- 执行代码固定于提交 `1b9d28d`；P3 比较 Frozen-A、HOEP-A、Live-A 和既有 ratio Adaptive-A。
+- 三个数据集均使用双卡 DDP、每卡 `batch_size=64`，等效总 batch 为 128；禁止改成单卡 batch128。首批分别使用 GPU `0,1`、`2,3`、`4,5`。
+- 协议为 T=10、rank10、20 epoch；CIFAR-100/ImageNet-R/CUB-200 分别使用 seed 1993/1995/1。prototype classifier、固定 `(A,G)`、LS alignment 与 operator-preserving absorption 保持一致，关闭 transport、Dual-B、HBD 和 current-branch normalization。
+- runtime 为 `.runtime_hoep_p3_20260921_1500`，tmux session 为 `hoep_p3_20260921`。调度器会在每个双卡槽完成后自动派发下一项。
+- 启动核验：三个实际 JSON 的 `batch_size` 均为 64；三路 Frozen-A 已正常进入 Task0，未出现 Traceback、OOM 或 NCCL 错误。当前尚无完整性能结果。

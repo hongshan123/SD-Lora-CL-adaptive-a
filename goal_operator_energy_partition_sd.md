@@ -305,7 +305,7 @@ P3 通过条件：
 - [x] 验证 checkpoint 重建输出与保存的 `(A,G)` 算子一致，且持久适配状态 numel 不随任务增长；
 - [x] 全量测试通过（378 passed）；
 - [x] 完成两 rank NCCL task-boundary/rebuild smoke；
-- [ ] 完成三个真实数据集各 Task 0/1 的 P2 smoke；
+- [x] 完成三个真实数据集各 Task 0/1 的两卡 P2 smoke，三组均 status 0、DDP/hash/state/风险上界检查通过；
 - [ ] 完成 P3 三数据集单 seed 训练并与 Frozen/Live/ratio Adaptive-A 配对。
 
-详细审计与数值表见 `hoep_prior_art_implementation_audit.md`。
+详细审计与数值表见 `hoep_prior_art_implementation_audit.md` 和 `hoep_p2_real_data_smoke_results.md`。

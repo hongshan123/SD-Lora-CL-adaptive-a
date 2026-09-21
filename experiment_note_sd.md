@@ -1108,3 +1108,4 @@
 - 原 runtime `.runtime_hoep_p3_20260921_1500` 随服务器中断停止：C100/INR/CUB Frozen-A 分别只完整到 Task6/Task2/Task8，均不得作为最终结果；HOEP/Live/ratio 尚未开始。
 - 2026-09-21 16:41 使用提交 `6380f77` 从头启动新队列 `.runtime_hoep_p3_20260921_164138_no23`。方法顺序改为 HOEP-A、Frozen-A、Live-A、ratio Adaptive-A，双卡槽固定为 `0,1`、`4,5`、`6,7`，完全避开 GPU 2、3。
 - 新一轮启动核验：三条 HOEP-A 已进入 Task0；每个实际配置 `batch_size=64`、策略为 `operator_energy_partition`、全局历史能量预算为 0.05，GPU 2、3 无训练进程。
+- `nohup` 父调度器被执行环境回收但三条 detached torchrun 保持运行；随后由 tmux `hoep_p3_no23_20260921` 以 `--resume` 无重复接管，核验为 `active=3/pending=9`。后续任务将继续按空闲双卡槽自动派发。

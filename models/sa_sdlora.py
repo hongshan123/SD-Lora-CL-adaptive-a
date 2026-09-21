@@ -147,6 +147,10 @@ def validate_adaptive_a_config(args):
         "adaptive_a_risk_budget_mode": str(
             args.get("sa_adaptive_a_risk_budget_mode", "absolute")
         ),
+        "hoep_energy_budget": float(args.get("sa_hoep_energy_budget", 0.05)),
+        "hoep_eigenvalue_rtol": float(
+            args.get("sa_hoep_eigenvalue_rtol", 1e-6)
+        ),
     }
     functional_conflict_tol = float(args.get("sa_functional_conflict_tol", 1e-12))
     functional_normal_tol = float(args.get("sa_functional_normal_tol", 1e-12))
@@ -175,11 +179,22 @@ def validate_adaptive_a_config(args):
         "functional_halfspace",
         "function_safe_pareto",
         "recoverability",
+        "operator_energy_partition",
     ):
         raise ValueError(
             "sa_adaptive_a_strategy must be impact_ratio, tangent, "
             "risk_budgeted, pareto_knee, functional_halfspace, "
-            "function_safe_pareto, or recoverability"
+            "function_safe_pareto, recoverability, or "
+            "operator_energy_partition"
+        )
+    if not 0.0 <= settings["hoep_energy_budget"] <= 1.0:
+        raise ValueError("sa_hoep_energy_budget must be in [0, 1]")
+    if (
+        not math.isfinite(settings["hoep_eigenvalue_rtol"])
+        or settings["hoep_eigenvalue_rtol"] < 0
+    ):
+        raise ValueError(
+            "sa_hoep_eigenvalue_rtol must be finite and non-negative"
         )
     if settings["adaptive_a_strategy"] == "recoverability":
         recoverability = {
@@ -336,10 +351,24 @@ def validate_adaptive_a_config(args):
             "functional_halfspace",
             "function_safe_pareto",
             "recoverability",
+            "operator_energy_partition",
         )
         and args.get("optimizer", "sgd").lower() != "sgd"
     ):
         raise ValueError("functional and discrete Adaptive-A strategies require SGD")
+    if settings["adaptive_a_strategy"] == "operator_energy_partition":
+        if args.get(
+            "sa_live_a_absorb_mode", "operator_preserving_absorb"
+        ) != "operator_preserving_absorb":
+            raise ValueError(
+                "operator_energy_partition requires "
+                "sa_live_a_absorb_mode=operator_preserving_absorb"
+            )
+        if args.get("sa_normalize_current_branch", False):
+            raise ValueError(
+                "operator_energy_partition requires "
+                "sa_normalize_current_branch=false"
+            )
     return settings
 
 
@@ -993,6 +1022,8 @@ class Learner(SDLoraLearner):
                 else 1.0
             )
             return backbone.prepare_recoverability_step(step_size=step_size)
+        if strategy == "operator_energy_partition":
+            return backbone.apply_operator_energy_partition_gradients(optimizer)
         if strategy == "functional_halfspace":
             momentum = (
                 float(optimizer.param_groups[0].get("momentum", 0.0))
@@ -1215,6 +1246,11 @@ class Learner(SDLoraLearner):
         backbone = self._raw_network().backbone
         if getattr(self, "_sa_adaptive_a_strategy", None) == "recoverability":
             backbone.apply_recoverability_step(optimizer)
+        elif (
+            getattr(self, "_sa_adaptive_a_strategy", None)
+            == "operator_energy_partition"
+        ):
+            backbone.apply_operator_energy_partition_step(optimizer)
         pending = getattr(self, "_sa_functional_diagnostic_pending", None)
         if pending is None:
             return None
@@ -1619,6 +1655,25 @@ class Learner(SDLoraLearner):
         """Log task-local Adaptive-A aggregates without serializing them."""
         diagnostics = self._raw_network().backbone.adaptive_a_diagnostics()
         if diagnostics is None:
+            return
+        if diagnostics.get("strategy") == "operator_energy_partition":
+            logging.info(
+                "[HOEP-A] task %d: budget=%.6f selected=%d/%d "
+                "energy_ratio=%.6e steps=%d init_equiv=%.6e "
+                "orth_err=%.6e rowspace_err=%.6e hist_equiv=%.6e "
+                "current_equiv=%.6e",
+                self._cur_task,
+                diagnostics["energy_budget"],
+                diagnostics["selected_directions"],
+                diagnostics["total_directions"],
+                diagnostics["selected_energy_ratio"],
+                diagnostics["steps"],
+                diagnostics["max_initial_operator_error"],
+                diagnostics["max_orthogonality_error"],
+                diagnostics["max_rowspace_reconstruction_error"],
+                diagnostics["max_historical_operator_error"],
+                diagnostics["max_current_operator_error"],
+            )
             return
         if diagnostics.get("strategy") == "recoverability":
             logging.info(
@@ -2042,6 +2097,31 @@ class Learner(SDLoraLearner):
                                     ],
                                     coordinate_stats["max_condition"],
                                 )
+                                if (
+                                    coordinate_stats.get(
+                                        "predicted_energy_budget"
+                                    )
+                                    is not None
+                                ):
+                                    logging.info(
+                                        "[HOEP-A] boundary task %d: "
+                                        "global_squared_residual=%.6e "
+                                        "predicted_budget=%.6e within_bound=%s",
+                                        self._cur_task,
+                                        coordinate_stats[
+                                            "global_squared_residual_ratio"
+                                        ],
+                                        coordinate_stats[
+                                            "predicted_energy_budget"
+                                        ],
+                                        coordinate_stats[
+                                            "global_squared_residual_ratio"
+                                        ]
+                                        <= coordinate_stats[
+                                            "predicted_energy_budget"
+                                        ]
+                                        + 1e-6,
+                                    )
                         elif backbone.cumulative_merge == "union_svd":
                             trunc_error = getattr(
                                 backbone,

@@ -110,6 +110,10 @@ def get_backbone(args, pretrained=False):
                     "sa_recoverability_gammas",
                     (0.0, 0.25, 0.5, 0.75, 1.0),
                 ),
+                hoep_energy_budget=args.get("sa_hoep_energy_budget", 0.05),
+                hoep_eigenvalue_rtol=args.get(
+                    "sa_hoep_eigenvalue_rtol", 1e-6
+                ),
                 resume=args.get("sa_resume", False),
             )
         else:

@@ -1414,6 +1414,8 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
         "adaptive_a_strategy": "impact_ratio",
         "adaptive_a_risk_budget": 0.05,
         "adaptive_a_risk_budget_mode": "absolute",
+        "hoep_energy_budget": 0.05,
+        "hoep_eigenvalue_rtol": 1e-6,
     }
 
     monkeypatch.setattr(
@@ -1439,6 +1441,8 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
             "sa_adaptive_a_strategy": "risk_budgeted",
             "sa_adaptive_a_risk_budget": 0.025,
             "sa_adaptive_a_risk_budget_mode": "relative",
+            "sa_hoep_energy_budget": 0.075,
+            "sa_hoep_eigenvalue_rtol": 1e-5,
         }
     )
 
@@ -1451,6 +1455,8 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
     assert backbone.adaptive_a_strategy == "risk_budgeted"
     assert backbone.adaptive_a_risk_budget == pytest.approx(0.025)
     assert backbone.adaptive_a_risk_budget_mode == "relative"
+    assert backbone.hoep_energy_budget == pytest.approx(0.075)
+    assert backbone.hoep_eigenvalue_rtol == pytest.approx(1e-5)
 
 
 def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
@@ -1477,6 +1483,8 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
         "sa_adaptive_a_strategy": "risk_budgeted",
         "sa_adaptive_a_risk_budget": 0.025,
         "sa_adaptive_a_risk_budget_mode": "relative",
+        "sa_hoep_energy_budget": 0.075,
+        "sa_hoep_eigenvalue_rtol": 1e-5,
         "sa_train_a_all_tasks": True,
         "sa_cumulative_state": True,
         "sa_cumulative_merge": "live_a_aggregate_b",
@@ -1502,6 +1510,8 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
             "adaptive_a_strategy",
             "adaptive_a_risk_budget",
             "adaptive_a_risk_budget_mode",
+            "hoep_energy_budget",
+            "hoep_eigenvalue_rtol",
         )
     } == {
         "adaptive_a_enabled": True,
@@ -1513,6 +1523,8 @@ def test_direct_shared_a_constructor_forwards_adaptive_a_settings(monkeypatch):
         "adaptive_a_strategy": "risk_budgeted",
         "adaptive_a_risk_budget": 0.025,
         "adaptive_a_risk_budget_mode": "relative",
+        "hoep_energy_budget": 0.075,
+        "hoep_eigenvalue_rtol": 1e-5,
     }
 
 

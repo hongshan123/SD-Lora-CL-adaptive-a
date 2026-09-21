@@ -292,3 +292,20 @@ P3 通过条件：
 - LoDA, arXiv 2026: https://arxiv.org/abs/2603.00191
 - Share, arXiv 2026: https://arxiv.org/abs/2602.06043
 - Geo-LoRA, arXiv 2026: https://arxiv.org/abs/2608.26960
+
+## 10. 实施进度（2026-09-21）
+
+- [x] 完成 SplitLoRA、LoDA、Share 官方代码和 Geo-LoRA 公式审计；
+- [x] 完成三个既有 T=10 checkpoint 的 P0 最终态谱诊断；
+- [x] 5% 预算下 CIFAR-100、ImageNet-R、CUB-200 的 mixed 分支比例分别为 87.5%、70.8%、58.3%，通过首项 Go 条件；
+- [x] 完成 HOEP-A 数学内核、训练钩子、SGD 状态变换和固定状态集成；
+- [x] 完成三数据集单 seed、关闭 transport/Dual-B/HBD/NormCap 的机制筛选配置；
+- [x] 新增谱诊断脚本与 task-boundary/optimizer-step 单元测试；
+- [x] 补充 LS residual 上界和简并谱任意旋转不变测试；
+- [x] 验证 checkpoint 重建输出与保存的 `(A,G)` 算子一致，且持久适配状态 numel 不随任务增长；
+- [x] 全量测试通过（378 passed）；
+- [x] 完成两 rank NCCL task-boundary/rebuild smoke；
+- [ ] 完成三个真实数据集各 Task 0/1 的 P2 smoke；
+- [ ] 完成 P3 三数据集单 seed 训练并与 Frozen/Live/ratio Adaptive-A 配对。
+
+详细审计与数值表见 `hoep_prior_art_implementation_audit.md`。

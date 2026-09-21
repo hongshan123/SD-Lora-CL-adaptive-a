@@ -27,6 +27,14 @@ from backbone.coordinate_stability import align_live_a_aggregate
 from backbone.cuo_lowrank import row_orthonormal_projection, solve_projected_cuo
 from backbone.linears import SimpleLinear
 from backbone.lora import ParameterWrapper
+from backbone.operator_energy_partition import (
+    canonicalize_operator_coordinates,
+    historical_energy_coordinates,
+    project_partition_gradient,
+    retract_partitioned_coordinates,
+    rotate_operator_coordinates,
+    select_global_low_energy_partition,
+)
 from backbone.recoverability import (
     accessibility_candidates,
     accessibility_energy,
@@ -1753,6 +1761,8 @@ class SharedALoRA_ViT_timm(nn.Module):
         recoverability_interval=4,
         recoverability_sketch_rank=16,
         recoverability_gammas=(0.0, 0.25, 0.5, 0.75, 1.0),
+        hoep_energy_budget=0.05,
+        hoep_eigenvalue_rtol=1e-6,
         functional_conflict_tol=1e-12,
         functional_conflict_cosine=0.05,
         functional_normal_tol=1e-12,
@@ -1841,6 +1851,8 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.recoverability_gammas = tuple(
             float(value) for value in recoverability_gammas
         )
+        self.hoep_energy_budget = float(hoep_energy_budget)
+        self.hoep_eigenvalue_rtol = float(hoep_eigenvalue_rtol)
         self.functional_conflict_tol = float(functional_conflict_tol)
         self.functional_conflict_cosine = float(functional_conflict_cosine)
         self.functional_normal_tol = float(functional_normal_tol)
@@ -1856,12 +1868,21 @@ class SharedALoRA_ViT_timm(nn.Module):
             "functional_halfspace",
             "function_safe_pareto",
             "recoverability",
+            "operator_energy_partition",
         ):
             raise ValueError(
                 "sa_adaptive_a_strategy must be impact_ratio, tangent, "
                 "risk_budgeted, pareto_knee, functional_halfspace, "
-                "function_safe_pareto, or recoverability"
+                "function_safe_pareto, recoverability, or "
+                "operator_energy_partition"
             )
+        if not 0.0 <= self.hoep_energy_budget <= 1.0:
+            raise ValueError("hoep_energy_budget must be in [0, 1]")
+        if (
+            not math.isfinite(self.hoep_eigenvalue_rtol)
+            or self.hoep_eigenvalue_rtol < 0
+        ):
+            raise ValueError("hoep_eigenvalue_rtol must be finite and non-negative")
         if self.recoverability_stage not in (
             "exact_risk",
             "accessibility",
@@ -2290,6 +2311,16 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._recoverability_pending_bases = None
         self._recoverability_observations = []
         self._recoverability_exact_b_warmup_checked = False
+        self._hoep_plastic_masks = []
+        self._hoep_anchor_a = []
+        self._hoep_partition_diagnostics = None
+        self._hoep_step_count = 0
+        self._hoep_step_maxima = {
+            "max_orthogonality_error": 0.0,
+            "max_rowspace_reconstruction_error": 0.0,
+            "max_historical_operator_error": 0.0,
+            "max_current_operator_error": 0.0,
+        }
 
         scaling_factor = nn.Parameter(torch.Tensor([0.8]))
         self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
@@ -2504,8 +2535,16 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.lora_vit = vit_model
         self.lora_vit.head = nn.Identity()
         self.out_dim = 768
-        if self.adaptive_a_strategy == "recoverability":
+        if (
+            self.adaptive_a_enabled
+            and self.adaptive_a_strategy == "recoverability"
+        ):
             self._initialize_recoverability_state()
+        elif (
+            self.adaptive_a_enabled
+            and self.adaptive_a_strategy == "operator_energy_partition"
+        ):
+            self._initialize_operator_energy_partition()
 
     def _recoverability_wrappers(self):
         wrappers = [
@@ -2554,6 +2593,277 @@ class SharedALoRA_ViT_timm(nn.Module):
                 module.weight.detach().cpu().float().clone()
                 for module in self.w_As
             ]
+
+    def _initialize_operator_energy_partition(self):
+        """Canonicalize, diagonalize historical energy, and allocate plastic rows."""
+        if self.task_id == 0:
+            self._hoep_partition_diagnostics = {
+                "strategy": "operator_energy_partition",
+                "task_zero_skipped": True,
+                "energy_budget": self.hoep_energy_budget,
+                "selected_directions": self.rank * len(self.w_As),
+                "total_directions": self.rank * len(self.w_As),
+                "selected_energy_ratio": 0.0,
+                "max_initial_operator_error": 0.0,
+            }
+            return
+
+        wrappers = self._recoverability_wrappers()
+        branches = []
+        spectra = []
+        max_operator_error = 0.0
+        with torch.no_grad():
+            for wrapper in wrappers:
+                for a_module, b_module, aggregate in (
+                    (wrapper.a_q, wrapper.b_q, wrapper.aggregate_q),
+                    (wrapper.a_v, wrapper.b_v, wrapper.aggregate_v),
+                ):
+                    old_a = a_module.weight.detach().clone()
+                    old_b = b_module.weight.detach().clone()
+                    old_g = aggregate.detach().clone()
+                    old_norm = torch.linalg.vector_norm(old_a).clamp_min(
+                        self.adaptive_a_eps
+                    )
+                    canonical_a, canonical_g, canonical_b = (
+                        canonicalize_operator_coordinates(
+                            old_a,
+                            old_g.to(old_a),
+                            old_b,
+                            self.adaptive_a_eps,
+                        )
+                    )
+                    eigenvalues, eigenvectors = historical_energy_coordinates(
+                        canonical_g, canonical_a, self.adaptive_a_eps
+                    )
+                    rotated_a, rotated_g, rotated_b = rotate_operator_coordinates(
+                        canonical_a,
+                        canonical_g,
+                        canonical_b,
+                        eigenvectors,
+                    )
+                    historical_before = old_g.to(old_a) @ old_a / old_norm
+                    historical_after = (
+                        rotated_g.to(old_a)
+                        @ rotated_a
+                        / torch.linalg.vector_norm(rotated_a).clamp_min(
+                            self.adaptive_a_eps
+                        )
+                    )
+                    current_before = old_b @ old_a
+                    current_after = rotated_b @ rotated_a
+                    historical_error = torch.linalg.matrix_norm(
+                        historical_after - historical_before
+                    ) / torch.linalg.matrix_norm(historical_before).clamp_min(
+                        self.adaptive_a_eps
+                    )
+                    current_error = torch.linalg.matrix_norm(
+                        current_after - current_before
+                    ) / torch.linalg.matrix_norm(current_before).clamp_min(
+                        self.adaptive_a_eps
+                    )
+                    max_operator_error = max(
+                        max_operator_error,
+                        float(historical_error),
+                        float(current_error),
+                    )
+                    branches.append(
+                        (
+                            a_module,
+                            b_module,
+                            aggregate,
+                            rotated_a,
+                            rotated_b,
+                            rotated_g,
+                        )
+                    )
+                    spectra.append(eigenvalues)
+
+            partition = select_global_low_energy_partition(
+                spectra,
+                self.hoep_energy_budget,
+                self.hoep_eigenvalue_rtol,
+                self.adaptive_a_eps,
+            )
+            canonical_aggregate = []
+            self._hoep_plastic_masks = []
+            self._hoep_anchor_a = []
+            for branch, plastic_mask in zip(branches, partition.plastic_masks):
+                (
+                    a_module,
+                    b_module,
+                    aggregate,
+                    rotated_a,
+                    rotated_b,
+                    rotated_g,
+                ) = branch
+                a_module.weight.copy_(rotated_a)
+                b_module.weight.copy_(rotated_b)
+                aggregate.copy_(rotated_g.to(aggregate))
+                self._hoep_plastic_masks.append(
+                    plastic_mask.to(device=a_module.weight.device)
+                )
+                self._hoep_anchor_a.append(rotated_a.detach().clone())
+                canonical_aggregate.append(
+                    rotated_g.detach().cpu().float().clone()
+                )
+
+            self.aggregate_up = canonical_aggregate
+            self._live_a_previous_shared_a = [
+                module.weight.detach().cpu().float().clone()
+                for module in self.w_As
+            ]
+            selected_ratio = (
+                partition.selected_energy / partition.total_energy
+                if partition.total_energy > self.adaptive_a_eps
+                else 0.0
+            )
+            self._hoep_partition_diagnostics = {
+                "strategy": "operator_energy_partition",
+                "task_zero_skipped": False,
+                "energy_budget": self.hoep_energy_budget,
+                "total_energy": partition.total_energy,
+                "selected_energy": partition.selected_energy,
+                "budget_energy": partition.budget_energy,
+                "selected_energy_ratio": selected_ratio,
+                "selected_directions": partition.selected_directions,
+                "total_directions": partition.total_directions,
+                "tie_groups": partition.tie_groups,
+                "max_initial_operator_error": max_operator_error,
+            }
+
+    def apply_operator_energy_partition_gradients(self, optimizer=None):
+        """Restrict shared-A gradients to the selected low-energy rows."""
+        if self.adaptive_a_strategy != "operator_energy_partition":
+            return None
+        if self.task_id == 0:
+            return {"skipped": True, "reason": "task_zero"}
+        if len(self._hoep_plastic_masks) != len(self.w_As):
+            raise RuntimeError("operator-energy partition was not initialized")
+        with torch.no_grad():
+            for module, plastic_mask in zip(
+                self.w_As, self._hoep_plastic_masks
+            ):
+                if module.weight.grad is None:
+                    continue
+                projected_gradient = project_partition_gradient(
+                    module.weight.grad,
+                    module.weight,
+                    plastic_mask,
+                )
+                # torch.optim.SGD adds coupled L2 decay after this hook.  A is
+                # a row-orthonormal manifold variable for t>0, so its radial
+                # decay must be cancelled rather than transferred into B by
+                # the subsequent operator-preserving reparameterization.
+                weight_decay = 0.0
+                if optimizer is not None:
+                    matching_groups = [
+                        group
+                        for group in optimizer.param_groups
+                        if any(
+                            parameter is module.weight
+                            for parameter in group["params"]
+                        )
+                    ]
+                    if len(matching_groups) != 1:
+                        raise RuntimeError(
+                            "shared-A parameter must belong to exactly one "
+                            "optimizer group"
+                        )
+                    weight_decay = float(
+                        matching_groups[0].get("weight_decay", 0.0)
+                    )
+                module.weight.grad.copy_(
+                    projected_gradient - weight_decay * module.weight
+                )
+                if optimizer is not None:
+                    momentum = optimizer.state.get(module.weight, {}).get(
+                        "momentum_buffer"
+                    )
+                    if momentum is not None:
+                        momentum.copy_(
+                            project_partition_gradient(
+                                momentum, module.weight, plastic_mask
+                            )
+                        )
+        return {"skipped": False}
+
+    def apply_operator_energy_partition_step(self, optimizer=None):
+        """Retract the partitioned basis and preserve both branch operators."""
+        if self.adaptive_a_strategy != "operator_energy_partition":
+            return None
+        if self.task_id == 0:
+            return {"skipped": True, "reason": "task_zero"}
+        wrappers = self._recoverability_wrappers()
+        branches = [
+            branch
+            for wrapper in wrappers
+            for branch in (
+                (wrapper.a_q, wrapper.b_q, wrapper.aggregate_q),
+                (wrapper.a_v, wrapper.b_v, wrapper.aggregate_v),
+            )
+        ]
+        step_stats = []
+        with torch.no_grad():
+            for index, ((a_module, b_module, aggregate), mask, anchor) in enumerate(
+                zip(branches, self._hoep_plastic_masks, self._hoep_anchor_a)
+            ):
+                new_a, new_g, new_b, coordinate_map, diagnostics = (
+                    retract_partitioned_coordinates(
+                        a_module.weight,
+                        anchor,
+                        aggregate,
+                        b_module.weight,
+                        mask,
+                        self.adaptive_a_eps,
+                    )
+                )
+                a_module.weight.copy_(new_a)
+                b_module.weight.copy_(new_b)
+                aggregate.copy_(new_g)
+                diagnostics["branch"] = index
+                diagnostics["plastic_directions"] = int(mask.sum())
+                step_stats.append(diagnostics)
+                if optimizer is None:
+                    continue
+                a_momentum = optimizer.state.get(a_module.weight, {}).get(
+                    "momentum_buffer"
+                )
+                if a_momentum is not None:
+                    a_momentum.copy_(
+                        project_partition_gradient(a_momentum, new_a, mask)
+                    )
+                b_momentum = optimizer.state.get(b_module.weight, {}).get(
+                    "momentum_buffer"
+                )
+                if b_momentum is not None:
+                    b_momentum.copy_(b_momentum @ coordinate_map)
+        summary = {
+            "max_orthogonality_error": max(
+                (item["orthogonality_error"] for item in step_stats),
+                default=0.0,
+            ),
+            "max_rowspace_reconstruction_error": max(
+                (
+                    item["rowspace_reconstruction_error"]
+                    for item in step_stats
+                ),
+                default=0.0,
+            ),
+            "max_historical_operator_error": max(
+                (item["historical_operator_error"] for item in step_stats),
+                default=0.0,
+            ),
+            "max_current_operator_error": max(
+                (item["current_operator_error"] for item in step_stats),
+                default=0.0,
+            ),
+        }
+        self._hoep_step_count += 1
+        for key, value in summary.items():
+            self._hoep_step_maxima[key] = max(
+                self._hoep_step_maxima[key], value
+            )
+        return summary
 
     @staticmethod
     def _distributed_average_tensors(tensors):
@@ -3585,6 +3895,13 @@ class SharedALoRA_ViT_timm(nn.Module):
 
     def adaptive_a_diagnostics(self) -> dict | None:
         """Return aggregate task-local Adaptive-A gate diagnostics."""
+        if self.adaptive_a_strategy == "operator_energy_partition":
+            if self._hoep_partition_diagnostics is None:
+                return None
+            diagnostics = dict(self._hoep_partition_diagnostics)
+            diagnostics["steps"] = self._hoep_step_count
+            diagnostics.update(self._hoep_step_maxima)
+            return diagnostics
         if self.adaptive_a_strategy == "recoverability":
             observations = self._recoverability_observations
             if not observations:
@@ -4364,6 +4681,25 @@ class SharedALoRA_ViT_timm(nn.Module):
                     self._live_a_previous_shared_a[idx],
                     current_a,
                 )
+                if self.adaptive_a_strategy == "operator_energy_partition":
+                    old_down = self._live_a_previous_shared_a[idx].double()
+                    old_down = old_down / (
+                        torch.linalg.vector_norm(old_down)
+                        + self.adaptive_a_eps
+                    )
+                    new_down = current_a.double()
+                    new_down = new_down / (
+                        torch.linalg.vector_norm(new_down)
+                        + self.adaptive_a_eps
+                    )
+                    old_operator = g_old.double() @ old_down
+                    aligned_operator = g_history.double() @ new_down
+                    diagnostics["old_operator_energy"] = float(
+                        old_operator.square().sum()
+                    )
+                    diagnostics["residual_energy"] = float(
+                        (aligned_operator - old_operator).square().sum()
+                    )
                 coordinate_diagnostics.append(diagnostics)
             current_up, absorption = absorb_live_a_current_projection(
                 current_a,
@@ -4407,6 +4743,14 @@ class SharedALoRA_ViT_timm(nn.Module):
             "absorb_mode": self.live_a_absorb_mode,
         }
         if coordinate_diagnostics:
+            old_operator_energy = sum(
+                item.get("old_operator_energy", 0.0)
+                for item in coordinate_diagnostics
+            )
+            residual_energy = sum(
+                item.get("residual_energy", 0.0)
+                for item in coordinate_diagnostics
+            )
             self._last_live_a_coordinate_diagnostics = {
                 "branches": len(coordinate_diagnostics),
                 "before_relative_error": sum(
@@ -4422,6 +4766,16 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "max_condition": max(
                     item["condition"] for item in coordinate_diagnostics
                 ),
+                "global_squared_residual_ratio": (
+                    residual_energy
+                    / max(old_operator_energy, self.adaptive_a_eps)
+                ),
+                "predicted_energy_budget": (
+                    self.hoep_energy_budget
+                    if self.adaptive_a_strategy
+                    == "operator_energy_partition"
+                    else None
+                ),
             }
         else:
             self._last_live_a_coordinate_diagnostics = {
@@ -4429,6 +4783,13 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "before_relative_error": 0.0,
                 "after_relative_error": 0.0,
                 "max_condition": 0.0,
+                "global_squared_residual_ratio": 0.0,
+                "predicted_energy_budget": (
+                    self.hoep_energy_budget
+                    if self.adaptive_a_strategy
+                    == "operator_energy_partition"
+                    else None
+                ),
             }
         self._last_saved_live_a_aggregate = [
             tensor.detach().clone() for tensor in aggregate_up

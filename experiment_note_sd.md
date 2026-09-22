@@ -1130,3 +1130,6 @@
 - 2026-09-22 21:15：INR 在 GPU `6,7` 完整结束，Final/AAA/Forgetting 为 `78.92/82.181/7.182`。三数据集 artifact 均含 Task0--9，P1 自动分析器六项检查全部通过，决策为 GO。
 - GO 的含义仅是正式部署实验值得运行：三个数据集的风险约束和 Fisher/uniform 候选差异都非空，median-of-medians Fisher distortion 为 `0.07349`。P1 实际部署仍是 additive，尚无 SBGC 性能收益证据。
 - 早期 transition 的 Fisher distortion 仍高达约 `0.45--0.50`；若 P2 失败，首要怀疑是固定 5% 预算过度削弱前几任务的 current update，而不是求解器未生效。禁止在看到 P2 前调整数据集专属预算。
+- 2026-09-22 21:37：P2 路线锁定为严格固定预算验证。新增 runtime diagnostics 仅记录数据 pass、双候选 solver、完整边界时间和 CUDA 峰值，不改变 checkpoint、RNG 或求解分支；focused `35 passed`，完整回归最终为 `436 passed`。
+- 九份 P2 配置已冻结：Fisher/uniform 仅在 metric、实验身份和输出目录上不同；CUO 三数据集在当前 commit 重跑。GPU 2、3 明确排除，三组双卡均处于空闲状态。
+- 科学判断保持克制：P1 的 GO 只证明约束与 Fisher 差异非空。C100 全序列 distortion 中位数 `0.10575` 已略超 10%，Task1 三数据集约 `0.45--0.50`，因此 P2 最可能暴露的是早期塑性损失；在完整结果前不预防性修正。

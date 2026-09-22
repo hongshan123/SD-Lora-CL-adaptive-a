@@ -892,6 +892,17 @@
 - 验证：CPU 回归 `74 passed`；两卡 Task0/1 合成 smoke 通过，两个 rank 的 P/H/C 哈希一致，仅写出 `sa_state.pt` 与 `sa_merged_lora.pt`，无 per-task B 文件。该 smoke 仅验证实现和分布式状态，不代表性能结果。
 - 运行：`run_cuo_lowrank_r10_3datasets_2gpu.sh` 使用两组 GPU 并行运行 CIFAR-100 与 ImageNet-R，CIFAR-100 完成后复用该卡对运行 CUB-200；正式 Final/AAA/Forgetting 尚未产生，禁止把本条视为效果结论。
 
+## 2026-09-22：SBGC P2 严格正式部署验证
+
+- 实验标题：固定 5% per-transition 历史响应风险下的 uniform/Fisher G consolidation。
+- 目的：验证 P1 中非空的风险约束与 diagonal Fisher 差异能否转化为 Final、AAA 或 Forgetting 收益，而不是继续依赖 shadow 候选诊断。
+- 方法矩阵：Frozen-P additive、CUO-lowrank、uniform-budget G、Fisher-SBGC。Frozen-P 复用 P1 实际部署结果，其余三路在当前提交重跑。
+- 固定协议：CIFAR-100 seed1993、ImageNet-R seed1995、CUB-200 seed1；T=10、rank10、20 epoch、双卡每卡 batch64、prototype classifier。关闭 transport、Dual-B、HBD、NormCap、Adaptive-A 和 current-branch normalization。
+- 调度：GPU `0,1`、`4,5`、`6,7` 分别绑定 C100、INR、CUB；各数据集 Fisher→uniform→CUO 串行。入口为 `run_sbgc_p2_strict_3datasets_2gpu.sh`，全部 torchrun 使用 nohup，自动每 30 分钟记录状态。
+- 诊断：每任务记录 calibration、solver、boundary wall time，CUDA peak/additional peak memory，以及逐分支风险、distortion、eta、sensitivity CV 和候选差异。诊断不进入 checkpoint 或算法判断。
+- 验收：风险 `<=0.050001`；三数据集 Final/AAA 均距最佳 Frozen/CUO 不超过 `0.30`；至少两个数据集有 Final 或 AAA 提升 `0.30`；Forgetting 不高于两基线最小值 `0.50` 以上。
+- 禁止项：P2 完成前不测试 `0.01/0.10`，不加入 warm-up，不依据中途结果修改预算。实现提交 `b8664c7`，配置提交 `23107d5`，完整测试 `436 passed`。
+
 ## 2026-09-20：Recoverability-Constrained Accessibility Adaptive-A 正式分阶段验证
 
 - 实验标题：从精确历史算子可恢复性到全局预算控制的四阶段累计验证。

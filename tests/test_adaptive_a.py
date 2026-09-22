@@ -1416,6 +1416,8 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
         "adaptive_a_risk_budget_mode": "absolute",
         "hoep_energy_budget": 0.05,
         "hoep_eigenvalue_rtol": 1e-6,
+        "hoep_energy_metric": "operator",
+        "hoep_functional_diagnostics": False,
     }
 
     monkeypatch.setattr(

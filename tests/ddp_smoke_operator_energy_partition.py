@@ -56,6 +56,7 @@ def _model(run_dir, task):
         adaptive_a_enabled=True,
         adaptive_a_strategy="operator_energy_partition",
         hoep_energy_budget=0.5,
+        hoep_functional_diagnostics=True,
     )
 
 
@@ -108,12 +109,29 @@ def main():
     device = torch.device("cuda", local_rank)
     run_dir = _broadcast_run_dir(rank, device)
     try:
-        task_zero = _model(run_dir, 0)
+        task_zero = _model(run_dir, 0).to(device)
         with torch.no_grad():
             for module in task_zero.w_As:
                 module.weight.add_(0.02 * torch.randn_like(module.weight))
             for module in task_zero.w_Bs:
                 module.weight.normal_()
+        task_zero.eval()
+        task_zero.prepare_hoep_activation_calibration()
+        calibration_inputs = torch.full(
+            (2, 3, 6), float(rank + 1), device=device
+        )
+        with torch.no_grad():
+            task_zero(calibration_inputs)
+        calibration = task_zero.finalize_hoep_activation_calibration()
+        assert calibration[0]["token_count"] == 12.0
+        expected_second_moment = (1.0 + 4.0) / 2.0
+        rms, count = task_zero._recoverability_wrappers()[0].merged_input_sketch()
+        assert count == 12.0
+        assert torch.allclose(
+            rms.square(),
+            torch.full_like(rms, expected_second_moment),
+        )
+        _assert_rank_equal(rms.detach().cpu().tolist())
         dist.barrier()
         if rank == 0:
             task_zero.save_lora_parameters(str(run_dir), 0)

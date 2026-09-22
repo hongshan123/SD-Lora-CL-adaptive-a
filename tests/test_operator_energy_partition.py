@@ -12,11 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backbone.operator_energy_partition import (
     canonicalize_operator_coordinates,
+    diagonal_functional_energies,
     historical_energy_coordinates,
+    mask_jaccard,
     project_partition_gradient,
     retract_partitioned_coordinates,
     rotate_operator_coordinates,
     select_global_low_energy_partition,
+    spearman_rank_correlation,
 )
 from backbone.sa_lora import SA_STATE_FILENAME, SharedALoRA_ViT_timm
 from models.sa_sdlora import validate_adaptive_a_config
@@ -165,6 +168,100 @@ def test_global_partition_is_a_low_energy_prefix_not_a_knapsack():
     assert partition.selected_energy == 0.0
 
 
+def test_diagonal_functional_energy_matches_direct_trace():
+    torch.manual_seed(41)
+    shared_a = _orthonormal_rows(rank=4, dimension=9).double()
+    coefficient = torch.randn(7, 4, dtype=torch.float64)
+    operator, rotation = historical_energy_coordinates(coefficient, shared_a)
+    shared_a, coefficient, _ = rotate_operator_coordinates(
+        shared_a, coefficient, torch.zeros_like(coefficient), rotation
+    )
+    second_moment = torch.rand(9, dtype=torch.float64) + 0.1
+
+    factors, functional = diagonal_functional_energies(
+        shared_a, operator, second_moment
+    )
+    effective = coefficient @ shared_a / torch.linalg.vector_norm(shared_a)
+    direct = torch.trace(
+        effective @ torch.diag(second_moment) @ effective.t()
+    )
+
+    assert torch.all(factors >= 0)
+    assert functional.sum().item() == pytest.approx(
+        direct.item(), rel=1e-9, abs=1e-10
+    )
+
+
+def test_unit_second_moment_recovers_operator_order_and_partition():
+    shared_a = _orthonormal_rows(rank=3, dimension=7).double()
+    operator = torch.tensor([0.05, 0.2, 2.0], dtype=torch.float64)
+    factors, functional = diagonal_functional_energies(
+        shared_a, operator, torch.ones(7, dtype=torch.float64)
+    )
+    operator_partition = select_global_low_energy_partition([operator], 0.1)
+    functional_partition = select_global_low_energy_partition(
+        [functional], 0.1, tie_spectra=[operator]
+    )
+
+    assert torch.allclose(factors, torch.ones_like(factors), atol=1e-10)
+    assert torch.allclose(functional, operator, atol=1e-10)
+    assert torch.equal(
+        operator_partition.plastic_masks[0],
+        functional_partition.plastic_masks[0],
+    )
+
+
+def test_activation_anisotropy_reverses_direction_order():
+    shared_a = torch.eye(2, dtype=torch.float64)
+    operator = torch.tensor([10.0, 1.0], dtype=torch.float64)
+    factors, functional = diagonal_functional_energies(
+        shared_a,
+        operator,
+        torch.tensor([0.001, 100.0], dtype=torch.float64),
+    )
+
+    assert factors.tolist() == pytest.approx([0.001, 100.0])
+    assert functional.tolist() == pytest.approx([0.01, 100.0])
+    assert int(torch.argmin(operator)) == 1
+    assert int(torch.argmin(functional)) == 0
+
+
+def test_functional_partition_keeps_operator_ties_indivisible():
+    operator = torch.tensor([0.2, 0.2, 4.0], dtype=torch.float64)
+    first = torch.tensor([0.01, 0.09, 4.0], dtype=torch.float64)
+    second = torch.tensor([0.05, 0.05, 4.0], dtype=torch.float64)
+    partition_a = select_global_low_energy_partition(
+        [first], 0.03, tie_spectra=[operator]
+    )
+    partition_b = select_global_low_energy_partition(
+        [second], 0.03, tie_spectra=[operator]
+    )
+
+    assert partition_a.plastic_masks[0].tolist() == [True, True, False]
+    assert torch.equal(
+        partition_a.plastic_masks[0], partition_b.plastic_masks[0]
+    )
+    assert partition_a.selected_energy == pytest.approx(0.1)
+    assert partition_b.selected_energy == pytest.approx(0.1)
+
+
+def test_functional_partition_helpers_are_finite_and_deterministic():
+    first = [torch.tensor([True, False]), torch.tensor([False, True])]
+    second = [torch.tensor([True, True]), torch.tensor([False, False])]
+    assert mask_jaccard(first, second) == pytest.approx(1.0 / 3.0)
+    assert spearman_rank_correlation(
+        torch.tensor([1.0, 2.0, 3.0]),
+        torch.tensor([3.0, 2.0, 1.0]),
+    ) == pytest.approx(-1.0)
+
+    shared_a = torch.eye(2)
+    factors, functional = diagonal_functional_energies(
+        shared_a, torch.zeros(2), torch.zeros(2)
+    )
+    assert torch.isfinite(factors).all()
+    assert torch.isfinite(functional).all()
+
+
 def test_partition_gradient_freezes_stable_rows_and_is_tangent():
     torch.manual_seed(7)
     shared_a = _orthonormal_rows()
@@ -311,6 +408,8 @@ def test_hoep_config_defaults_and_constraints():
     settings = validate_adaptive_a_config(_valid_config())
     assert settings["hoep_energy_budget"] == pytest.approx(0.05)
     assert settings["hoep_eigenvalue_rtol"] == pytest.approx(1e-6)
+    assert settings["hoep_energy_metric"] == "operator"
+    assert settings["hoep_functional_diagnostics"] is False
 
     with pytest.raises(ValueError, match="operator_preserving_absorb"):
         validate_adaptive_a_config(
@@ -321,6 +420,100 @@ def test_hoep_config_defaults_and_constraints():
     with pytest.raises(ValueError, match="sa_hoep_eigenvalue_rtol"):
         validate_adaptive_a_config(
             _valid_config(sa_hoep_eigenvalue_rtol=float("nan"))
+        )
+    with pytest.raises(ValueError, match="sa_hoep_energy_metric"):
+        validate_adaptive_a_config(
+            _valid_config(sa_hoep_energy_metric="dense")
+        )
+
+
+def test_hoep_eval_calibration_persists_exact_second_moment(tmp_path):
+    settings = {
+        "train_a_all_tasks": True,
+        "cumulative_state": True,
+        "cumulative_merge": "live_a_aggregate_b",
+        "live_a_coordinate_align": True,
+        "live_a_absorb_mode": "operator_preserving_absorb",
+        "adaptive_a_enabled": True,
+        "adaptive_a_strategy": "operator_energy_partition",
+        "hoep_functional_diagnostics": True,
+    }
+    task_zero = SharedALoRA_ViT_timm(
+        _TinyViT(), r=2, filepath=str(tmp_path), cur_task_index=0, **settings
+    )
+    inputs = torch.tensor(
+        [
+            [[1.0, 2.0, 3.0, 4.0], [2.0, 3.0, 4.0, 5.0]],
+            [[3.0, 4.0, 5.0, 6.0], [4.0, 5.0, 6.0, 7.0]],
+        ]
+    )
+    expected_second_moment = inputs.square().reshape(-1, 4).mean(dim=0)
+    before_parameters = {
+        name: value.detach().clone()
+        for name, value in task_zero.named_parameters()
+    }
+
+    task_zero.eval()
+    task_zero.prepare_hoep_activation_calibration()
+    with torch.no_grad():
+        task_zero(inputs)
+    summaries = task_zero.finalize_hoep_activation_calibration()
+
+    assert summaries[0]["token_count"] == pytest.approx(4.0)
+    wrapper = task_zero._recoverability_wrappers()[0]
+    rms, count = wrapper.merged_input_sketch()
+    assert count == pytest.approx(4.0)
+    assert torch.allclose(rms.square(), expected_second_moment)
+    for name, value in task_zero.named_parameters():
+        assert torch.equal(value, before_parameters[name])
+
+    with torch.no_grad():
+        for module in task_zero.w_Bs:
+            module.weight.normal_()
+    task_zero.save_lora_parameters(str(tmp_path), 0)
+    state = torch.load(
+        tmp_path / SA_STATE_FILENAME, map_location="cpu", weights_only=True
+    )
+    assert len(state["adaptive_a_input_rms"]) == 1
+    assert state["adaptive_a_input_counts"].tolist() == pytest.approx([4.0])
+    assert torch.allclose(
+        state["adaptive_a_input_rms"][0].square(), expected_second_moment
+    )
+
+    task_one = SharedALoRA_ViT_timm(
+        _TinyViT(), r=2, filepath=str(tmp_path), cur_task_index=1, **settings
+    )
+    record = task_one.hoep_functional_diagnostic_record()
+    assert record["task_id"] == 1
+    assert len(record["branches"]) == 2
+    assert record["global"]["finite"] is True
+    assert 0.0 <= record["global"]["jaccard"] <= 1.0
+
+
+def test_functional_hoep_refuses_missing_activation_statistics(tmp_path):
+    base_settings = {
+        "train_a_all_tasks": True,
+        "cumulative_state": True,
+        "cumulative_merge": "live_a_aggregate_b",
+        "live_a_coordinate_align": True,
+        "live_a_absorb_mode": "operator_preserving_absorb",
+        "adaptive_a_enabled": True,
+        "adaptive_a_strategy": "operator_energy_partition",
+    }
+    task_zero = SharedALoRA_ViT_timm(
+        _TinyViT(), r=2, filepath=str(tmp_path), cur_task_index=0,
+        **base_settings,
+    )
+    task_zero.save_lora_parameters(str(tmp_path), 0)
+
+    with pytest.raises(RuntimeError, match="activation statistics"):
+        SharedALoRA_ViT_timm(
+            _TinyViT(),
+            r=2,
+            filepath=str(tmp_path),
+            cur_task_index=1,
+            hoep_energy_metric="functional_diag",
+            **base_settings,
         )
 
 

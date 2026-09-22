@@ -1109,3 +1109,13 @@
 - 2026-09-21 16:41 使用提交 `6380f77` 从头启动新队列 `.runtime_hoep_p3_20260921_164138_no23`。方法顺序改为 HOEP-A、Frozen-A、Live-A、ratio Adaptive-A，双卡槽固定为 `0,1`、`4,5`、`6,7`，完全避开 GPU 2、3。
 - 新一轮启动核验：三条 HOEP-A 已进入 Task0；每个实际配置 `batch_size=64`、策略为 `operator_energy_partition`、全局历史能量预算为 0.05，GPU 2、3 无训练进程。
 - `nohup` 父调度器被执行环境回收但三条 detached torchrun 保持运行；随后由 tmux `hoep_p3_no23_20260921` 以 `--resume` 无重复接管，核验为 `active=3/pending=9`。后续任务将继续按空闲双卡槽自动派发。
+
+## 2026-09-22 15:02 SBGC 实现判断
+
+- 研究线已从 A 的门控转向固定 P 下的 G 合并；这是机制转向，不把 HOEP 的 No-Go 包装成正结果。
+- 当前实现先用旧 `C_hist/f_hist` 求解，再更新累计统计，避免当前任务提前参与自己的风险约束。Task 0 只做等价 QR 吸收与统计初始化。
+- CE 校准使用 `backbone(inputs)` 后显式调用原 FC head；即使模型启用 prototype classifier，也不会在 eval 模式下意外使用 prototype/fused logits。
+- 校准用 `autograd.grad` 只求 Q/V residual 输出梯度，不写参数 `.grad`。测试已验证已有梯度、分类头、受保护模型 tensor 和 RNG 均保持不变。
+- v6 artifact 不接受旧状态隐式迁移；风险预算、metric、floor、ridge、二分步数和 shadow 设置必须与恢复配置逐项一致。
+- 精确状态量为 389,520，而计划中的 389,472 少计了 48 个 covariance/sensitivity count；后续论文与表格统一使用前者。
+- 尚不能判断 sensitivity 是否有用。只有 P1 同时显示约束经常激活、Fisher 与 uniform 候选实质不同且 current distortion 可控，才值得进入正式 SBGC 性能实验。

@@ -932,3 +932,12 @@
 - 当前结果：三条 Frozen-A 首批任务已经进入 Task0 且无运行错误。Final、AAA 和 Forgetting 待完整队列结束后统一回填；中途指标不用于选择方法或预算。
 - 中断记录：首轮 runtime `.runtime_hoep_p3_20260921_1500` 因服务器中断终止，没有任何完整 T=10 结果。C100/INR/CUB Frozen-A 分别仅完成 Task0-6、Task0-2、Task0-8；这些中途曲线不得进入最终表格。
 - 重启记录：新 runtime `.runtime_hoep_p3_20260921_164138_no23` 使用提交 `6380f77`，先运行三数据集 HOEP-A，再依次运行 Frozen-A、Live-A、ratio Adaptive-A。仅使用 GPU `0,1`、`4,5`、`6,7`，继续保持双卡每卡 batch64。
+
+## 2026-09-22：Sensitivity-Budgeted G Consolidation P0（实现完成，真实 smoke 待运行）
+
+- 实验标题：固定 Task-0 输入基底下的功能敏感、风险受限 G 合并。
+- 尝试方法：Task 0 对 A 做精确 QR canonicalization；后续固定 P，只训练当前 B/scale。任务边界以投影 activation covariance 和分支输出梯度平方构造历史响应风险，通过 FP64 闭式解与对偶二分选择累计 G。
+- 理论依据：Frozen-A 的稳定结果说明继续控制 A 未必是主要矛盾；additive G merge 仍没有区分输出方向的历史功能敏感度。SBGC 直接约束固定坐标下的 branch-response drift，同时保持 `(P,G,C,f)` 为任务常数状态。
+- 对照与归因：独立 merge mode 硬性排除 Adaptive-A、transport、HBD、NormCap、Dual-B 与 normalized current branch。uniform sensitivity 是关键消融，`shadow_only` 只算候选而部署 additive Frozen-P。
+- 已完成：31 个 CPU 数学/集成测试全部通过；两进程 DDP smoke 通过，Task 1 部署风险不超过 0.05，两个 rank 状态 hash 一致，state save/rebuild logits 一致。
+- 当前结果：尚无真实数据性能结果。下一步只运行三个数据集 Task 0/1、双卡每卡 batch64 的 P0；P0 未通过时不得启动 T=10。

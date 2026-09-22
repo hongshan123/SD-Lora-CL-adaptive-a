@@ -1136,3 +1136,5 @@
 - 2026-09-22 21:39：首次 P2 启动在 Task0 Epoch1 前被确定性检查拒绝。user-systemd 环境未继承 `CUBLAS_WORKSPACE_CONFIG`，三个数据集均报 CuBLAS deterministic RuntimeError；每个输出只有 `run_manifest.json`，没有 epoch、artifact 或性能结果。该批次整体归档，不进入统计。修复仅向队列显式注入 `:4096:8`，不改算法或配置。
 - 2026-09-22 21:40：修复提交 `3009a37` 后由 unit `sbgc-p2-strict-20260922b` 从 Task0 重启。C100/INR/CUB 三条 Fisher 分别运行在 `0,1`、`4,5`、`6,7`，GPU 2、3 空闲；后续 uniform/CUO 由同一数据集队列自动接续。
 - 首个真实边界核验通过：CUB Task0 已进入 Task1，operator error `1.231045e-07`，tensor/RNG hash PASS；calibration/solver/boundary 为 `3.813/0.000/4.055s`，峰值/新增峰值显存为 `2851.9/2451.7 MiB`，持久状态计数 `389520`。该值只验证插桩和生命周期，不作为性能结果。
+- 2026-09-22 22:16：首个完整 Fisher-SBGC 结果为 CUB `Final/AAA/F=84.29/89.462/7.952`。相对 P1 Frozen-P 为 `+0.10/-0.007/-0.711`，说明当前 5% 风险约束降低了 forgetting，但尚未达到 Final/AAA `+0.30` 的 P3 门槛。
+- CUB uniform 随后在 Task1 部署检查中以 Fisher-weighted risk `0.076496` 被拒绝。执行代码确认 uniform candidate 的求解约束使用全 1 sensitivity，但部署复核固定使用历史 Fisher，二者口径不一致。修复要求按 selected metric 检查预算，同时额外记录两种风险；该失败 run 归档且不得统计，Fisher 正式结果不受影响。

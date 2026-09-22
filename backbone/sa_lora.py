@@ -5252,14 +5252,29 @@ class SharedALoRA_ViT_timm(nn.Module):
                         selected = target
                     deployed = selected.to(unified_up)
                     deployed_risk = 0.0
+                    deployed_fisher_risk = 0.0
+                    deployed_uniform_risk = 0.0
                     if self.task_id > 0:
-                        deployed_risk = float(
+                        deployed_fisher_risk = float(
                             historical_response_risk(
                                 deployed.to(torch.float64),
                                 old,
                                 historical_covariance.detach().to(torch.float64),
                                 historical_sensitivity.detach().to(torch.float64),
                             )
+                        )
+                        deployed_uniform_risk = float(
+                            historical_response_risk(
+                                deployed.to(torch.float64),
+                                old,
+                                historical_covariance.detach().to(torch.float64),
+                                torch.ones_like(hist_sens),
+                            )
+                        )
+                        deployed_risk = (
+                            deployed_fisher_risk
+                            if self.g_sensitivity_metric == "fisher_diag"
+                            else deployed_uniform_risk
                         )
                         if (
                             not self.g_shadow_only
@@ -5315,6 +5330,8 @@ class SharedALoRA_ViT_timm(nn.Module):
                             "selected_metric": self.g_sensitivity_metric,
                             "selected": selected_diagnostics,
                             "deployed_historical_risk": deployed_risk,
+                            "deployed_fisher_risk": deployed_fisher_risk,
+                            "deployed_uniform_risk": deployed_uniform_risk,
                             "deployed_update_norm": float(
                                 torch.linalg.matrix_norm(selected - old)
                             ),

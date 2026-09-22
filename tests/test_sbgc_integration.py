@@ -126,9 +126,11 @@ def _collect_and_finalize(model, inputs):
     return outputs.detach(), stats
 
 
-def _train_and_save_task_zero(run, vit, shadow=False):
+def _train_and_save_task_zero(run, vit, shadow=False, metric="fisher_diag"):
     torch.manual_seed(701)
-    model = _make_model(run, task=0, vit=vit, shadow=shadow)
+    model = _make_model(
+        run, task=0, vit=vit, shadow=shadow, metric=metric
+    )
     with torch.no_grad():
         for module in model.w_As + model.w_Bs:
             module.weight.copy_(torch.randn_like(module.weight))
@@ -268,6 +270,29 @@ def test_task_one_keeps_p_fixed_and_meets_deployed_risk_budget(tmp_path):
         branch["deployed_historical_risk"] <= 0.05 + 1e-6
         for branch in model._last_sbgc_branch_diagnostics
     )
+
+
+def test_uniform_metric_validates_deployment_with_uniform_risk(tmp_path):
+    run = tmp_path / "run"
+    pristine = _TinyViT()
+    _train_and_save_task_zero(run, pristine, metric="uniform")
+    model = _make_model(run, task=1, vit=pristine, metric="uniform")
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+    with torch.no_grad():
+        model.w_Bs[0].weight.copy_(8.0 * wrapper.unified_up_q)
+        model.w_Bs[1].weight.copy_(8.0 * wrapper.unified_up_v)
+
+    model.prepare_sbgc_calibration()
+    _, stats = _collect_and_finalize(model, torch.randn(6, 4, 6))
+
+    assert stats["active_constraints"] == 2
+    assert stats["max_achieved_risk"] <= 0.05 + 1e-6
+    for branch in model._last_sbgc_branch_diagnostics:
+        assert branch["deployed_historical_risk"] == pytest.approx(
+            branch["deployed_uniform_risk"]
+        )
+        assert branch["deployed_uniform_risk"] <= 0.05 + 1e-6
+        assert branch["deployed_fisher_risk"] >= 0.0
 
 
 def test_shadow_mode_computes_candidates_but_deploys_additive_target(tmp_path):

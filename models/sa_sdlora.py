@@ -39,6 +39,7 @@ from backbone.sa_lora import (
     live_a_historical_outputs,
     register_live_a_historical_capture_hooks,
 )
+from backbone.sbgc import sbgc_state_scalar_counts
 from utils.canonical_hash import (
     compare_named_tensors,
     hash_named_tensors,
@@ -58,6 +59,7 @@ PROTOTYPES_FILENAME = "sa_prototypes.pt"
 P0_HASHES_FILENAME = "p0_hashes.json"
 COORDINATE_DIAGNOSTICS_FILENAME = "sa_coordinate_diagnostics.json"
 HOEP_FUNCTIONAL_DIAGNOSTICS_FILENAME = "hoep_functional_diagnostics.pt"
+SBGC_DIAGNOSTICS_FILENAME = "sbgc_diagnostics.pt"
 
 
 def validate_cuo_lowrank_config(args):
@@ -99,6 +101,85 @@ def validate_cuo_lowrank_config(args):
     ):
         raise ValueError("cuo_lowrank is incompatible with function-safe settings")
     return cuo_lambda
+
+
+def validate_sbgc_config(args):
+    """Validate sensitivity-budgeted G consolidation in isolation."""
+    if args.get("sa_cumulative_merge", "gauge") != "sensitivity_budgeted_g":
+        return None
+    settings = {
+        "g_risk_budget": float(args.get("sa_g_risk_budget", 0.05)),
+        "g_sensitivity_metric": str(
+            args.get("sa_g_sensitivity_metric", "fisher_diag")
+        ),
+        "g_sensitivity_floor": float(
+            args.get("sa_g_sensitivity_floor", 1e-4)
+        ),
+        "g_solver_ridge": float(args.get("sa_g_solver_ridge", 1e-6)),
+        "g_bisection_steps": args.get("sa_g_bisection_steps", 40),
+        "g_shadow_only": bool(args.get("sa_g_shadow_only", False)),
+    }
+    if not args.get("sa_cumulative_state", False):
+        raise ValueError(
+            "sensitivity_budgeted_g requires sa_cumulative_state=True"
+        )
+    if args.get("sa_train_a_all_tasks", False):
+        raise ValueError(
+            "sensitivity_budgeted_g requires sa_train_a_all_tasks=False"
+        )
+    lora_rank = int(args.get("lora_rank", 10))
+    cumulative_rank = args.get("sa_cumulative_rank", lora_rank)
+    if cumulative_rank is None:
+        cumulative_rank = lora_rank
+    if int(cumulative_rank) != lora_rank:
+        raise ValueError(
+            "sensitivity_budgeted_g requires sa_cumulative_rank=lora_rank"
+        )
+    if not math.isfinite(settings["g_risk_budget"]) or not (
+        0.0 <= settings["g_risk_budget"] <= 1.0
+    ):
+        raise ValueError("sa_g_risk_budget must be finite and in [0, 1]")
+    if settings["g_sensitivity_metric"] not in ("uniform", "fisher_diag"):
+        raise ValueError(
+            "sa_g_sensitivity_metric must be uniform or fisher_diag"
+        )
+    if not math.isfinite(settings["g_sensitivity_floor"]) or not (
+        0.0 < settings["g_sensitivity_floor"] <= 1.0
+    ):
+        raise ValueError(
+            "sa_g_sensitivity_floor must be finite and in (0, 1]"
+        )
+    if not math.isfinite(settings["g_solver_ridge"]) or (
+        settings["g_solver_ridge"] <= 0
+    ):
+        raise ValueError("sa_g_solver_ridge must be positive and finite")
+    steps = settings["g_bisection_steps"]
+    if isinstance(steps, bool) or not isinstance(steps, Integral) or steps <= 0:
+        raise ValueError("sa_g_bisection_steps must be a positive integer")
+    settings["g_bisection_steps"] = int(steps)
+    incompatible_flags = {
+        "sa_coordinate_stable_transport": "coordinate transport",
+        "sa_live_a_coordinate_align": "coordinate alignment",
+        "lrpt_enabled": "prototype transport",
+        "sa_hbd_enabled": "HBD",
+        "sa_adaptive_a_enabled": "Adaptive-A",
+        "sa_dual_head": "Dual-B",
+        "sa_normalize_current_branch": "normalized current branch",
+    }
+    enabled = [
+        label for key, label in incompatible_flags.items() if args.get(key, False)
+    ]
+    if args.get(
+        "sa_live_a_absorb_mode", "operator_preserving_absorb"
+    ) == "bounded_norm_calibrated_absorb":
+        enabled.append("NormCap")
+    if enabled:
+        raise ValueError(
+            "sensitivity_budgeted_g must be isolated from: {}".format(
+                ", ".join(enabled)
+            )
+        )
+    return settings
 
 
 def validate_coordinate_transport_config(
@@ -824,6 +905,19 @@ class Learner(SDLoraLearner):
     def __init__(self, args):
         super().__init__(args)
         self._sa_cuo_lambda = validate_cuo_lowrank_config(args)
+        self._sa_sbgc_settings = validate_sbgc_config(args)
+        sbgc_calibration_batch_size = args.get(
+            "sa_g_calibration_batch_size", 16
+        )
+        if (
+            isinstance(sbgc_calibration_batch_size, bool)
+            or not isinstance(sbgc_calibration_batch_size, Integral)
+            or sbgc_calibration_batch_size <= 0
+        ):
+            raise ValueError(
+                "sa_g_calibration_batch_size must be a positive integer"
+            )
+        self._sa_g_calibration_batch_size = int(sbgc_calibration_batch_size)
         adaptive_a_settings = validate_adaptive_a_config(args)
         self._sa_adaptive_a_enabled = adaptive_a_settings["adaptive_a_enabled"]
         self._sa_adaptive_a_strategy = adaptive_a_settings["adaptive_a_strategy"]
@@ -1019,6 +1113,7 @@ class Learner(SDLoraLearner):
         )
         cur_task_index = self._cur_task if task_index is None else task_index
         adaptive_a_settings = validate_adaptive_a_config(self.args)
+        sbgc_settings = validate_sbgc_config(self.args) or {}
         model = SharedALoRA_ViT_timm(
             vit_model=model.eval(),
             r=self.args.get("lora_rank", 10),
@@ -1035,6 +1130,7 @@ class Learner(SDLoraLearner):
             cumulative_merge=self.args.get("sa_cumulative_merge", "gauge"),
             cumulative_rank=self.args.get("sa_cumulative_rank", None),
             cuo_lambda=self.args.get("sa_cuo_lambda", 0.1),
+            **sbgc_settings,
             freeze_old_scales=self.args.get("sa_freeze_old_scales", False),
             normalize_current_branch=self.args.get(
                 "sa_normalize_current_branch", False
@@ -1943,6 +2039,7 @@ class Learner(SDLoraLearner):
         """Run deterministic task-boundary calibrations before persistence."""
         backbone = raw_network.backbone
         run_cuo = backbone.cumulative_merge == "cuo_lowrank"
+        run_sbgc = backbone.cumulative_merge == "sensitivity_budgeted_g"
         run_hoep = (
             backbone.adaptive_a_strategy == "operator_energy_partition"
             and (
@@ -1950,7 +2047,7 @@ class Learner(SDLoraLearner):
                 or backbone.hoep_functional_diagnostics
             )
         )
-        if not (run_cuo or run_hoep):
+        if not (run_cuo or run_sbgc or run_hoep):
             return None
         data_manager = getattr(self, "_cuo_calibration_data_manager", None)
         if data_manager is None:
@@ -1965,7 +2062,9 @@ class Learner(SDLoraLearner):
             rank = dist.get_rank()
             world_size = dist.get_world_size()
             dataset = Subset(dataset, range(rank, len(dataset), world_size))
-        if run_cuo:
+        if run_sbgc:
+            batch_size = self._sa_g_calibration_batch_size
+        elif run_cuo:
             batch_size = int(
                 self.args.get(
                     "sa_cuo_calibration_batch_size", self.args["batch_size"]
@@ -1976,8 +2075,8 @@ class Learner(SDLoraLearner):
         if batch_size <= 0:
             raise ValueError("task-boundary calibration batch size must be positive")
 
-        def deployment_tensor_map():
-            return {
+        def deployment_tensor_map(protected_only=False):
+            tensors = {
                 key: value
                 for key, value in model_tensor_map(
                     raw_network, include_eval_scalars=False
@@ -1985,17 +2084,71 @@ class Learner(SDLoraLearner):
                 if not key.endswith("task_input_square_sum")
                 and not key.endswith("pending_input_square_sum")
             }
+            if not protected_only:
+                return tensors
+            mutable_fragments = (
+                ".attn.qkv.a_q.weight",
+                ".attn.qkv.a_v.weight",
+                ".attn.qkv.b_q.weight",
+                ".attn.qkv.b_v.weight",
+                ".attn.qkv.projection_q",
+                ".attn.qkv.projection_v",
+                ".attn.qkv.unified_up_q",
+                ".attn.qkv.unified_up_v",
+                ".attn.qkv.projected_covariance_q",
+                ".attn.qkv.projected_covariance_v",
+                ".attn.qkv.sensitivity_q",
+                ".attn.qkv.sensitivity_v",
+                ".attn.qkv._sbgc_",
+            )
+            return {
+                key: value
+                for key, value in tensors.items()
+                if not any(fragment in key for fragment in mutable_fragments)
+            }
 
-        before_map = deployment_tensor_map()
+        def parameter_gradient_map():
+            return {
+                name: (
+                    None
+                    if parameter.grad is None
+                    else parameter.grad.detach().cpu().clone()
+                )
+                for name, parameter in raw_network.named_parameters()
+            }
+
+        def assert_gradients_unchanged(before, after):
+            if set(before) != set(after):
+                raise RuntimeError("SBGC calibration changed parameter topology")
+            for name in before:
+                left, right = before[name], after[name]
+                if left is None or right is None:
+                    if left is not None or right is not None:
+                        raise RuntimeError(
+                            "SBGC calibration changed .grad presence for {}".format(
+                                name
+                            )
+                        )
+                elif not torch.equal(left, right):
+                    raise RuntimeError(
+                        "SBGC calibration changed existing .grad for {}".format(
+                            name
+                        )
+                    )
+
+        before_map = deployment_tensor_map(protected_only=run_sbgc)
+        before_gradients = parameter_gradient_map() if run_sbgc else None
         rng_before = rng_state_hash()
         was_training = raw_network.training
         raw_network.eval()
         try:
+            if run_sbgc:
+                backbone.prepare_sbgc_calibration()
             if run_cuo:
                 backbone.prepare_cuo_calibration()
             if run_hoep:
                 backbone.prepare_hoep_activation_calibration()
-            with rng_preserving(), torch.no_grad():
+            with rng_preserving():
                 loader = deterministic_loader(
                     dataset,
                     batch_size=batch_size,
@@ -2004,8 +2157,63 @@ class Learner(SDLoraLearner):
                     pin_memory=self._device.type == "cuda",
                     seed=0,
                 )
-                for _, inputs, _ in loader:
-                    raw_network(inputs.to(self._device, non_blocking=True))
+                if run_sbgc:
+                    for _, inputs, targets in loader:
+                        inputs = inputs.to(self._device, non_blocking=True)
+                        targets = targets.to(self._device, non_blocking=True)
+                        features = backbone(inputs)
+                        logits = raw_network.fc(features)["logits"]
+                        if self._cur_task > 0:
+                            logits = logits[
+                                :, self._known_classes : self._total_classes
+                            ]
+                            targets = targets - self._known_classes
+                        loss = F.cross_entropy(logits, targets)
+                        outputs = backbone.sbgc_calibration_outputs()
+                        gradients = torch.autograd.grad(
+                            loss,
+                            outputs,
+                            retain_graph=False,
+                            create_graph=False,
+                            allow_unused=False,
+                        )
+                        backbone.accumulate_sbgc_sensitivities(
+                            gradients, inputs.shape[0]
+                        )
+                else:
+                    with torch.no_grad():
+                        for _, inputs, _ in loader:
+                            raw_network(
+                                inputs.to(self._device, non_blocking=True)
+                            )
+            if run_sbgc:
+                stats = backbone.finalize_sbgc_calibration()
+                if self._is_main_process():
+                    path = os.path.join(
+                        self.args["filepath"], SBGC_DIAGNOSTICS_FILENAME
+                    )
+                    artifact = {"version": 1, "tasks": []}
+                    if os.path.exists(path):
+                        artifact = torch.load(
+                            path, map_location="cpu", weights_only=False
+                        )
+                    record = {
+                        "task_id": self._cur_task,
+                        "metric": backbone.g_sensitivity_metric,
+                        "shadow_only": backbone.g_shadow_only,
+                        "risk_budget": backbone.g_risk_budget,
+                        "stats": stats,
+                        "branches": backbone._last_sbgc_branch_diagnostics,
+                    }
+                    tasks = [
+                        item
+                        for item in artifact.get("tasks", [])
+                        if int(item["task_id"]) != self._cur_task
+                    ]
+                    tasks.append(record)
+                    tasks.sort(key=lambda item: int(item["task_id"]))
+                    artifact["tasks"] = tasks
+                    torch.save(artifact, path)
             if run_cuo:
                 backbone.finalize_cuo_calibration()
             if run_hoep:
@@ -2020,18 +2228,23 @@ class Learner(SDLoraLearner):
                 )
         finally:
             raw_network.train(was_training)
-        if run_hoep:
+        if run_hoep or run_sbgc:
             mismatch = compare_named_tensors(
                 before_map,
-                deployment_tensor_map(),
+                deployment_tensor_map(protected_only=run_sbgc),
             )
             if mismatch is not None:
                 raise RuntimeError(
-                    "task-boundary activation calibration mutated model tensor "
+                    "task-boundary calibration mutated protected model tensor "
                     "{} (max_abs_diff={})".format(
                         mismatch["key"], mismatch["max_abs_diff"]
                     )
                 )
+        if run_sbgc:
+            assert_gradients_unchanged(
+                before_gradients,
+                parameter_gradient_map(),
+            )
         rng_after = rng_state_hash()
         if rng_before != rng_after:
             raise RuntimeError(
@@ -2181,6 +2394,38 @@ class Learner(SDLoraLearner):
                         stats["max_residual_norm"],
                         counts["lora_factor_scalars"],
                         counts["gram_scalars"],
+                        counts["persistent_scalar_total"],
+                    )
+            if (
+                backbone.cumulative_state
+                and backbone.cumulative_merge == "sensitivity_budgeted_g"
+            ):
+                stats = backbone._last_sbgc_calibration_stats
+                if stats is not None:
+                    counts = sbgc_state_scalar_counts(
+                        num_blocks=len(backbone.lora_layer),
+                        rank=backbone.rank,
+                        dim=backbone.w_As[0].weight.shape[1],
+                    )
+                    logging.info(
+                        "[SBGC] task %d branches=%d active=%d "
+                        "max_risk=%.6e mean_distortion=%.6e "
+                        "mean_sensitivity_cv=%.6e mean_candidate_gap=%.6e "
+                        "task0_operator_error=%.6e lora_scalars=%d "
+                        "covariance_scalars=%d sensitivity_scalars=%d "
+                        "count_scalars=%d persistent_scalar_total=%d",
+                        self._cur_task,
+                        stats["branch_count"],
+                        stats["active_constraints"],
+                        stats["max_achieved_risk"],
+                        stats["mean_current_distortion"],
+                        stats["mean_sensitivity_cv"],
+                        stats["mean_candidate_gap"],
+                        stats["task0_operator_error"],
+                        counts["lora_factor_scalars"],
+                        counts["covariance_scalars"],
+                        counts["sensitivity_scalars"],
+                        counts["count_scalars"],
                         counts["persistent_scalar_total"],
                     )
             if (

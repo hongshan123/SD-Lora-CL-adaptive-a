@@ -53,6 +53,12 @@ from backbone.sa_operator_stability import (
     aggregate_normalized_up_projections,
     relative_effective_operator_drift,
 )
+from backbone.sbgc import (
+    historical_response_risk,
+    normalize_sensitivity,
+    solve_sensitivity_budgeted_g,
+    update_running_moment,
+)
 
 
 SA_STATE_VERSION = 2
@@ -60,10 +66,12 @@ SA_STATE_VERSION_LEGACY = 1
 SA_STATE_VERSION_UNION = 3
 SA_STATE_VERSION_LIVE_A = 4
 SA_STATE_VERSION_CUO = 5
+SA_STATE_VERSION_SBGC = 6
 SA_MERGE_MODE_GAUGE = "gauge"
 SA_MERGE_MODE_UNION_SVD = "union_svd"
 SA_MERGE_MODE_LIVE_A_AGGREGATE_B = "live_a_aggregate_b"
 SA_MERGE_MODE_CUO_LOWRANK = "cuo_lowrank"
+SA_MERGE_MODE_SBGC = "sensitivity_budgeted_g"
 SA_ABSORB_MODE_NORMALIZED = "normalized_absorb"
 SA_ABSORB_MODE_OPERATOR_PRESERVING = "operator_preserving_absorb"
 SA_ABSORB_MODE_BOUNDED_NORM_CALIBRATED = (
@@ -1475,6 +1483,201 @@ class _CUOLowRankQKV(nn.Module):
         return qkv
 
 
+class _SensitivityBudgetedGQKV(nn.Module):
+    """Q/V LoRA wrapper with a fixed P and sensitivity-budgeted cumulative G."""
+
+    def __init__(
+        self,
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        projection_q,
+        unified_up_q,
+        projection_v,
+        unified_up_v,
+        scaling_cur,
+        layer_index,
+        projected_covariance_q=None,
+        projected_covariance_v=None,
+        sensitivity_q=None,
+        sensitivity_v=None,
+        covariance_count_q=0.0,
+        covariance_count_v=0.0,
+        sensitivity_count_q=0.0,
+        sensitivity_count_v=0.0,
+    ):
+        super().__init__()
+        self.qkv = qkv
+        self.a_q = a_q
+        self.a_v = a_v
+        self.b_q = b_q
+        self.b_v = b_v
+        self.scaling_cur = scaling_cur
+        self.layer_index = int(layer_index)
+        self.dim = qkv.in_features
+        rank = projection_q.shape[0]
+        if projected_covariance_q is None:
+            projected_covariance_q = torch.zeros(rank, rank)
+        if projected_covariance_v is None:
+            projected_covariance_v = torch.zeros(rank, rank)
+        if sensitivity_q is None:
+            sensitivity_q = torch.zeros(self.dim)
+        if sensitivity_v is None:
+            sensitivity_v = torch.zeros(self.dim)
+        for name, tensor, shape in (
+            ("projection_q", projection_q, (rank, self.dim)),
+            ("projection_v", projection_v, (rank, self.dim)),
+            ("unified_up_q", unified_up_q, (self.dim, rank)),
+            ("unified_up_v", unified_up_v, (self.dim, rank)),
+            ("projected_covariance_q", projected_covariance_q, (rank, rank)),
+            ("projected_covariance_v", projected_covariance_v, (rank, rank)),
+            ("sensitivity_q", sensitivity_q, (self.dim,)),
+            ("sensitivity_v", sensitivity_v, (self.dim,)),
+        ):
+            if tuple(tensor.shape) != shape:
+                raise ValueError(
+                    "{} has shape {}; expected {}".format(
+                        name, tuple(tensor.shape), shape
+                    )
+                )
+            self.register_buffer(name, tensor.detach().clone(), persistent=False)
+        self.covariance_count_q = float(covariance_count_q)
+        self.covariance_count_v = float(covariance_count_v)
+        self.sensitivity_count_q = float(sensitivity_count_q)
+        self.sensitivity_count_v = float(sensitivity_count_v)
+        for name in (
+            "covariance_count_q",
+            "covariance_count_v",
+            "sensitivity_count_q",
+            "sensitivity_count_v",
+        ):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError("{} must be finite and non-negative".format(name))
+
+        self.register_buffer(
+            "_sbgc_covariance_sum_q",
+            torch.zeros(rank, rank, dtype=torch.float64),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_sbgc_covariance_sum_v",
+            torch.zeros(rank, rank, dtype=torch.float64),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_sbgc_sensitivity_sum_q",
+            torch.zeros(self.dim, dtype=torch.float64),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_sbgc_sensitivity_sum_v",
+            torch.zeros(self.dim, dtype=torch.float64),
+            persistent=False,
+        )
+        self._sbgc_collecting = False
+        self._sbgc_covariance_count_q = 0
+        self._sbgc_covariance_count_v = 0
+        self._sbgc_sensitivity_count_q = 0
+        self._sbgc_sensitivity_count_v = 0
+        self._sbgc_outputs = None
+
+    def historical_output(self, x):
+        return (
+            F.linear(F.linear(x, self.projection_q), self.unified_up_q),
+            F.linear(F.linear(x, self.projection_v), self.unified_up_v),
+        )
+
+    def current_output(self, x):
+        return (
+            self.scaling_cur[0](self.b_q(self.a_q(x))),
+            self.scaling_cur[0](self.b_v(self.a_v(x))),
+        )
+
+    def begin_sbgc_calibration(self):
+        self.clear_sbgc_calibration()
+        self._sbgc_collecting = True
+
+    def clear_sbgc_calibration(self):
+        self._sbgc_collecting = False
+        self._sbgc_covariance_sum_q.zero_()
+        self._sbgc_covariance_sum_v.zero_()
+        self._sbgc_sensitivity_sum_q.zero_()
+        self._sbgc_sensitivity_sum_v.zero_()
+        self._sbgc_covariance_count_q = 0
+        self._sbgc_covariance_count_v = 0
+        self._sbgc_sensitivity_count_q = 0
+        self._sbgc_sensitivity_count_v = 0
+        self._sbgc_outputs = None
+
+    def _collect_covariance(self, x, projection, destination):
+        flat = x.detach().reshape(-1, self.dim).to(dtype=torch.float64)
+        coordinates = flat @ projection.detach().to(dtype=torch.float64).t()
+        destination.add_(coordinates.t() @ coordinates)
+        return int(coordinates.shape[0])
+
+    def calibration_outputs(self):
+        if not self._sbgc_collecting or self._sbgc_outputs is None:
+            raise RuntimeError("SBGC calibration outputs are unavailable")
+        return self._sbgc_outputs
+
+    def accumulate_sensitivity(self, gradient_q, gradient_v, batch_size):
+        if not self._sbgc_collecting:
+            raise RuntimeError("SBGC sensitivity accumulation is not active")
+        if gradient_q.shape[-1] != self.dim or gradient_v.shape[-1] != self.dim:
+            raise ValueError("SBGC output gradient dimension mismatch")
+        if int(batch_size) <= 0:
+            raise ValueError("SBGC calibration batch size must be positive")
+        scale = float(batch_size)
+        q = gradient_q.detach().to(torch.float64) * scale
+        v = gradient_v.detach().to(torch.float64) * scale
+        q = q.reshape(-1, self.dim)
+        v = v.reshape(-1, self.dim)
+        self._sbgc_sensitivity_sum_q.add_(q.square().sum(dim=0))
+        self._sbgc_sensitivity_sum_v.add_(v.square().sum(dim=0))
+        self._sbgc_sensitivity_count_q += int(q.shape[0])
+        self._sbgc_sensitivity_count_v += int(v.shape[0])
+        self._sbgc_outputs = None
+
+    def consume_sbgc_statistics(self):
+        statistics = (
+            (
+                self._sbgc_covariance_sum_q.clone(),
+                self._sbgc_sensitivity_sum_q.clone(),
+                self._sbgc_covariance_count_q,
+                self._sbgc_sensitivity_count_q,
+            ),
+            (
+                self._sbgc_covariance_sum_v.clone(),
+                self._sbgc_sensitivity_sum_v.clone(),
+                self._sbgc_covariance_count_v,
+                self._sbgc_sensitivity_count_v,
+            ),
+        )
+        self.clear_sbgc_calibration()
+        return statistics
+
+    def forward(self, x):
+        historical_q, historical_v = self.historical_output(x)
+        current_q, current_v = self.current_output(x)
+        new_q = historical_q + current_q
+        new_v = historical_v + current_v
+        if self._sbgc_collecting:
+            self._sbgc_covariance_count_q += self._collect_covariance(
+                x, self.projection_q, self._sbgc_covariance_sum_q
+            )
+            self._sbgc_covariance_count_v += self._collect_covariance(
+                x, self.projection_v, self._sbgc_covariance_sum_v
+            )
+            self._sbgc_outputs = (new_q, new_v)
+        qkv = self.qkv(x)
+        qkv[:, :, : self.dim] += new_q
+        qkv[:, :, -self.dim :] += new_v
+        return qkv
+
+
 class _LiveAAggregateQKV(nn.Module):
     """QKV wrapper for Live-A Aggregate-B.
 
@@ -1782,6 +1985,12 @@ class SharedALoRA_ViT_timm(nn.Module):
         cumulative_merge=SA_MERGE_MODE_GAUGE,
         cumulative_rank=None,
         cuo_lambda=0.1,
+        g_risk_budget=0.05,
+        g_sensitivity_metric="fisher_diag",
+        g_sensitivity_floor=1e-4,
+        g_solver_ridge=1e-6,
+        g_bisection_steps=40,
+        g_shadow_only=False,
         freeze_old_scales=False,
         normalize_current_branch=False,
         live_a_history_groups=1,
@@ -1820,9 +2029,11 @@ class SharedALoRA_ViT_timm(nn.Module):
             SA_MERGE_MODE_UNION_SVD,
             SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
             SA_MERGE_MODE_CUO_LOWRANK,
+            SA_MERGE_MODE_SBGC,
         ):
             raise ValueError(
-                "cumulative_merge must be gauge/union_svd/live_a_aggregate_b/cuo_lowrank; "
+                "cumulative_merge must be gauge/union_svd/live_a_aggregate_b/"
+                "cuo_lowrank/sensitivity_budgeted_g; "
                 "got {}".format(
                     cumulative_merge
                 )
@@ -1861,6 +2072,48 @@ class SharedALoRA_ViT_timm(nn.Module):
                 )
             if not math.isfinite(self.cuo_lambda) or self.cuo_lambda <= 0:
                 raise ValueError("sa_cuo_lambda must be strictly positive and finite")
+        self.g_risk_budget = float(g_risk_budget)
+        self.g_sensitivity_metric = str(g_sensitivity_metric)
+        self.g_sensitivity_floor = float(g_sensitivity_floor)
+        self.g_solver_ridge = float(g_solver_ridge)
+        self.g_bisection_steps = int(g_bisection_steps)
+        self.g_shadow_only = bool(g_shadow_only)
+        if cumulative_merge == SA_MERGE_MODE_SBGC:
+            if not cumulative_state:
+                raise ValueError(
+                    "sensitivity_budgeted_g requires sa_cumulative_state=True"
+                )
+            if train_a_all_tasks:
+                raise ValueError(
+                    "sensitivity_budgeted_g requires sa_train_a_all_tasks=False"
+                )
+            if self.cumulative_rank != r:
+                raise ValueError(
+                    "sensitivity_budgeted_g requires sa_cumulative_rank "
+                    "to equal lora_rank"
+                )
+            if normalize_current_branch:
+                raise ValueError(
+                    "sensitivity_budgeted_g requires an unnormalized current branch"
+                )
+            if not math.isfinite(self.g_risk_budget) or not (
+                0.0 <= self.g_risk_budget <= 1.0
+            ):
+                raise ValueError("sa_g_risk_budget must be finite and in [0, 1]")
+            if self.g_sensitivity_metric not in ("uniform", "fisher_diag"):
+                raise ValueError(
+                    "sa_g_sensitivity_metric must be uniform or fisher_diag"
+                )
+            if not math.isfinite(self.g_sensitivity_floor) or not (
+                0.0 < self.g_sensitivity_floor <= 1.0
+            ):
+                raise ValueError(
+                    "sa_g_sensitivity_floor must be finite and in (0, 1]"
+                )
+            if not math.isfinite(self.g_solver_ridge) or self.g_solver_ridge <= 0:
+                raise ValueError("sa_g_solver_ridge must be positive and finite")
+            if self.g_bisection_steps <= 0:
+                raise ValueError("sa_g_bisection_steps must be positive")
         self.cumulative_merge = cumulative_merge
         self.freeze_old_scales = bool(freeze_old_scales)
         self.normalize_current_branch = bool(normalize_current_branch)
@@ -2073,11 +2326,14 @@ class SharedALoRA_ViT_timm(nn.Module):
                 )
             self.cumulative_state = False
         elif state_version == SA_STATE_VERSION:
-            if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+            if self.cumulative_merge in (
+                SA_MERGE_MODE_CUO_LOWRANK,
+                SA_MERGE_MODE_SBGC,
+            ):
                 raise ValueError(
-                    "cuo_lowrank requires a projected state at version {}; "
+                    "{} requires its own projected state; "
                     "artifact version {} cannot be migrated".format(
-                        SA_STATE_VERSION_CUO, state_version
+                        self.cumulative_merge, state_version
                     )
                 )
             if self.cumulative_merge in (
@@ -2174,6 +2430,66 @@ class SharedALoRA_ViT_timm(nn.Module):
                     "cuo_lowrank state task_id does not match the requested task"
                 )
             self.cumulative_state = True
+        elif state_version == SA_STATE_VERSION_SBGC:
+            if self.cumulative_merge != SA_MERGE_MODE_SBGC:
+                raise ValueError(
+                    "artifact is v{} sensitivity_budgeted_g but "
+                    "sa_cumulative_merge={}".format(
+                        SA_STATE_VERSION_SBGC, self.cumulative_merge
+                    )
+                )
+            required_sbgc_keys = {
+                "version",
+                "task_id",
+                "rank",
+                "merge_mode",
+                "projection_down",
+                "unified_up",
+                "projected_covariance",
+                "sensitivity_diag",
+                "covariance_count",
+                "sensitivity_count",
+                "risk_budget",
+                "sensitivity_metric",
+                "sensitivity_floor",
+                "solver_ridge",
+                "bisection_steps",
+                "shadow_only",
+            }
+            if set(state) != required_sbgc_keys:
+                raise ValueError(
+                    "sensitivity_budgeted_g state must contain only the v{} "
+                    "fixed-coordinate fields".format(SA_STATE_VERSION_SBGC)
+                )
+            if state["merge_mode"] != SA_MERGE_MODE_SBGC:
+                raise ValueError("SBGC state has an invalid merge_mode")
+            if int(state["rank"]) != self.rank:
+                raise ValueError("SBGC state rank does not match lora_rank")
+            saved_settings = {
+                "risk_budget": self.g_risk_budget,
+                "sensitivity_floor": self.g_sensitivity_floor,
+                "solver_ridge": self.g_solver_ridge,
+            }
+            for key, requested in saved_settings.items():
+                if not math.isclose(
+                    float(state[key]), float(requested), rel_tol=0.0, abs_tol=0.0
+                ):
+                    raise ValueError(
+                        "SBGC {} differs from the saved state".format(key)
+                    )
+            if state["sensitivity_metric"] != self.g_sensitivity_metric:
+                raise ValueError(
+                    "SBGC sensitivity_metric differs from the saved state"
+                )
+            if int(state["bisection_steps"]) != self.g_bisection_steps:
+                raise ValueError(
+                    "SBGC bisection_steps differs from the saved state"
+                )
+            if bool(state["shadow_only"]) != self.g_shadow_only:
+                raise ValueError("SBGC shadow_only differs from the saved state")
+            if self.task_id > 0 and int(state["task_id"]) != self.task_id:
+                raise ValueError("SBGC state task_id does not match requested task")
+            self.cumulative_state = True
         elif state_version == -1:
             # Fresh run: the flag decides which version new artifacts use.
             pass
@@ -2206,9 +2522,71 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.cuo_projection_down = []
         self.cuo_unified_up = []
         self.cuo_projected_gram = []
+        self.sbgc_projection_down = []
+        self.sbgc_unified_up = []
+        self.sbgc_projected_covariance = []
+        self.sbgc_sensitivity_diag = []
+        self.sbgc_covariance_count = []
+        self.sbgc_sensitivity_count = []
         if self.cumulative_state:
             expected_branches = 2 * len(self.lora_layer)
-            if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+            if self.cumulative_merge == SA_MERGE_MODE_SBGC:
+                self.sbgc_projection_down = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("projection_down", [])
+                ]
+                self.sbgc_unified_up = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("unified_up", [])
+                ]
+                self.sbgc_projected_covariance = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("projected_covariance", [])
+                ]
+                self.sbgc_sensitivity_diag = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("sensitivity_diag", [])
+                ]
+                self.sbgc_covariance_count = [
+                    float(value) for value in state.get("covariance_count", [])
+                ]
+                self.sbgc_sensitivity_count = [
+                    float(value) for value in state.get("sensitivity_count", [])
+                ]
+                self.aggregate_up = []
+                self.cumulative_up = []
+                self.canonical_down = []
+                self.triangular_r = []
+                lengths = (
+                    len(self.sbgc_projection_down),
+                    len(self.sbgc_unified_up),
+                    len(self.sbgc_projected_covariance),
+                    len(self.sbgc_sensitivity_diag),
+                    len(self.sbgc_covariance_count),
+                    len(self.sbgc_sensitivity_count),
+                )
+                if self.task_id > 0 and any(
+                    length != expected_branches for length in lengths
+                ):
+                    raise ValueError(
+                        "SBGC state must contain {} Q/V branches; got {}".format(
+                            expected_branches, lengths
+                        )
+                    )
+                if self.task_id > 0 and (
+                    any(value <= 0 for value in self.sbgc_covariance_count)
+                    or any(value <= 0 for value in self.sbgc_sensitivity_count)
+                ):
+                    raise ValueError("SBGC state counts must be positive")
+                if self.task_id > 0 and not self.sbgc_projection_down:
+                    raise FileNotFoundError(
+                        "{} is required before training task {}".format(
+                            _join_path(self.save_file, SA_STATE_FILENAME),
+                            self.task_id,
+                        )
+                    )
+                shared_a = list(self.sbgc_projection_down)
+            elif self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
                 self.cuo_projection_down = [
                     tensor.detach().cpu().float()
                     for tensor in state.get("projection_down", [])
@@ -2360,6 +2738,12 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._cuo_calibration_finalized = False
         self._cuo_deployment_saved = self.task_id > 0
         self._last_cuo_calibration_stats = None
+        self._sbgc_calibration_prepared = False
+        self._sbgc_calibration_finalized = False
+        self._sbgc_deployment_saved = self.task_id > 0
+        self._last_sbgc_calibration_stats = None
+        self._last_sbgc_branch_diagnostics = None
+        self._sbgc_task0_operator_error = 0.0
         # HBD teacher lifecycle (plain attributes; never enter state_dict).
         self._hbd_capture_list = None
         # These values are deliberately task-local and are not buffers or
@@ -2509,6 +2893,58 @@ class SharedALoRA_ViT_timm(nn.Module):
                         ),
                         recoverability_sketch_rank=self.recoverability_sketch_rank,
                         normalize_current_branch=self.normalize_current_branch,
+                    )
+                elif self.cumulative_merge == SA_MERGE_MODE_SBGC:
+                    if offset < len(self.sbgc_projection_down):
+                        projection_q = self.sbgc_projection_down[offset]
+                        unified_up_q = self.sbgc_unified_up[offset]
+                        covariance_q = self.sbgc_projected_covariance[offset]
+                        sensitivity_q = self.sbgc_sensitivity_diag[offset]
+                        covariance_count_q = self.sbgc_covariance_count[offset]
+                        sensitivity_count_q = self.sbgc_sensitivity_count[offset]
+                        projection_v = self.sbgc_projection_down[offset + 1]
+                        unified_up_v = self.sbgc_unified_up[offset + 1]
+                        covariance_v = self.sbgc_projected_covariance[offset + 1]
+                        sensitivity_v = self.sbgc_sensitivity_diag[offset + 1]
+                        covariance_count_v = self.sbgc_covariance_count[offset + 1]
+                        sensitivity_count_v = self.sbgc_sensitivity_count[offset + 1]
+                    else:
+                        projection_q = row_orthonormal_projection(
+                            a_q.weight.detach().cpu()
+                        )
+                        projection_v = row_orthonormal_projection(
+                            a_v.weight.detach().cpu()
+                        )
+                        unified_up_q = torch.zeros(dim, r)
+                        unified_up_v = torch.zeros(dim, r)
+                        covariance_q = torch.zeros(r, r)
+                        covariance_v = torch.zeros(r, r)
+                        sensitivity_q = torch.zeros(dim)
+                        sensitivity_v = torch.zeros(dim)
+                        covariance_count_q = 0.0
+                        covariance_count_v = 0.0
+                        sensitivity_count_q = 0.0
+                        sensitivity_count_v = 0.0
+                    blk.attn.qkv = _SensitivityBudgetedGQKV(
+                        qkv,
+                        a_q,
+                        a_v,
+                        b_q,
+                        b_v,
+                        projection_q,
+                        unified_up_q,
+                        projection_v,
+                        unified_up_v,
+                        self.wrapped_param,
+                        layer_index,
+                        projected_covariance_q=covariance_q,
+                        projected_covariance_v=covariance_v,
+                        sensitivity_q=sensitivity_q,
+                        sensitivity_v=sensitivity_v,
+                        covariance_count_q=covariance_count_q,
+                        covariance_count_v=covariance_count_v,
+                        sensitivity_count_q=sensitivity_count_q,
+                        sensitivity_count_v=sensitivity_count_v,
                     )
                 elif self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
                     if offset < len(self.cuo_projection_down):
@@ -4541,6 +4977,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 SA_STATE_VERSION_UNION,
                 SA_STATE_VERSION_LIVE_A,
                 SA_STATE_VERSION_CUO,
+                SA_STATE_VERSION_SBGC,
             ):
                 raise ValueError("unsupported shared-A state version")
             return state
@@ -4553,6 +4990,421 @@ class SharedALoRA_ViT_timm(nn.Module):
                     nn.init.kaiming_uniform_(w_a.weight, a=math.sqrt(5))
         for w_b in self.w_Bs:
             nn.init.zeros_(w_b.weight)
+
+    def _sbgc_wrappers(self):
+        wrappers = [
+            block.attn.qkv
+            for block in self.lora_vit.blocks
+            if isinstance(block.attn.qkv, _SensitivityBudgetedGQKV)
+        ]
+        if len(wrappers) != len(self.w_As) // 2:
+            raise RuntimeError("SBGC wrapper topology does not match Q/V factors")
+        return wrappers
+
+    @staticmethod
+    def _sbgc_distributed():
+        return dist.is_available() and dist.is_initialized()
+
+    def prepare_sbgc_calibration(self):
+        """Canonicalize Task 0 exactly, then begin deterministic collection."""
+        if self.cumulative_merge != SA_MERGE_MODE_SBGC:
+            raise RuntimeError("prepare_sbgc_calibration requires SBGC")
+        wrappers = self._sbgc_wrappers()
+        is_main = not self._sbgc_distributed() or dist.get_rank() == 0
+        max_error = 0.0
+        if self.task_id == 0 and is_main:
+            with torch.no_grad():
+                scale = self.wrapped_param[0].param.detach().reshape(())
+                for wrapper in wrappers:
+                    for a_module, b_module, projection in (
+                        (wrapper.a_q, wrapper.b_q, wrapper.projection_q),
+                        (wrapper.a_v, wrapper.b_v, wrapper.projection_v),
+                    ):
+                        old_a = a_module.weight.detach().clone()
+                        old_b = b_module.weight.detach().clone()
+                        before = scale * (old_b @ old_a)
+                        canonical_a, triangular = canonical_down_projection(old_a)
+                        canonical_a = canonical_a.to(old_a)
+                        transformed_b = old_b @ triangular.to(old_b).t()
+                        a_module.weight.copy_(canonical_a)
+                        b_module.weight.copy_(transformed_b)
+                        projection.copy_(canonical_a.to(projection))
+                        after = scale * (transformed_b @ canonical_a)
+                        relative = torch.linalg.matrix_norm(
+                            after - before
+                        ) / torch.linalg.matrix_norm(before).clamp_min(1e-12)
+                        max_error = max(max_error, float(relative))
+        if self._sbgc_distributed():
+            for wrapper in wrappers:
+                for tensor in (
+                    wrapper.a_q.weight,
+                    wrapper.b_q.weight,
+                    wrapper.projection_q,
+                    wrapper.a_v.weight,
+                    wrapper.b_v.weight,
+                    wrapper.projection_v,
+                ):
+                    dist.broadcast(tensor, src=0)
+            error_tensor = self.wrapped_param[0].param.new_tensor(max_error)
+            dist.broadcast(error_tensor, src=0)
+            max_error = float(error_tensor)
+        self._sbgc_task0_operator_error = max_error
+        for wrapper in wrappers:
+            if self.task_id > 0:
+                if not torch.equal(
+                    wrapper.a_q.weight.detach(), wrapper.projection_q
+                ) or not torch.equal(
+                    wrapper.a_v.weight.detach(), wrapper.projection_v
+                ):
+                    raise RuntimeError("SBGC current A must equal the frozen P")
+                if wrapper.a_q.weight.requires_grad or wrapper.a_v.weight.requires_grad:
+                    raise RuntimeError("SBGC P must be frozen after Task 0")
+            wrapper.begin_sbgc_calibration()
+        self._sbgc_calibration_prepared = True
+        self._sbgc_calibration_finalized = False
+
+    def sbgc_calibration_outputs(self):
+        """Return Q/V residual tensors from the most recent calibration forward."""
+        outputs = []
+        for wrapper in self._sbgc_wrappers():
+            outputs.extend(wrapper.calibration_outputs())
+        return outputs
+
+    def accumulate_sbgc_sensitivities(self, gradients, batch_size):
+        wrappers = self._sbgc_wrappers()
+        if len(gradients) != 2 * len(wrappers):
+            raise ValueError("SBGC gradient count does not match Q/V branches")
+        for index, wrapper in enumerate(wrappers):
+            wrapper.accumulate_sensitivity(
+                gradients[2 * index], gradients[2 * index + 1], batch_size
+            )
+
+    def _reduce_sbgc_statistics(
+        self, covariance_sum, sensitivity_sum, covariance_count, sensitivity_count
+    ):
+        counts = covariance_sum.new_tensor(
+            [covariance_count, sensitivity_count], dtype=torch.float64
+        )
+        if self._sbgc_distributed():
+            dist.all_reduce(covariance_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(sensitivity_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(counts, op=dist.ReduceOp.SUM)
+        return (
+            covariance_sum,
+            sensitivity_sum,
+            int(counts[0].item()),
+            int(counts[1].item()),
+        )
+
+    def _broadcast_sbgc_branch_state(
+        self, projection, unified_up, covariance, sensitivity, counts
+    ):
+        if not self._sbgc_distributed():
+            return counts
+        for tensor in (projection, unified_up, covariance, sensitivity):
+            dist.broadcast(tensor, src=0)
+        count_tensor = unified_up.new_tensor(counts, dtype=torch.float64)
+        dist.broadcast(count_tensor, src=0)
+        return float(count_tensor[0]), float(count_tensor[1])
+
+    def finalize_sbgc_calibration(self):
+        """Solve, deploy and synchronize all fixed-coordinate G branches."""
+        if self.cumulative_merge != SA_MERGE_MODE_SBGC:
+            raise RuntimeError("finalize_sbgc_calibration requires SBGC")
+        if not self._sbgc_calibration_prepared:
+            raise RuntimeError("SBGC calibration must be prepared before finalization")
+        is_main = not self._sbgc_distributed() or dist.get_rank() == 0
+        scale = self.wrapped_param[0].param.detach().reshape(())
+        branch_diagnostics = []
+        wrappers = self._sbgc_wrappers()
+        for wrapper in wrappers:
+            q_statistics, v_statistics = wrapper.consume_sbgc_statistics()
+            branch_specs = (
+                (
+                    wrapper.projection_q,
+                    wrapper.unified_up_q,
+                    wrapper.projected_covariance_q,
+                    wrapper.sensitivity_q,
+                    wrapper.b_q.weight,
+                    "q",
+                    q_statistics,
+                    wrapper.covariance_count_q,
+                    wrapper.sensitivity_count_q,
+                ),
+                (
+                    wrapper.projection_v,
+                    wrapper.unified_up_v,
+                    wrapper.projected_covariance_v,
+                    wrapper.sensitivity_v,
+                    wrapper.b_v.weight,
+                    "v",
+                    v_statistics,
+                    wrapper.covariance_count_v,
+                    wrapper.sensitivity_count_v,
+                ),
+            )
+            for (
+                projection,
+                unified_up,
+                historical_covariance,
+                historical_sensitivity,
+                current_b,
+                branch_name,
+                statistics,
+                historical_covariance_count,
+                historical_sensitivity_count,
+            ) in branch_specs:
+                covariance_sum, sensitivity_sum, covariance_count, sensitivity_count = (
+                    statistics
+                )
+                (
+                    covariance_sum,
+                    sensitivity_sum,
+                    covariance_count,
+                    sensitivity_count,
+                ) = self._reduce_sbgc_statistics(
+                    covariance_sum,
+                    sensitivity_sum,
+                    covariance_count,
+                    sensitivity_count,
+                )
+                if covariance_count <= 0 or sensitivity_count <= 0:
+                    raise RuntimeError("SBGC calibration collected no valid observations")
+                if is_main:
+                    current_covariance = covariance_sum / float(covariance_count)
+                    current_covariance = 0.5 * (
+                        current_covariance + current_covariance.t()
+                    )
+                    current_sensitivity = normalize_sensitivity(
+                        sensitivity_sum / float(sensitivity_count),
+                        floor=self.g_sensitivity_floor,
+                    )
+                    old = unified_up.detach().to(torch.float64)
+                    target = old + scale.to(torch.float64) * current_b.detach().to(
+                        torch.float64
+                    )
+                    fisher_diagnostics = {
+                        "eta": 0.0,
+                        "target_risk": 0.0,
+                        "achieved_risk": 0.0,
+                        "current_distortion": 0.0,
+                        "constraint_active": False,
+                    }
+                    uniform_diagnostics = dict(fisher_diagnostics)
+                    fisher_candidate = target
+                    uniform_candidate = target
+                    if self.task_id > 0:
+                        hist_cov = historical_covariance.detach().to(torch.float64)
+                        hist_sens = historical_sensitivity.detach().to(torch.float64)
+                        if not bool(torch.isfinite(hist_sens).all()) or not bool(
+                            hist_sens.mean() > 0
+                        ):
+                            raise RuntimeError(
+                                "SBGC historical sensitivity is missing or invalid"
+                            )
+                        fisher_candidate, fisher_diagnostics = (
+                            solve_sensitivity_budgeted_g(
+                                old,
+                                target,
+                                hist_cov,
+                                current_covariance,
+                                hist_sens,
+                                current_sensitivity,
+                                risk_budget=self.g_risk_budget,
+                                ridge=self.g_solver_ridge,
+                                bisection_steps=self.g_bisection_steps,
+                            )
+                        )
+                        ones_old = torch.ones_like(hist_sens)
+                        ones_current = torch.ones_like(current_sensitivity)
+                        uniform_candidate, uniform_diagnostics = (
+                            solve_sensitivity_budgeted_g(
+                                old,
+                                target,
+                                hist_cov,
+                                current_covariance,
+                                ones_old,
+                                ones_current,
+                                risk_budget=self.g_risk_budget,
+                                ridge=self.g_solver_ridge,
+                                bisection_steps=self.g_bisection_steps,
+                            )
+                        )
+                    selected = (
+                        fisher_candidate
+                        if self.g_sensitivity_metric == "fisher_diag"
+                        else uniform_candidate
+                    )
+                    selected_diagnostics = (
+                        fisher_diagnostics
+                        if self.g_sensitivity_metric == "fisher_diag"
+                        else uniform_diagnostics
+                    )
+                    if self.g_shadow_only:
+                        selected = target
+                    deployed = selected.to(unified_up)
+                    deployed_risk = 0.0
+                    if self.task_id > 0:
+                        deployed_risk = float(
+                            historical_response_risk(
+                                deployed.to(torch.float64),
+                                old,
+                                historical_covariance.detach().to(torch.float64),
+                                historical_sensitivity.detach().to(torch.float64),
+                            )
+                        )
+                        if (
+                            not self.g_shadow_only
+                            and deployed_risk > self.g_risk_budget + 1e-6
+                        ):
+                            raise RuntimeError(
+                                "SBGC FP32 deployment violates the historical "
+                                "risk budget: {:.9e} > {:.9e}".format(
+                                    deployed_risk, self.g_risk_budget
+                                )
+                            )
+                    unified_up.copy_(deployed)
+                    updated_covariance, updated_covariance_count = (
+                        update_running_moment(
+                            historical_covariance.detach().to(torch.float64),
+                            historical_covariance_count,
+                            current_covariance,
+                            covariance_count,
+                        )
+                    )
+                    updated_sensitivity, updated_sensitivity_count = (
+                        update_running_moment(
+                            historical_sensitivity.detach().to(torch.float64),
+                            historical_sensitivity_count,
+                            current_sensitivity,
+                            sensitivity_count,
+                        )
+                    )
+                    historical_covariance.copy_(updated_covariance.to(historical_covariance))
+                    historical_sensitivity.copy_(
+                        normalize_sensitivity(
+                            updated_sensitivity,
+                            floor=self.g_sensitivity_floor,
+                        ).to(historical_sensitivity)
+                    )
+                    candidate_gap = torch.linalg.matrix_norm(
+                        fisher_candidate - uniform_candidate
+                    ) / torch.linalg.matrix_norm(fisher_candidate).clamp_min(1e-12)
+                    branch_diagnostics.append(
+                        {
+                            "layer": wrapper.layer_index,
+                            "branch": branch_name,
+                            "covariance_count": covariance_count,
+                            "sensitivity_count": sensitivity_count,
+                            "sensitivity_cv": float(
+                                current_sensitivity.std(unbiased=False)
+                                / current_sensitivity.mean().clamp_min(1e-12)
+                            ),
+                            "sensitivity_max": float(current_sensitivity.max()),
+                            "candidate_relative_gap": float(candidate_gap),
+                            "fisher": fisher_diagnostics,
+                            "uniform": uniform_diagnostics,
+                            "selected_metric": self.g_sensitivity_metric,
+                            "selected": selected_diagnostics,
+                            "deployed_historical_risk": deployed_risk,
+                            "deployed_update_norm": float(
+                                torch.linalg.matrix_norm(selected - old)
+                            ),
+                        }
+                    )
+                    counts = (
+                        updated_covariance_count,
+                        updated_sensitivity_count,
+                    )
+                else:
+                    counts = (0.0, 0.0)
+                counts = self._broadcast_sbgc_branch_state(
+                    projection,
+                    unified_up,
+                    historical_covariance,
+                    historical_sensitivity,
+                    counts,
+                )
+                if branch_name == "q":
+                    wrapper.covariance_count_q = counts[0]
+                    wrapper.sensitivity_count_q = counts[1]
+                else:
+                    wrapper.covariance_count_v = counts[0]
+                    wrapper.sensitivity_count_v = counts[1]
+
+        self.sbgc_projection_down = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.projection_q, wrapper.projection_v)
+        ]
+        self.sbgc_unified_up = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+        ]
+        self.sbgc_projected_covariance = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (
+                wrapper.projected_covariance_q,
+                wrapper.projected_covariance_v,
+            )
+        ]
+        self.sbgc_sensitivity_diag = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.sensitivity_q, wrapper.sensitivity_v)
+        ]
+        self.sbgc_covariance_count = [
+            value
+            for wrapper in wrappers
+            for value in (wrapper.covariance_count_q, wrapper.covariance_count_v)
+        ]
+        self.sbgc_sensitivity_count = [
+            value
+            for wrapper in wrappers
+            for value in (wrapper.sensitivity_count_q, wrapper.sensitivity_count_v)
+        ]
+        with torch.no_grad():
+            for weight in self.w_Bs:
+                weight.weight.zero_()
+        self._sbgc_calibration_prepared = False
+        self._sbgc_calibration_finalized = True
+        self._last_sbgc_branch_diagnostics = branch_diagnostics if is_main else None
+        if is_main:
+            active = [
+                item
+                for item in branch_diagnostics
+                if item["selected"]["constraint_active"]
+            ]
+            self._last_sbgc_calibration_stats = {
+                "branch_count": len(branch_diagnostics),
+                "task0_operator_error": self._sbgc_task0_operator_error,
+                "active_constraints": len(active),
+                "max_achieved_risk": max(
+                    (
+                        item["deployed_historical_risk"]
+                        for item in branch_diagnostics
+                    ),
+                    default=0.0,
+                ),
+                "mean_current_distortion": sum(
+                    item["selected"]["current_distortion"]
+                    for item in branch_diagnostics
+                )
+                / max(len(branch_diagnostics), 1),
+                "mean_sensitivity_cv": sum(
+                    item["sensitivity_cv"] for item in branch_diagnostics
+                )
+                / max(len(branch_diagnostics), 1),
+                "mean_candidate_gap": sum(
+                    item["candidate_relative_gap"] for item in branch_diagnostics
+                )
+                / max(len(branch_diagnostics), 1),
+            }
+        else:
+            self._last_sbgc_calibration_stats = None
+        return self._last_sbgc_calibration_stats
 
     def _cuo_wrappers(self):
         wrappers = [
@@ -4721,6 +5573,9 @@ class SharedALoRA_ViT_timm(nn.Module):
 
     def save_lora_parameters(self, filename: str, task_id) -> None:
         if self.cumulative_state:
+            if self.cumulative_merge == SA_MERGE_MODE_SBGC:
+                self._save_sbgc_state(filename, task_id)
+                return
             if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
                 self._save_cuo_lowrank_state(filename, task_id)
                 return
@@ -4753,6 +5608,95 @@ class SharedALoRA_ViT_timm(nn.Module):
             },
             _join_path(filename, SA_STATE_FILENAME),
         )
+        self.save_merged_lora(filename)
+
+    def _save_sbgc_state(self, filename: str, task_id) -> None:
+        """Persist SBGC's fixed coordinates and task-constant moments."""
+        if task_id != self.task_id:
+            raise ValueError(
+                "SBGC state save called with task_id={} but task_id is {}".format(
+                    task_id, self.task_id
+                )
+            )
+        if not self._sbgc_calibration_finalized:
+            raise RuntimeError(
+                "SBGC state save requires finalized all-rank calibration"
+            )
+        if not os.path.exists(filename):
+            os.makedirs(filename)
+        wrappers = self._sbgc_wrappers()
+        projection_down = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.projection_q, wrapper.projection_v)
+        ]
+        unified_up = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+        ]
+        projected_covariance = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (
+                wrapper.projected_covariance_q,
+                wrapper.projected_covariance_v,
+            )
+        ]
+        sensitivity_diag = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.sensitivity_q, wrapper.sensitivity_v)
+        ]
+        covariance_count = torch.tensor(
+            [
+                value
+                for wrapper in wrappers
+                for value in (
+                    wrapper.covariance_count_q,
+                    wrapper.covariance_count_v,
+                )
+            ],
+            dtype=torch.float64,
+        )
+        sensitivity_count = torch.tensor(
+            [
+                value
+                for wrapper in wrappers
+                for value in (
+                    wrapper.sensitivity_count_q,
+                    wrapper.sensitivity_count_v,
+                )
+            ],
+            dtype=torch.float64,
+        )
+        self.task_id += 1
+        state = {
+            "version": SA_STATE_VERSION_SBGC,
+            "task_id": self.task_id,
+            "rank": self.rank,
+            "merge_mode": SA_MERGE_MODE_SBGC,
+            "projection_down": projection_down,
+            "unified_up": unified_up,
+            "projected_covariance": projected_covariance,
+            "sensitivity_diag": sensitivity_diag,
+            "covariance_count": covariance_count,
+            "sensitivity_count": sensitivity_count,
+            "risk_budget": self.g_risk_budget,
+            "sensitivity_metric": self.g_sensitivity_metric,
+            "sensitivity_floor": self.g_sensitivity_floor,
+            "solver_ridge": self.g_solver_ridge,
+            "bisection_steps": self.g_bisection_steps,
+            "shadow_only": self.g_shadow_only,
+        }
+        torch.save(state, _join_path(filename, SA_STATE_FILENAME))
+        self.sbgc_projection_down = projection_down
+        self.sbgc_unified_up = unified_up
+        self.sbgc_projected_covariance = projected_covariance
+        self.sbgc_sensitivity_diag = sensitivity_diag
+        self.sbgc_covariance_count = covariance_count.tolist()
+        self.sbgc_sensitivity_count = sensitivity_count.tolist()
+        self._sbgc_deployment_saved = True
         self.save_merged_lora(filename)
 
     def _save_cuo_lowrank_state(self, filename: str, task_id) -> None:
@@ -5176,6 +6120,40 @@ class SharedALoRA_ViT_timm(nn.Module):
 
     def save_merged_lora(self, filename: str) -> None:
         """Store the exact combined bank as one B per layer (storage metric)."""
+        if self.cumulative_merge == SA_MERGE_MODE_SBGC:
+            if not (
+                self._sbgc_calibration_finalized or self._sbgc_deployment_saved
+            ):
+                raise RuntimeError(
+                    "SBGC merged save requires finalized all-rank calibration"
+                )
+            if not os.path.exists(filename):
+                os.makedirs(filename)
+            wrappers = self._sbgc_wrappers()
+            torch.save(
+                {
+                    "version": SA_STATE_VERSION_SBGC,
+                    "task_id": (
+                        self.task_id - 1
+                        if self._sbgc_deployment_saved
+                        else self.task_id
+                    ),
+                    "rank": self.rank,
+                    "merge_mode": SA_MERGE_MODE_SBGC,
+                    "projection_down": [
+                        tensor.detach().cpu().float().clone()
+                        for wrapper in wrappers
+                        for tensor in (wrapper.projection_q, wrapper.projection_v)
+                    ],
+                    "unified_up": [
+                        tensor.detach().cpu().float().clone()
+                        for wrapper in wrappers
+                        for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+                    ],
+                },
+                _join_path(filename, SA_MERGED_FILENAME),
+            )
+            return
         if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
             if not (
                 self._cuo_calibration_finalized or self._cuo_deployment_saved

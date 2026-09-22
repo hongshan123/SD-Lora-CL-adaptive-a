@@ -346,6 +346,12 @@ def test_learner_boundary_pass_preserves_rng_head_and_existing_gradients(tmp_pat
     )
     assert diagnostics["version"] == 1
     assert diagnostics["tasks"][0]["task_id"] == 0
+    stats = diagnostics["tasks"][0]["stats"]
+    assert stats["calibration_seconds"] >= 0.0
+    assert stats["solver_seconds"] >= 0.0
+    assert stats["boundary_seconds"] >= stats["calibration_seconds"]
+    assert stats["peak_cuda_allocated_mib"] == 0.0
+    assert stats["additional_peak_cuda_allocated_mib"] == 0.0
 
 
 @pytest.mark.parametrize(

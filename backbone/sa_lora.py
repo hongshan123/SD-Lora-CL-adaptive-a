@@ -12,6 +12,7 @@ which reproduces the exact forward of the per-task bank at evaluation time.
 import math
 import copy
 import os
+import time
 from collections.abc import Sequence
 from contextlib import contextmanager
 
@@ -5116,6 +5117,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         is_main = not self._sbgc_distributed() or dist.get_rank() == 0
         scale = self.wrapped_param[0].param.detach().reshape(())
         branch_diagnostics = []
+        solver_seconds = 0.0
         wrappers = self._sbgc_wrappers()
         for wrapper in wrappers:
             q_statistics, v_statistics = wrapper.consume_sbgc_statistics()
@@ -5202,6 +5204,9 @@ class SharedALoRA_ViT_timm(nn.Module):
                             raise RuntimeError(
                                 "SBGC historical sensitivity is missing or invalid"
                             )
+                        if old.is_cuda:
+                            torch.cuda.synchronize(old.device)
+                        solver_started = time.perf_counter()
                         fisher_candidate, fisher_diagnostics = (
                             solve_sensitivity_budgeted_g(
                                 old,
@@ -5230,6 +5235,9 @@ class SharedALoRA_ViT_timm(nn.Module):
                                 bisection_steps=self.g_bisection_steps,
                             )
                         )
+                        if old.is_cuda:
+                            torch.cuda.synchronize(old.device)
+                        solver_seconds += time.perf_counter() - solver_started
                     selected = (
                         fisher_candidate
                         if self.g_sensitivity_metric == "fisher_diag"
@@ -5401,6 +5409,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                     item["candidate_relative_gap"] for item in branch_diagnostics
                 )
                 / max(len(branch_diagnostics), 1),
+                "solver_seconds": solver_seconds,
             }
         else:
             self._last_sbgc_calibration_stats = None

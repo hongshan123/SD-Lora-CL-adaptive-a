@@ -3,6 +3,7 @@ import copy
 import json
 import math
 import os
+import time
 from contextlib import nullcontext
 from numbers import Integral
 
@@ -2140,6 +2141,16 @@ class Learner(SDLoraLearner):
         before_gradients = parameter_gradient_map() if run_sbgc else None
         rng_before = rng_state_hash()
         was_training = raw_network.training
+        sbgc_boundary_started = None
+        sbgc_calibration_started = None
+        sbgc_calibration_seconds = 0.0
+        sbgc_memory_baseline = 0
+        if run_sbgc:
+            if self._device.type == "cuda":
+                torch.cuda.synchronize(self._device)
+                sbgc_memory_baseline = torch.cuda.memory_allocated(self._device)
+                torch.cuda.reset_peak_memory_stats(self._device)
+            sbgc_boundary_started = time.perf_counter()
         raw_network.eval()
         try:
             if run_sbgc:
@@ -2148,6 +2159,10 @@ class Learner(SDLoraLearner):
                 backbone.prepare_cuo_calibration()
             if run_hoep:
                 backbone.prepare_hoep_activation_calibration()
+            if run_sbgc:
+                if self._device.type == "cuda":
+                    torch.cuda.synchronize(self._device)
+                sbgc_calibration_started = time.perf_counter()
             with rng_preserving():
                 loader = deterministic_loader(
                     dataset,
@@ -2187,8 +2202,38 @@ class Learner(SDLoraLearner):
                                 inputs.to(self._device, non_blocking=True)
                             )
             if run_sbgc:
+                if self._device.type == "cuda":
+                    torch.cuda.synchronize(self._device)
+                sbgc_calibration_seconds = (
+                    time.perf_counter() - sbgc_calibration_started
+                )
                 stats = backbone.finalize_sbgc_calibration()
+                if self._device.type == "cuda":
+                    torch.cuda.synchronize(self._device)
+                    peak_allocated = torch.cuda.max_memory_allocated(self._device)
+                else:
+                    peak_allocated = 0
+                runtime = torch.tensor(
+                    [
+                        sbgc_calibration_seconds,
+                        time.perf_counter() - sbgc_boundary_started,
+                        peak_allocated / (1024.0**2),
+                        max(peak_allocated - sbgc_memory_baseline, 0) / (1024.0**2),
+                    ],
+                    dtype=torch.float64,
+                    device=self._device,
+                )
+                if dist.is_available() and dist.is_initialized():
+                    dist.all_reduce(runtime, op=dist.ReduceOp.MAX)
                 if self._is_main_process():
+                    stats.update(
+                        {
+                            "calibration_seconds": float(runtime[0]),
+                            "boundary_seconds": float(runtime[1]),
+                            "peak_cuda_allocated_mib": float(runtime[2]),
+                            "additional_peak_cuda_allocated_mib": float(runtime[3]),
+                        }
+                    )
                     path = os.path.join(
                         self.args["filepath"], SBGC_DIAGNOSTICS_FILENAME
                     )
@@ -2411,7 +2456,10 @@ class Learner(SDLoraLearner):
                         "[SBGC] task %d branches=%d active=%d "
                         "max_risk=%.6e mean_distortion=%.6e "
                         "mean_sensitivity_cv=%.6e mean_candidate_gap=%.6e "
-                        "task0_operator_error=%.6e lora_scalars=%d "
+                        "task0_operator_error=%.6e calibration_seconds=%.3f "
+                        "solver_seconds=%.3f boundary_seconds=%.3f "
+                        "peak_cuda_mib=%.1f additional_peak_cuda_mib=%.1f "
+                        "lora_scalars=%d "
                         "covariance_scalars=%d sensitivity_scalars=%d "
                         "count_scalars=%d persistent_scalar_total=%d",
                         self._cur_task,
@@ -2422,6 +2470,11 @@ class Learner(SDLoraLearner):
                         stats["mean_sensitivity_cv"],
                         stats["mean_candidate_gap"],
                         stats["task0_operator_error"],
+                        stats["calibration_seconds"],
+                        stats["solver_seconds"],
+                        stats["boundary_seconds"],
+                        stats["peak_cuda_allocated_mib"],
+                        stats["additional_peak_cuda_allocated_mib"],
                         counts["lora_factor_scalars"],
                         counts["covariance_scalars"],
                         counts["sensitivity_scalars"],

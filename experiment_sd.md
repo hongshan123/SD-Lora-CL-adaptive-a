@@ -941,3 +941,5 @@
 - 对照与归因：独立 merge mode 硬性排除 Adaptive-A、transport、HBD、NormCap、Dual-B 与 normalized current branch。uniform sensitivity 是关键消融，`shadow_only` 只算候选而部署 additive Frozen-P。
 - 已完成：31 个 CPU 数学/集成测试全部通过；两进程 DDP smoke 通过，Task 1 部署风险不超过 0.05，两个 rank 状态 hash 一致，state save/rebuild logits 一致。
 - 当前结果：尚无真实数据性能结果。下一步只运行三个数据集 Task 0/1、双卡每卡 batch64 的 P0；P0 未通过时不得启动 T=10。
+- P0 结果：三数据集均完整通过。Task 0 operator error 为 `1.23e-7` 左右；Task 1 均有 24/24 分支激活且 max deployed risk 为 `0.05000000x`。C100/INR/CUB 的 mean target distortion 分别为 `0.4168/0.5656/0.5835`，Fisher/uniform gap 为 `0.0698/0.0395/0.0621`。
+- P0 判断：状态、DDP、风险和确定性实现通过，但 5% 预算对当前目标的扭曲偏大。按预注册协议进入 P1 shadow diagnostic，不能据两任务准确率作性能结论。

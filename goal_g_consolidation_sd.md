@@ -100,7 +100,8 @@ P2 单 seed严格比较 Frozen-P additive、`cuo_lowrank`、uniform-budget G、F
 - [x] v6 task-constant artifact、严格恢复校验与 merged deployment；
 - [x] 31 个 CPU 数学/集成测试；
 - [x] 两进程 DDP lifecycle smoke，rank 状态 hash 一致；
-- [ ] 三数据集真实 P0 Task 0/1 smoke；
+- [x] 三数据集真实 P0 Task 0/1 smoke，工程验收通过；
 - [ ] P0 通过后启动 P1 shadow diagnostic；
 - [ ] 根据预注册条件作 Go/No-Go，不做数据集专属预算搜索。
 
+P0 数值见 `sbgc_p0_real_data_smoke_results.md`。三数据集 Task 1 均为 24/24 分支激活风险约束，但 current-target distortion 已达 0.42--0.58；P1 必须以 shadow 方式验证该现象是否贯穿完整序列。

@@ -29,11 +29,15 @@ from backbone.linears import SimpleLinear
 from backbone.lora import ParameterWrapper
 from backbone.operator_energy_partition import (
     canonicalize_operator_coordinates,
+    diagonal_functional_energies,
     historical_energy_coordinates,
+    mask_jaccard,
     project_partition_gradient,
     retract_partitioned_coordinates,
     rotate_operator_coordinates,
     select_global_low_energy_partition,
+    spectral_tie_group_ids,
+    spearman_rank_correlation,
 )
 from backbone.recoverability import (
     accessibility_candidates,
@@ -1560,6 +1564,8 @@ class _LiveAAggregateQKV(nn.Module):
             "pending_input_square_sum", torch.zeros(self.dim), persistent=False
         )
         self.pending_input_count = 0.0
+        self._hoep_calibration_active = False
+        self._hoep_calibration_finalized = False
         self.register_buffer(
             "aggregate_q", aggregate_q.clone(), persistent=False
         )
@@ -1605,7 +1611,12 @@ class _LiveAAggregateQKV(nn.Module):
         return output / denom
 
     def forward(self, x):
-        if self.training and self.capture_input_sketch:
+        if self._hoep_calibration_active:
+            with torch.no_grad():
+                flat = x.detach().float().reshape(-1, self.dim)
+                self.task_input_square_sum.add_(flat.square().sum(dim=0))
+                self.task_input_count += float(flat.shape[0])
+        elif self.training and self.capture_input_sketch:
             with torch.no_grad():
                 flat = x.detach().float().reshape(-1, self.dim)
                 self.pending_input_square_sum.add_(flat.square().sum(dim=0))
@@ -1693,6 +1704,36 @@ class _LiveAAggregateQKV(nn.Module):
         square_sum.zero_()
         self.pending_input_count = 0.0
 
+    def begin_hoep_activation_calibration(self):
+        """Begin one eval-only, task-boundary activation-statistics pass."""
+
+        if self._hoep_calibration_active:
+            raise RuntimeError("HOEP activation calibration is already active")
+        self.task_input_square_sum.zero_()
+        self.task_input_count = 0.0
+        self.pending_input_square_sum.zero_()
+        self.pending_input_count = 0.0
+        self._hoep_calibration_active = True
+        self._hoep_calibration_finalized = False
+
+    def finalize_hoep_activation_calibration(self):
+        """Synchronize disjoint DDP shards once and freeze this task's sum."""
+
+        if not self._hoep_calibration_active:
+            raise RuntimeError("HOEP activation calibration was not started")
+        count = self.task_input_square_sum.new_tensor(self.task_input_count)
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(self.task_input_square_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(count, op=dist.ReduceOp.SUM)
+        self.task_input_count = float(count)
+        self._hoep_calibration_active = False
+        self._hoep_calibration_finalized = True
+        if self.task_input_count <= 0:
+            raise RuntimeError("HOEP activation calibration observed no tokens")
+        if not bool(torch.isfinite(self.task_input_square_sum).all()):
+            raise RuntimeError("HOEP activation calibration produced non-finite sums")
+        return self.merged_input_sketch()
+
     def merged_input_sketch(self):
         self.consume_input_sketch()
         historical_sum = (
@@ -1763,6 +1804,8 @@ class SharedALoRA_ViT_timm(nn.Module):
         recoverability_gammas=(0.0, 0.25, 0.5, 0.75, 1.0),
         hoep_energy_budget=0.05,
         hoep_eigenvalue_rtol=1e-6,
+        hoep_energy_metric="operator",
+        hoep_functional_diagnostics=False,
         functional_conflict_tol=1e-12,
         functional_conflict_cosine=0.05,
         functional_normal_tol=1e-12,
@@ -1853,6 +1896,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         )
         self.hoep_energy_budget = float(hoep_energy_budget)
         self.hoep_eigenvalue_rtol = float(hoep_eigenvalue_rtol)
+        self.hoep_energy_metric = str(hoep_energy_metric)
+        self.hoep_functional_diagnostics = bool(
+            hoep_functional_diagnostics
+        )
         self.functional_conflict_tol = float(functional_conflict_tol)
         self.functional_conflict_cosine = float(functional_conflict_cosine)
         self.functional_normal_tol = float(functional_normal_tol)
@@ -1878,6 +1925,10 @@ class SharedALoRA_ViT_timm(nn.Module):
             )
         if not 0.0 <= self.hoep_energy_budget <= 1.0:
             raise ValueError("hoep_energy_budget must be in [0, 1]")
+        if self.hoep_energy_metric not in ("operator", "functional_diag"):
+            raise ValueError(
+                "hoep_energy_metric must be operator or functional_diag"
+            )
         if (
             not math.isfinite(self.hoep_eigenvalue_rtol)
             or self.hoep_eigenvalue_rtol < 0
@@ -2134,6 +2185,24 @@ class SharedALoRA_ViT_timm(nn.Module):
         shared_a = state.get("shared_a", [])
         adaptive_a_input_rms = state.get("adaptive_a_input_rms", [])
         adaptive_a_input_counts = state.get("adaptive_a_input_counts", [])
+        needs_hoep_input_statistics = (
+            self.adaptive_a_strategy == "operator_energy_partition"
+            and (
+                self.hoep_energy_metric == "functional_diag"
+                or self.hoep_functional_diagnostics
+            )
+        )
+        if needs_hoep_input_statistics and self.task_id > 0:
+            expected_blocks = len(self.lora_layer)
+            if (
+                len(adaptive_a_input_rms) != expected_blocks
+                or len(adaptive_a_input_counts) != expected_blocks
+                or any(float(count) <= 0 for count in adaptive_a_input_counts)
+            ):
+                raise RuntimeError(
+                    "functional HOEP requires valid task-boundary activation "
+                    "statistics for every ViT block"
+                )
         self.cuo_projection_down = []
         self.cuo_unified_up = []
         self.cuo_projected_gram = []
@@ -2314,6 +2383,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._hoep_plastic_masks = []
         self._hoep_anchor_a = []
         self._hoep_partition_diagnostics = None
+        self._hoep_functional_diagnostic_record = None
         self._hoep_step_count = 0
         self._hoep_step_maxima = {
             "max_orthogonality_error": 0.0,
@@ -2558,6 +2628,32 @@ class SharedALoRA_ViT_timm(nn.Module):
             )
         return wrappers
 
+    def prepare_hoep_activation_calibration(self):
+        """Enable eval-only input-second-moment collection for every block."""
+
+        if self.adaptive_a_strategy != "operator_energy_partition":
+            raise RuntimeError("HOEP calibration requires operator-energy strategy")
+        wrappers = self._recoverability_wrappers()
+        for wrapper in wrappers:
+            wrapper.begin_hoep_activation_calibration()
+
+    def finalize_hoep_activation_calibration(self):
+        """All-reduce and merge one deterministic calibration pass."""
+
+        summaries = []
+        for wrapper in self._recoverability_wrappers():
+            rms, count = wrapper.finalize_hoep_activation_calibration()
+            summaries.append(
+                {
+                    "layer": wrapper.layer_index,
+                    "token_count": float(count),
+                    "finite": bool(torch.isfinite(rms).all()),
+                    "minimum_second_moment": float(rms.square().min()),
+                    "maximum_second_moment": float(rms.square().max()),
+                }
+            )
+        return summaries
+
     def _initialize_recoverability_state(self):
         """Canonicalize row bases and freeze one task-local operator anchor."""
         wrappers = self._recoverability_wrappers()
@@ -2611,7 +2707,13 @@ class SharedALoRA_ViT_timm(nn.Module):
         wrappers = self._recoverability_wrappers()
         branches = []
         spectra = []
+        activation_factors = []
+        functional_spectra = []
         max_operator_error = 0.0
+        functional_requested = (
+            self.hoep_functional_diagnostics
+            or self.hoep_energy_metric == "functional_diag"
+        )
         with torch.no_grad():
             for wrapper in wrappers:
                 for a_module, b_module, aggregate in (
@@ -2678,11 +2780,42 @@ class SharedALoRA_ViT_timm(nn.Module):
                     )
                     spectra.append(eigenvalues)
 
-            partition = select_global_low_energy_partition(
+                    if functional_requested:
+                        if wrapper.historical_input_count <= 0:
+                            raise RuntimeError(
+                                "functional HOEP requires positive historical "
+                                "activation token counts"
+                            )
+                        second_moment = wrapper.historical_input_rms.square()
+                        q_values, functional_values = (
+                            diagonal_functional_energies(
+                                rotated_a,
+                                eigenvalues,
+                                second_moment.to(rotated_a),
+                            )
+                        )
+                        activation_factors.append(q_values)
+                        functional_spectra.append(functional_values)
+
+            operator_partition = select_global_low_energy_partition(
                 spectra,
                 self.hoep_energy_budget,
                 self.hoep_eigenvalue_rtol,
                 self.adaptive_a_eps,
+            )
+            functional_partition = None
+            if functional_requested:
+                functional_partition = select_global_low_energy_partition(
+                    functional_spectra,
+                    self.hoep_energy_budget,
+                    self.hoep_eigenvalue_rtol,
+                    self.adaptive_a_eps,
+                    tie_spectra=spectra,
+                )
+            partition = (
+                functional_partition
+                if self.hoep_energy_metric == "functional_diag"
+                else operator_partition
             )
             canonical_aggregate = []
             self._hoep_plastic_masks = []
@@ -2719,6 +2852,7 @@ class SharedALoRA_ViT_timm(nn.Module):
             )
             self._hoep_partition_diagnostics = {
                 "strategy": "operator_energy_partition",
+                "energy_metric": self.hoep_energy_metric,
                 "task_zero_skipped": False,
                 "energy_budget": self.hoep_energy_budget,
                 "total_energy": partition.total_energy,
@@ -2730,6 +2864,132 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "tie_groups": partition.tie_groups,
                 "max_initial_operator_error": max_operator_error,
             }
+            if functional_partition is not None:
+                flat_operator = torch.cat(
+                    [values.detach().cpu().double() for values in spectra]
+                )
+                flat_functional = torch.cat(
+                    [
+                        values.detach().cpu().double()
+                        for values in functional_spectra
+                    ]
+                )
+                operator_functional_exposure = sum(
+                    float(values.detach().cpu().double()[mask.cpu()].sum())
+                    for values, mask in zip(
+                        functional_spectra, operator_partition.plastic_masks
+                    )
+                ) / max(float(flat_functional.sum()), self.adaptive_a_eps)
+                functional_operator_exposure = sum(
+                    float(values.detach().cpu().double()[mask.cpu()].sum())
+                    for values, mask in zip(
+                        spectra, functional_partition.plastic_masks
+                    )
+                ) / max(float(flat_operator.sum()), self.adaptive_a_eps)
+                jaccard = mask_jaccard(
+                    operator_partition.plastic_masks,
+                    functional_partition.plastic_masks,
+                )
+                correlation = spearman_rank_correlation(
+                    flat_operator, flat_functional
+                )
+                branch_records = []
+                for branch_index, (
+                    operator_values,
+                    q_values,
+                    functional_values,
+                    operator_mask,
+                    functional_mask,
+                ) in enumerate(
+                    zip(
+                        spectra,
+                        activation_factors,
+                        functional_spectra,
+                        operator_partition.plastic_masks,
+                        functional_partition.plastic_masks,
+                    )
+                ):
+                    wrapper = wrappers[branch_index // 2]
+                    branch_records.append(
+                        {
+                            "branch": branch_index,
+                            "layer": branch_index // 2,
+                            "projection": "q" if branch_index % 2 == 0 else "v",
+                            "operator_energy": operator_values.detach().cpu(),
+                            "activation_factor": q_values.detach().cpu(),
+                            "functional_energy": functional_values.detach().cpu(),
+                            "operator_mask": operator_mask.detach().cpu(),
+                            "functional_mask": functional_mask.detach().cpu(),
+                            "tie_group_ids": spectral_tie_group_ids(
+                                operator_values.detach().cpu(),
+                                self.hoep_eigenvalue_rtol,
+                            ),
+                            "token_count": float(
+                                wrapper.historical_input_count
+                            ),
+                            "spearman": spearman_rank_correlation(
+                                operator_values, functional_values
+                            ),
+                            "operator_selected_directions": int(
+                                operator_mask.sum()
+                            ),
+                            "functional_selected_directions": int(
+                                functional_mask.sum()
+                            ),
+                        }
+                    )
+                self._hoep_functional_diagnostic_record = {
+                    "version": 1,
+                    "task_id": self.task_id,
+                    "energy_metric": self.hoep_energy_metric,
+                    "energy_budget": self.hoep_energy_budget,
+                    "surrogate": (
+                        "diagonal-activation-weighted, per-transition "
+                        "historical branch-output energy surrogate"
+                    ),
+                    "branches": branch_records,
+                    "global": {
+                        "jaccard": jaccard,
+                        "spearman": correlation,
+                        "operator_mask_functional_energy_ratio": (
+                            operator_functional_exposure
+                        ),
+                        "functional_mask_operator_energy_ratio": (
+                            functional_operator_exposure
+                        ),
+                        "operator_selected_directions": (
+                            operator_partition.selected_directions
+                        ),
+                        "functional_selected_directions": (
+                            functional_partition.selected_directions
+                        ),
+                        "total_directions": partition.total_directions,
+                        "functional_mixed_branch_fraction": sum(
+                            0 < int(mask.sum()) < mask.numel()
+                            for mask in functional_partition.plastic_masks
+                        )
+                        / len(functional_partition.plastic_masks),
+                        "finite": bool(
+                            torch.isfinite(flat_operator).all()
+                            and torch.isfinite(flat_functional).all()
+                        ),
+                    },
+                }
+                self._hoep_partition_diagnostics.update(
+                    {
+                        "functional_jaccard": jaccard,
+                        "functional_spearman": correlation,
+                        "operator_mask_functional_energy_ratio": (
+                            operator_functional_exposure
+                        ),
+                        "functional_selected_directions": (
+                            functional_partition.selected_directions
+                        ),
+                    }
+                )
+
+    def hoep_functional_diagnostic_record(self):
+        return self._hoep_functional_diagnostic_record
 
     def apply_operator_energy_partition_gradients(self, optimizer=None):
         """Restrict shared-A gradients to the selected low-energy rows."""
@@ -4774,6 +5034,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                     self.hoep_energy_budget
                     if self.adaptive_a_strategy
                     == "operator_energy_partition"
+                    and self.hoep_energy_metric == "operator"
                     else None
                 ),
             }
@@ -4788,6 +5049,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                     self.hoep_energy_budget
                     if self.adaptive_a_strategy
                     == "operator_energy_partition"
+                    and self.hoep_energy_metric == "operator"
                     else None
                 ),
             }
@@ -4818,6 +5080,12 @@ class SharedALoRA_ViT_timm(nn.Module):
             "risk_budgeted",
             "pareto_knee",
             "function_safe_pareto",
+        ) or (
+            self.adaptive_a_strategy == "operator_energy_partition"
+            and (
+                self.hoep_energy_metric == "functional_diag"
+                or self.hoep_functional_diagnostics
+            )
         ):
             state.update(
                 {

@@ -114,6 +114,12 @@ def get_backbone(args, pretrained=False):
                 hoep_eigenvalue_rtol=args.get(
                     "sa_hoep_eigenvalue_rtol", 1e-6
                 ),
+                hoep_energy_metric=args.get(
+                    "sa_hoep_energy_metric", "operator"
+                ),
+                hoep_functional_diagnostics=args.get(
+                    "sa_hoep_functional_diagnostics", False
+                ),
                 resume=args.get("sa_resume", False),
             )
         else:

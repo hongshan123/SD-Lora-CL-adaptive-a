@@ -133,11 +133,62 @@ def _tie_groups(values: Tensor, relative_tolerance: float) -> list[tuple[int, ..
     return [tuple(group) for group in groups]
 
 
+def spectral_tie_group_ids(values: Tensor, relative_tolerance: float) -> Tensor:
+    """Return a stable integer group id for each ordered spectral value."""
+
+    groups = _tie_groups(values, relative_tolerance)
+    group_ids = torch.empty(values.numel(), dtype=torch.int64)
+    for group_id, group in enumerate(groups):
+        group_ids[list(group)] = group_id
+    return group_ids
+
+
+def diagonal_functional_energies(
+    shared_a: Tensor,
+    operator_energies: Tensor,
+    input_second_moment: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Return activation factors and diagonal functional-energy surrogates.
+
+    ``shared_a`` is expected to be in the historical-energy eigenbasis.  The
+    returned values implement ``q_i = a_i diag(v) a_i.T`` and
+    ``E_i = lambda_i q_i`` without constructing a dense covariance matrix.
+    """
+
+    if shared_a.ndim != 2:
+        raise ValueError("shared_a must be a matrix")
+    if operator_energies.shape != (shared_a.shape[0],):
+        raise ValueError("operator_energies must contain one value per A row")
+    if input_second_moment.shape != (shared_a.shape[1],):
+        raise ValueError("input_second_moment has the wrong shape")
+    if not bool(torch.isfinite(shared_a).all()):
+        raise ValueError("shared_a contains non-finite values")
+    if not bool(torch.isfinite(operator_energies).all()):
+        raise ValueError("operator_energies contains non-finite values")
+    if not bool(torch.isfinite(input_second_moment).all()):
+        raise ValueError("input_second_moment contains non-finite values")
+    if bool((operator_energies < 0).any()):
+        raise ValueError("operator_energies must be non-negative")
+    if bool((input_second_moment < 0).any()):
+        raise ValueError("input_second_moment must be non-negative")
+
+    work_a = shared_a.detach().to(dtype=torch.float64)
+    work_v = input_second_moment.detach().to(
+        device=work_a.device, dtype=work_a.dtype
+    )
+    activation_factors = work_a.square() @ work_v
+    functional = operator_energies.detach().to(
+        device=work_a.device, dtype=work_a.dtype
+    ) * activation_factors
+    return activation_factors, functional
+
+
 def select_global_low_energy_partition(
     spectra: Sequence[Tensor],
     energy_budget: float,
     tie_relative_tolerance: float = 1e-6,
     eps: float = 1e-12,
+    tie_spectra: Sequence[Tensor] | None = None,
 ) -> EnergyPartition:
     """Select complete low-energy eigenspace groups under one global budget.
 
@@ -149,17 +200,30 @@ def select_global_low_energy_partition(
         raise ValueError("energy_budget must be in [0, 1]")
     if eps <= 0:
         raise ValueError("eps must be positive")
+    if tie_spectra is None:
+        tie_spectra = spectra
+    if len(tie_spectra) != len(spectra):
+        raise ValueError("tie_spectra must match the number of spectra")
     masks = [torch.zeros_like(values, dtype=torch.bool) for values in spectra]
     records = []
     total_energy = 0.0
     total_directions = 0
-    for branch_index, values in enumerate(spectra):
+    for branch_index, (values, tie_values) in enumerate(
+        zip(spectra, tie_spectra)
+    ):
         if values.ndim != 1:
             raise ValueError("each energy spectrum must be one-dimensional")
+        if tie_values.shape != values.shape:
+            raise ValueError("tie spectrum shape must match energy spectrum")
         clean = values.detach().cpu().double().clamp_min(0.0)
+        clean_ties = tie_values.detach().cpu().double().clamp_min(0.0)
+        if not bool(torch.isfinite(clean).all()):
+            raise ValueError("energy spectrum contains non-finite values")
+        if not bool(torch.isfinite(clean_ties).all()):
+            raise ValueError("tie spectrum contains non-finite values")
         total_energy += float(clean.sum())
         total_directions += clean.numel()
-        for group in _tie_groups(clean, tie_relative_tolerance):
+        for group in _tie_groups(clean_ties, tie_relative_tolerance):
             group_energy = float(clean[list(group)].sum())
             group_level = float(clean[list(group)].mean())
             records.append((group_level, group_energy, branch_index, group))
@@ -190,6 +254,54 @@ def select_global_low_energy_partition(
         total_directions=total_directions,
         tie_groups=len(records),
     )
+
+
+def mask_jaccard(first: Sequence[Tensor], second: Sequence[Tensor]) -> float:
+    """Return Jaccard overlap for two branch-mask collections."""
+
+    if len(first) != len(second):
+        raise ValueError("mask collections must have the same length")
+    intersection = 0
+    union = 0
+    for left, right in zip(first, second):
+        if left.shape != right.shape:
+            raise ValueError("corresponding masks must have equal shapes")
+        left = left.detach().bool().cpu()
+        right = right.detach().bool().cpu()
+        intersection += int((left & right).sum())
+        union += int((left | right).sum())
+    return 1.0 if union == 0 else intersection / union
+
+
+def spearman_rank_correlation(first: Tensor, second: Tensor) -> float:
+    """Return deterministic average-rank Spearman correlation."""
+
+    if first.shape != second.shape or first.ndim != 1:
+        raise ValueError("Spearman inputs must be equal one-dimensional tensors")
+    if first.numel() < 2:
+        return 1.0
+
+    def average_ranks(values: Tensor) -> Tensor:
+        values = values.detach().cpu().double()
+        order = torch.argsort(values, stable=True)
+        ranks = torch.empty_like(values)
+        start = 0
+        while start < values.numel():
+            end = start + 1
+            while end < values.numel() and values[order[end]] == values[order[start]]:
+                end += 1
+            ranks[order[start:end]] = 0.5 * (start + end - 1)
+            start = end
+        return ranks
+
+    left = average_ranks(first)
+    right = average_ranks(second)
+    left = left - left.mean()
+    right = right - right.mean()
+    denominator = torch.linalg.vector_norm(left) * torch.linalg.vector_norm(right)
+    if float(denominator) == 0.0:
+        return 1.0 if torch.equal(left, right) else 0.0
+    return float((left @ right) / denominator)
 
 
 def project_partition_gradient(

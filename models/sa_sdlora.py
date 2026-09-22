@@ -57,6 +57,7 @@ num_workers = 8
 PROTOTYPES_FILENAME = "sa_prototypes.pt"
 P0_HASHES_FILENAME = "p0_hashes.json"
 COORDINATE_DIAGNOSTICS_FILENAME = "sa_coordinate_diagnostics.json"
+HOEP_FUNCTIONAL_DIAGNOSTICS_FILENAME = "hoep_functional_diagnostics.pt"
 
 
 def validate_cuo_lowrank_config(args):
@@ -151,6 +152,12 @@ def validate_adaptive_a_config(args):
         "hoep_eigenvalue_rtol": float(
             args.get("sa_hoep_eigenvalue_rtol", 1e-6)
         ),
+        "hoep_energy_metric": str(
+            args.get("sa_hoep_energy_metric", "operator")
+        ),
+        "hoep_functional_diagnostics": bool(
+            args.get("sa_hoep_functional_diagnostics", False)
+        ),
     }
     functional_conflict_tol = float(args.get("sa_functional_conflict_tol", 1e-12))
     functional_normal_tol = float(args.get("sa_functional_normal_tol", 1e-12))
@@ -195,6 +202,21 @@ def validate_adaptive_a_config(args):
     ):
         raise ValueError(
             "sa_hoep_eigenvalue_rtol must be finite and non-negative"
+        )
+    if settings["hoep_energy_metric"] not in (
+        "operator",
+        "functional_diag",
+    ):
+        raise ValueError(
+            "sa_hoep_energy_metric must be operator or functional_diag"
+        )
+    if (
+        settings["hoep_energy_metric"] != "operator"
+        or settings["hoep_functional_diagnostics"]
+    ) and settings["adaptive_a_strategy"] != "operator_energy_partition":
+        raise ValueError(
+            "functional HOEP settings require "
+            "sa_adaptive_a_strategy=operator_energy_partition"
         )
     if settings["adaptive_a_strategy"] == "recoverability":
         recoverability = {
@@ -805,6 +827,28 @@ class Learner(SDLoraLearner):
         adaptive_a_settings = validate_adaptive_a_config(args)
         self._sa_adaptive_a_enabled = adaptive_a_settings["adaptive_a_enabled"]
         self._sa_adaptive_a_strategy = adaptive_a_settings["adaptive_a_strategy"]
+        self._sa_hoep_energy_metric = adaptive_a_settings[
+            "hoep_energy_metric"
+        ]
+        self._sa_hoep_functional_diagnostics = adaptive_a_settings[
+            "hoep_functional_diagnostics"
+        ]
+        calibration_batch_size = args.get(
+            "sa_hoep_activation_calibration_batch_size",
+            args["batch_size"],
+        )
+        if (
+            isinstance(calibration_batch_size, bool)
+            or not isinstance(calibration_batch_size, Integral)
+            or calibration_batch_size <= 0
+        ):
+            raise ValueError(
+                "sa_hoep_activation_calibration_batch_size must be a "
+                "positive integer"
+            )
+        self._sa_hoep_activation_calibration_batch_size = int(
+            calibration_batch_size
+        )
         self._sa_functional_halfspace_enabled = (
             self._sa_adaptive_a_enabled
             and self._sa_adaptive_a_strategy == "functional_halfspace"
@@ -1674,6 +1718,20 @@ class Learner(SDLoraLearner):
                 diagnostics["max_historical_operator_error"],
                 diagnostics["max_current_operator_error"],
             )
+            if "functional_jaccard" in diagnostics:
+                logging.info(
+                    "[Functional-HOEP] task %d: metric=%s jaccard=%.6f "
+                    "spearman=%.6f operator_mask_functional_ratio=%.6f "
+                    "functional_selected=%d/%d",
+                    self._cur_task,
+                    diagnostics["energy_metric"],
+                    diagnostics["functional_jaccard"],
+                    diagnostics["functional_spearman"],
+                    diagnostics["operator_mask_functional_energy_ratio"],
+                    diagnostics["functional_selected_directions"],
+                    diagnostics["total_directions"],
+                )
+                self._save_hoep_functional_diagnostic()
             return
         if diagnostics.get("strategy") == "recoverability":
             logging.info(
@@ -1861,15 +1919,43 @@ class Learner(SDLoraLearner):
             mean("selected_live_fraction"),
         )
 
+    def _save_hoep_functional_diagnostic(self):
+        record = self._raw_network().backbone.hoep_functional_diagnostic_record()
+        if record is None:
+            return
+        path = os.path.join(
+            self.args["filepath"], HOEP_FUNCTIONAL_DIAGNOSTICS_FILENAME
+        )
+        artifact = {"version": 1, "tasks": []}
+        if os.path.exists(path):
+            artifact = torch.load(path, map_location="cpu", weights_only=False)
+        tasks = [
+            item
+            for item in artifact.get("tasks", [])
+            if int(item["task_id"]) != int(record["task_id"])
+        ]
+        tasks.append(record)
+        tasks.sort(key=lambda item: int(item["task_id"]))
+        artifact["tasks"] = tasks
+        torch.save(artifact, path)
+
     def _before_task_save(self, raw_network, train_loader):
-        """Run CUO's all-rank eval-preprocessed calibration before persistence."""
+        """Run deterministic task-boundary calibrations before persistence."""
         backbone = raw_network.backbone
-        if backbone.cumulative_merge != "cuo_lowrank":
+        run_cuo = backbone.cumulative_merge == "cuo_lowrank"
+        run_hoep = (
+            backbone.adaptive_a_strategy == "operator_energy_partition"
+            and (
+                backbone.hoep_energy_metric == "functional_diag"
+                or backbone.hoep_functional_diagnostics
+            )
+        )
+        if not (run_cuo or run_hoep):
             return None
         data_manager = getattr(self, "_cuo_calibration_data_manager", None)
         if data_manager is None:
             raise RuntimeError(
-                "cuo_lowrank calibration requires the current task data manager"
+                "task-boundary calibration requires the current data manager"
             )
         cur_classes = np.arange(self._known_classes, self._total_classes)
         dataset = data_manager.get_dataset(
@@ -1879,18 +1965,36 @@ class Learner(SDLoraLearner):
             rank = dist.get_rank()
             world_size = dist.get_world_size()
             dataset = Subset(dataset, range(rank, len(dataset), world_size))
-        batch_size = int(
-            self.args.get(
-                "sa_cuo_calibration_batch_size", self.args["batch_size"]
+        if run_cuo:
+            batch_size = int(
+                self.args.get(
+                    "sa_cuo_calibration_batch_size", self.args["batch_size"]
+                )
             )
-        )
+        else:
+            batch_size = self._sa_hoep_activation_calibration_batch_size
         if batch_size <= 0:
-            raise ValueError("sa_cuo_calibration_batch_size must be positive")
+            raise ValueError("task-boundary calibration batch size must be positive")
 
+        def deployment_tensor_map():
+            return {
+                key: value
+                for key, value in model_tensor_map(
+                    raw_network, include_eval_scalars=False
+                ).items()
+                if not key.endswith("task_input_square_sum")
+                and not key.endswith("pending_input_square_sum")
+            }
+
+        before_map = deployment_tensor_map()
+        rng_before = rng_state_hash()
         was_training = raw_network.training
         raw_network.eval()
         try:
-            backbone.prepare_cuo_calibration()
+            if run_cuo:
+                backbone.prepare_cuo_calibration()
+            if run_hoep:
+                backbone.prepare_hoep_activation_calibration()
             with rng_preserving(), torch.no_grad():
                 loader = deterministic_loader(
                     dataset,
@@ -1902,9 +2006,45 @@ class Learner(SDLoraLearner):
                 )
                 for _, inputs, _ in loader:
                     raw_network(inputs.to(self._device, non_blocking=True))
-            backbone.finalize_cuo_calibration()
+            if run_cuo:
+                backbone.finalize_cuo_calibration()
+            if run_hoep:
+                summaries = backbone.finalize_hoep_activation_calibration()
+                logging.info(
+                    "[Functional-HOEP calibration] task %d blocks=%d "
+                    "tokens=%.0f finite=%s",
+                    self._cur_task,
+                    len(summaries),
+                    min(item["token_count"] for item in summaries),
+                    all(item["finite"] for item in summaries),
+                )
         finally:
             raw_network.train(was_training)
+        if run_hoep:
+            mismatch = compare_named_tensors(
+                before_map,
+                deployment_tensor_map(),
+            )
+            if mismatch is not None:
+                raise RuntimeError(
+                    "task-boundary activation calibration mutated model tensor "
+                    "{} (max_abs_diff={})".format(
+                        mismatch["key"], mismatch["max_abs_diff"]
+                    )
+                )
+        rng_after = rng_state_hash()
+        if rng_before != rng_after:
+            raise RuntimeError(
+                "task-boundary calibration perturbed RNG state: {} -> {}".format(
+                    rng_before, rng_after
+                )
+            )
+        logging.info(
+            "[TaskBoundaryCalibration] task %d tensor_hash=%s rng_hash=%s PASS",
+            self._cur_task,
+            hash_named_tensors(before_map),
+            rng_before,
+        )
         return None
 
     def incremental_train(self, data_manager):

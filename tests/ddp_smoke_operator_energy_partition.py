@@ -131,7 +131,7 @@ def main():
             rms.square(),
             torch.full_like(rms, expected_second_moment),
         )
-        _assert_rank_equal(rms.detach().cpu().tolist())
+        _assert_rank_equal(tuple(rms.detach().cpu().tolist()))
         dist.barrier()
         if rank == 0:
             task_zero.save_lora_parameters(str(run_dir), 0)

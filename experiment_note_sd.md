@@ -1121,3 +1121,5 @@
 - 尚不能判断 sensitivity 是否有用。只有 P1 同时显示约束经常激活、Fisher 与 uniform 候选实质不同且 current distortion 可控，才值得进入正式 SBGC 性能实验。
 - 2026-09-22 15:14：真实 P0 三数据集全部通过。三个数据集 Task 1 都是 24/24 分支触发约束，说明 G 风险并非空约束；Fisher CV 均大于 1.3、候选 gap 为 0.039--0.070，说明 diagonal sensitivity 确实改变解。
 - 同时，mean current distortion 为 0.417--0.583，已形成强烈 No-Go 预警。P1 的价值主要是确认该扭曲是否在完整序列持续存在；禁止因为候选不同就直接进入正式性能比较。
+- 2026-09-22 16:07：首次 P1 shadow 在 Task 0 边界后退出。根因不是数值或 DDP，而是 `utils/inc_net.py::get_backbone` 的初始模型构造遗漏 SBGC 参数，导致配置要求 `shadow_only=true`，Task 0 artifact 却保存默认 `false`；Task 1 的严格 artifact 校验正确阻止了不一致恢复。
+- 修复原则是不放宽恢复校验，而是让初始构造与 `Learner.update_network()` 传递同一组 risk/metric/floor/ridge/bisection/shadow 设置。新增真实工厂入口回归测试，SBGC 定向测试为 35 passed。受影响的 C100/INR/CUB P1 输出均作废并从 Task 0 重跑。

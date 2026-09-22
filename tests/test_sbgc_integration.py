@@ -18,6 +18,7 @@ from backbone.sa_lora import (
 )
 from models.sa_sdlora import validate_sbgc_config
 from models.sa_sdlora import Learner as SharedALearner
+from utils.inc_net import get_backbone
 from utils.rng_utils import rng_state_hash
 
 
@@ -398,3 +399,38 @@ def test_sbgc_accepts_isolated_fixed_projection_configuration():
         "g_bisection_steps": 40,
         "g_shadow_only": False,
     }
+
+
+def test_initial_backbone_factory_forwards_all_sbgc_settings(
+    tmp_path, monkeypatch
+):
+    """Task 0 and task-boundary rebuilds must use identical SBGC settings."""
+    monkeypatch.setattr(
+        "utils.inc_net.timm.create_model", lambda *args, **kwargs: _TinyViT()
+    )
+    backbone = get_backbone(
+        {
+            "backbone_type": "vit_base_patch16_224",
+            "model_name": "sa_sdlora",
+            "lora_rank": 2,
+            "increment": 2,
+            "filepath": str(tmp_path),
+            "sa_cumulative_state": True,
+            "sa_cumulative_merge": "sensitivity_budgeted_g",
+            "sa_cumulative_rank": 2,
+            "sa_train_a_all_tasks": False,
+            "sa_g_risk_budget": 0.075,
+            "sa_g_sensitivity_metric": "uniform",
+            "sa_g_sensitivity_floor": 2e-4,
+            "sa_g_solver_ridge": 3e-6,
+            "sa_g_bisection_steps": 17,
+            "sa_g_shadow_only": True,
+        }
+    )
+
+    assert backbone.g_risk_budget == pytest.approx(0.075)
+    assert backbone.g_sensitivity_metric == "uniform"
+    assert backbone.g_sensitivity_floor == pytest.approx(2e-4)
+    assert backbone.g_solver_ridge == pytest.approx(3e-6)
+    assert backbone.g_bisection_steps == 17
+    assert backbone.g_shadow_only is True

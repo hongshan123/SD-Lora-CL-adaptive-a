@@ -59,6 +59,16 @@ def get_backbone(args, pretrained=False):
                 cumulative_merge=args.get("sa_cumulative_merge", "gauge"),
                 cumulative_rank=args.get("sa_cumulative_rank", None),
                 cuo_lambda=args.get("sa_cuo_lambda", 0.1),
+                g_risk_budget=args.get("sa_g_risk_budget", 0.05),
+                g_sensitivity_metric=args.get(
+                    "sa_g_sensitivity_metric", "fisher_diag"
+                ),
+                g_sensitivity_floor=args.get(
+                    "sa_g_sensitivity_floor", 1e-4
+                ),
+                g_solver_ridge=args.get("sa_g_solver_ridge", 1e-6),
+                g_bisection_steps=args.get("sa_g_bisection_steps", 40),
+                g_shadow_only=args.get("sa_g_shadow_only", False),
                 freeze_old_scales=args.get("sa_freeze_old_scales", False),
                 normalize_current_branch=args.get(
                     "sa_normalize_current_branch", False

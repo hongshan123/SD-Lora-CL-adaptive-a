@@ -1133,3 +1133,4 @@
 - 2026-09-22 21:37：P2 路线锁定为严格固定预算验证。新增 runtime diagnostics 仅记录数据 pass、双候选 solver、完整边界时间和 CUDA 峰值，不改变 checkpoint、RNG 或求解分支；focused `35 passed`，完整回归最终为 `436 passed`。
 - 九份 P2 配置已冻结：Fisher/uniform 仅在 metric、实验身份和输出目录上不同；CUO 三数据集在当前 commit 重跑。GPU 2、3 明确排除，三组双卡均处于空闲状态。
 - 科学判断保持克制：P1 的 GO 只证明约束与 Fisher 差异非空。C100 全序列 distortion 中位数 `0.10575` 已略超 10%，Task1 三数据集约 `0.45--0.50`，因此 P2 最可能暴露的是早期塑性损失；在完整结果前不预防性修正。
+- 2026-09-22 21:39：首次 P2 启动在 Task0 Epoch1 前被确定性检查拒绝。user-systemd 环境未继承 `CUBLAS_WORKSPACE_CONFIG`，三个数据集均报 CuBLAS deterministic RuntimeError；每个输出只有 `run_manifest.json`，没有 epoch、artifact 或性能结果。该批次整体归档，不进入统计。修复仅向队列显式注入 `:4096:8`，不改算法或配置。

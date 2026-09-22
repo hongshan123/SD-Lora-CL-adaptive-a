@@ -97,6 +97,7 @@ def test_queue_uses_required_pairs_order_and_nohup():
     assert 'run_job "4,5"' in script
     assert 'run_job "6,7"' in script
     assert 'CUDA_VISIBLE_DEVICES="${pair}"' in script
+    assert 'CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG}"' in script
     assert "--nproc_per_node=2" in script
     assert "nohup env" in script
     assert "sleep 1800" in script

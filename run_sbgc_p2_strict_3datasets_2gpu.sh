@@ -4,6 +4,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TORCHRUN="/home/hongzhijun/miniconda3/envs/sdlora/bin/torchrun"
 export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
+export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"
 
 run_job() {
     local pair="$1"
@@ -20,6 +21,7 @@ run_job() {
     echo "[$(date '+%F %T')] START ${name} GPUs=${pair}"
     nohup env \
         HF_ENDPOINT="${HF_ENDPOINT}" \
+        CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG}" \
         CUDA_VISIBLE_DEVICES="${pair}" \
         "${TORCHRUN}" --standalone --nproc_per_node=2 \
         main.py --config="./${config}" > "${ROOT}/${log_file}" 2>&1

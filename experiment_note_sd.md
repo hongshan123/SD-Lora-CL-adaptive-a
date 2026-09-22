@@ -1123,3 +1123,5 @@
 - 同时，mean current distortion 为 0.417--0.583，已形成强烈 No-Go 预警。P1 的价值主要是确认该扭曲是否在完整序列持续存在；禁止因为候选不同就直接进入正式性能比较。
 - 2026-09-22 16:07：首次 P1 shadow 在 Task 0 边界后退出。根因不是数值或 DDP，而是 `utils/inc_net.py::get_backbone` 的初始模型构造遗漏 SBGC 参数，导致配置要求 `shadow_only=true`，Task 0 artifact 却保存默认 `false`；Task 1 的严格 artifact 校验正确阻止了不一致恢复。
 - 修复原则是不放宽恢复校验，而是让初始构造与 `Learner.update_network()` 传递同一组 risk/metric/floor/ridge/bisection/shadow 设置。新增真实工厂入口回归测试，SBGC 定向测试为 35 passed。受影响的 C100/INR/CUB P1 输出均作废并从 Task 0 重跑。
+- 2026-09-22 17:19：第二轮 P1 的 CUB 已完整结束；C100/INR 在 Task 7 训练中被外部进程组终止，日志无 traceback/OOM/NCCL 错误，最后分别停在 epoch15 左右。两条不完整结果已归档到 `SBGC_P1_INTERRUPTED_EXTERNAL_20260922_1719`，不得用于最终统计。
+- 由于现有 `sa_resume` 只解除 artifact guard、trainer task loop 仍从 Task 0 开始，拒绝把残留 state 伪装成严格续跑。C100/INR 从 Task 0 重跑，并改由 user systemd 直接托管 `nohup torchrun`（units `sbgc-p1-c100-20260922c`、`sbgc-p1-inr-20260922c`），避免训练生命周期依赖 tmux/Agent 工具会话。

@@ -2910,6 +2910,12 @@ class SharedALoRA_ViT_timm(nn.Module):
                     )
                 ):
                     wrapper = wrappers[branch_index // 2]
+                    branch_functional_total = max(
+                        float(functional_values.sum()), self.adaptive_a_eps
+                    )
+                    branch_operator_total = max(
+                        float(operator_values.sum()), self.adaptive_a_eps
+                    )
                     branch_records.append(
                         {
                             "branch": branch_index,
@@ -2936,6 +2942,61 @@ class SharedALoRA_ViT_timm(nn.Module):
                             "functional_selected_directions": int(
                                 functional_mask.sum()
                             ),
+                            "operator_mask_functional_energy_ratio": float(
+                                functional_values[operator_mask].sum()
+                            )
+                            / branch_functional_total,
+                            "functional_mask_operator_energy_ratio": float(
+                                operator_values[functional_mask].sum()
+                            )
+                            / branch_operator_total,
+                        }
+                    )
+                layer_records = []
+                for layer_index in range(len(wrappers)):
+                    records = branch_records[2 * layer_index : 2 * layer_index + 2]
+                    layer_operator = torch.cat(
+                        [item["operator_energy"].double() for item in records]
+                    )
+                    layer_functional = torch.cat(
+                        [item["functional_energy"].double() for item in records]
+                    )
+                    layer_operator_mask = torch.cat(
+                        [item["operator_mask"].bool() for item in records]
+                    )
+                    layer_functional_mask = torch.cat(
+                        [item["functional_mask"].bool() for item in records]
+                    )
+                    layer_records.append(
+                        {
+                            "layer": layer_index,
+                            "token_count": records[0]["token_count"],
+                            "jaccard": mask_jaccard(
+                                [layer_operator_mask], [layer_functional_mask]
+                            ),
+                            "spearman": spearman_rank_correlation(
+                                layer_operator, layer_functional
+                            ),
+                            "operator_selected_directions": int(
+                                layer_operator_mask.sum()
+                            ),
+                            "functional_selected_directions": int(
+                                layer_functional_mask.sum()
+                            ),
+                            "operator_mask_functional_energy_ratio": float(
+                                layer_functional[layer_operator_mask].sum()
+                            )
+                            / max(
+                                float(layer_functional.sum()),
+                                self.adaptive_a_eps,
+                            ),
+                            "functional_mask_operator_energy_ratio": float(
+                                layer_operator[layer_functional_mask].sum()
+                            )
+                            / max(
+                                float(layer_operator.sum()),
+                                self.adaptive_a_eps,
+                            ),
                         }
                     )
                 self._hoep_functional_diagnostic_record = {
@@ -2948,6 +3009,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                         "historical branch-output energy surrogate"
                     ),
                     "branches": branch_records,
+                    "layers": layer_records,
                     "global": {
                         "jaccard": jaccard,
                         "spearman": correlation,

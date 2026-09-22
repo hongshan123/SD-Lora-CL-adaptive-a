@@ -101,7 +101,10 @@ P2 单 seed严格比较 Frozen-P additive、`cuo_lowrank`、uniform-budget G、F
 - [x] 31 个 CPU 数学/集成测试；
 - [x] 两进程 DDP lifecycle smoke，rank 状态 hash 一致；
 - [x] 三数据集真实 P0 Task 0/1 smoke，工程验收通过；
-- [ ] P0 通过后启动 P1 shadow diagnostic；
-- [ ] 根据预注册条件作 Go/No-Go，不做数据集专属预算搜索。
+- [x] 三数据集 P1 shadow diagnostic 完成；
+- [x] 预注册 Go/No-Go 六项检查全部通过，决策为 GO；
+- [ ] P2 正式比较 Frozen-P、CUO、uniform-budget G 和 Fisher SBGC。
 
 P0 数值见 `sbgc_p0_real_data_smoke_results.md`。三数据集 Task 1 均为 24/24 分支激活风险约束，但 current-target distortion 已达 0.42--0.58；P1 必须以 shadow 方式验证该现象是否贯穿完整序列。
+
+P1 数值见 `sbgc_p1_shadow_results.md`。C100/INR/CUB 的 Fisher distortion 中位数分别为 `0.10575/0.05797/0.07349`，median-of-medians 为 `0.07349`；三个数据集的 active/different transition fraction 和 high-CV branch fraction 均为 100%。该结果只允许进入 P2，不构成 SBGC 性能提升证据。

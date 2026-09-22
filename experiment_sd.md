@@ -943,3 +943,13 @@
 - 当前结果：尚无真实数据性能结果。下一步只运行三个数据集 Task 0/1、双卡每卡 batch64 的 P0；P0 未通过时不得启动 T=10。
 - P0 结果：三数据集均完整通过。Task 0 operator error 为 `1.23e-7` 左右；Task 1 均有 24/24 分支激活且 max deployed risk 为 `0.05000000x`。C100/INR/CUB 的 mean target distortion 分别为 `0.4168/0.5656/0.5835`，Fisher/uniform gap 为 `0.0698/0.0395/0.0621`。
 - P0 判断：状态、DDP、风险和确定性实现通过，但 5% 预算对当前目标的扭曲偏大。按预注册协议进入 P1 shadow diagnostic，不能据两任务准确率作性能结论。
+
+## 2026-09-22：SBGC P1 Frozen-P Shadow Diagnostic
+
+- 实验标题：固定 canonical P 下的 additive、uniform-budget 与 Fisher-budget G 三候选影子诊断。
+- 方法：实际部署始终为 additive `G_old+sB`；uniform 与 Fisher 候选只计算、记录，不参与后续前向。三个数据集严格使用 T=10、rank10、20 epoch、双卡每卡 batch64 和预注册 seed。
+- 理论目的：验证 5% 历史 branch-response 风险是否经常被 additive merge 违反，diagonal Fisher 是否实质改变候选，以及约束后的 current-target distortion 在完整序列上是否可接受。
+- additive shadow 结果：C100 `87.83/92.321/7.911`，INR `78.92/82.181/7.182`，CUB `84.19/89.469/8.663`，顺序为 Final/AAA/Forgetting。
+- 诊断结果：三个数据集 active transition、Fisher/uniform different transition、high-CV branch 比例均为 100%。Fisher distortion 中位数为 `0.10575/0.05797/0.07349`，median-of-medians 为 `0.07349`。
+- 判断：`scripts/analyze_sbgc_shadow.py` 的六项预注册检查全部通过，决策为 GO，允许进入 P2。该阶段没有部署风险约束，不能声称 SBGC 已提升性能。
+- 限制：Fisher 与 uniform distortion 使用不同加权度量，不能直接跨列比较优劣；必须以 P2 的准确率、AAA 和遗忘作结论。

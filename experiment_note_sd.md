@@ -1127,3 +1127,6 @@
 - 由于现有 `sa_resume` 只解除 artifact guard、trainer task loop 仍从 Task 0 开始，拒绝把残留 state 伪装成严格续跑。C100/INR 从 Task 0 重跑，并改由 user systemd 直接托管 `nohup torchrun`（units `sbgc-p1-c100-20260922c`、`sbgc-p1-inr-20260922c`），避免训练生命周期依赖 tmux/Agent 工具会话。
 - 2026-09-22 19:53：systemd 重跑中 C100 完整成功，得到 Final `87.83`、AAA `92.321`、Forgetting `7.911`。INR 在 Task1 epoch7 出现 rank1 比 rank0 多一次 ALLREDUCE 的 NCCL watchdog timeout；该 run 仅 Task0 artifact 有效，已归档到 `SBGC_P1_FAILED_NCCL_INR_20260922`，不得用于 P1 汇总。
 - INR 改用首轮曾稳定运行的 GPU `6,7` 从 Task0 重跑，由 unit `sbgc-p1-inr-20260922d` 托管。C100/CUB 完整结果不重复运行；最终 Go/No-Go 仍等待 INR 满 9 个 transition。
+- 2026-09-22 21:15：INR 在 GPU `6,7` 完整结束，Final/AAA/Forgetting 为 `78.92/82.181/7.182`。三数据集 artifact 均含 Task0--9，P1 自动分析器六项检查全部通过，决策为 GO。
+- GO 的含义仅是正式部署实验值得运行：三个数据集的风险约束和 Fisher/uniform 候选差异都非空，median-of-medians Fisher distortion 为 `0.07349`。P1 实际部署仍是 additive，尚无 SBGC 性能收益证据。
+- 早期 transition 的 Fisher distortion 仍高达约 `0.45--0.50`；若 P2 失败，首要怀疑是固定 5% 预算过度削弱前几任务的 current update，而不是求解器未生效。禁止在看到 P2 前调整数据集专属预算。

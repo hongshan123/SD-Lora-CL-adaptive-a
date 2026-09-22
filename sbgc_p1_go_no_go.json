@@ -1,0 +1,218 @@
+{
+  "active_dataset_count": 3,
+  "checks": {
+    "all_statistics_finite": true,
+    "fisher_differs_in_at_least_two_datasets": true,
+    "high_cv_branch_fraction_at_least_30pct": true,
+    "median_fisher_distortion_at_most_10pct": true,
+    "risk_active_in_at_least_two_datasets": true,
+    "shadow_parity_verified": true
+  },
+  "datasets": [
+    {
+      "active_transition_fraction": 1.0,
+      "all_finite": true,
+      "different_transition_fraction": 1.0,
+      "high_cv_branch_fraction": 1.0,
+      "label": "C100",
+      "median_fisher_distortion": 0.10574719737473325,
+      "median_uniform_distortion": 0.097133365532353,
+      "path": "SBGC_P1_SHADOW_C100_SEED1993_T10_20260922/sbgc_diagnostics.pt",
+      "transition_count": 9,
+      "transitions": [
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.0777803141693064,
+          "median_fisher_distortion": 0.4779138733657554,
+          "task_id": 1
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.0354801284442472,
+          "median_fisher_distortion": 0.14877292848971954,
+          "task_id": 2
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.04316494481573094,
+          "median_fisher_distortion": 0.206088501765116,
+          "task_id": 3
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.028727844226660682,
+          "median_fisher_distortion": 0.05602080565538267,
+          "task_id": 4
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.03864098731172653,
+          "median_fisher_distortion": 0.16997362825393603,
+          "task_id": 5
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.02701299820516681,
+          "median_fisher_distortion": 0.025842573389301127,
+          "task_id": 6
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.029894310262626,
+          "median_fisher_distortion": 0.10598695364827321,
+          "task_id": 7
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.023411702610038134,
+          "median_fisher_distortion": 0.022817953507792456,
+          "task_id": 8
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.024965272220276075,
+          "median_fisher_distortion": 0.06104361461601937,
+          "task_id": 9
+        }
+      ]
+    },
+    {
+      "active_transition_fraction": 1.0,
+      "all_finite": true,
+      "different_transition_fraction": 1.0,
+      "high_cv_branch_fraction": 1.0,
+      "label": "INR",
+      "median_fisher_distortion": 0.057970685227407504,
+      "median_uniform_distortion": 0.05465691313095486,
+      "path": "SBGC_P1_SHADOW_INR_SEED1995_T10_20260922/sbgc_diagnostics.pt",
+      "transition_count": 9,
+      "transitions": [
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.06237163428189397,
+          "median_fisher_distortion": 0.4520160975616527,
+          "task_id": 1
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.04402595504837903,
+          "median_fisher_distortion": 0.20972588736707576,
+          "task_id": 2
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.03337786913710312,
+          "median_fisher_distortion": 0.17481707164385585,
+          "task_id": 3
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.004349695507357556,
+          "median_fisher_distortion": 0.0,
+          "task_id": 4
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.02919939498201585,
+          "median_fisher_distortion": 0.144463218827515,
+          "task_id": 5
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.014837963925464574,
+          "median_fisher_distortion": 0.033040176072252056,
+          "task_id": 6
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.005157794736697775,
+          "median_fisher_distortion": 0.0,
+          "task_id": 7
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.01788098102929322,
+          "median_fisher_distortion": 0.07015815176740112,
+          "task_id": 8
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.011701989988836883,
+          "median_fisher_distortion": 0.008195061400572648,
+          "task_id": 9
+        }
+      ]
+    },
+    {
+      "active_transition_fraction": 1.0,
+      "all_finite": true,
+      "different_transition_fraction": 1.0,
+      "high_cv_branch_fraction": 1.0,
+      "label": "CUB",
+      "median_fisher_distortion": 0.07348813915509712,
+      "median_uniform_distortion": 0.11092447090931698,
+      "path": "SBGC_P1_SHADOW_CUB_SEED1_T10_20260922/sbgc_diagnostics.pt",
+      "transition_count": 9,
+      "transitions": [
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.11897984272973373,
+          "median_fisher_distortion": 0.5003950118309775,
+          "task_id": 1
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.07160914534469658,
+          "median_fisher_distortion": 0.3210584375324464,
+          "task_id": 2
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.0550739560954143,
+          "median_fisher_distortion": 0.18378872964936394,
+          "task_id": 3
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.04294734816126436,
+          "median_fisher_distortion": 0.09503268008348034,
+          "task_id": 4
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.036604746351473455,
+          "median_fisher_distortion": 0.08217768787969296,
+          "task_id": 5
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.03361597303756436,
+          "median_fisher_distortion": 0.03514067446345278,
+          "task_id": 6
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.022892429853154556,
+          "median_fisher_distortion": 0.008565830005642885,
+          "task_id": 7
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.021309678730225174,
+          "median_fisher_distortion": 0.018200596641515424,
+          "task_id": 8
+        },
+        {
+          "fisher_constraint_active": true,
+          "mean_candidate_relative_gap": 0.023311006667417703,
+          "median_fisher_distortion": 0.015399174718008776,
+          "task_id": 9
+        }
+      ]
+    }
+  ],
+  "decision": "GO",
+  "different_dataset_count": 3,
+  "median_of_dataset_median_fisher_distortion": 0.07348813915509712,
+  "pooled_high_cv_branch_fraction": 1.0
+}

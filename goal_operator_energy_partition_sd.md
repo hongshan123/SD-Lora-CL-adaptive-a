@@ -364,6 +364,6 @@ sa_hoep_energy_metric=functional_diag
 - [x] checkpoint 兼容与缺失统计硬错误；
 - [x] rank-0 研究 artifact 和 Go/No-Go 分析脚本；
 - [x] CPU/状态回归测试（125 passed）与两 rank NCCL smoke；
-- [ ] 三数据集真实 Task 0/1 smoke；
-- [ ] Phase A 三数据集 T=10 shadow diagnostic；
+- [x] 三数据集真实 Task 0/1 smoke；结果见 `functional_hoep_smoke_results.md`；
+- [ ] Phase A 三数据集 T=10 shadow diagnostic（2026-09-22 已启动，C100/INR 并行，CUB 动态续跑）；
 - [ ] 仅在 Go 条件通过后执行 Phase B。

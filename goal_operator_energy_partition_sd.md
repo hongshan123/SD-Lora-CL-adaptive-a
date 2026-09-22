@@ -306,6 +306,64 @@ P3 通过条件：
 - [x] 全量测试通过（378 passed）；
 - [x] 完成两 rank NCCL task-boundary/rebuild smoke；
 - [x] 完成三个真实数据集各 Task 0/1 的两卡 P2 smoke，三组均 status 0、DDP/hash/state/风险上界检查通过；
-- [ ] 完成 P3 三数据集单 seed 训练并与 Frozen/Live/ratio Adaptive-A 配对（首轮随服务器中断；已从头重启新方法优先队列，仅使用 0,1/4,5/6,7，双卡每卡 batch64）。
+- [x] 完成 P3 三数据集单 seed 训练并与 Frozen/Live/ratio Adaptive-A 配对。HOEP-A 仅在 CIFAR-100 小幅领先，在 ImageNet-R/CUB-200 与 Frozen-A 基本等价，未通过原 P3 的稳定提升门槛。
 
 详细审计与数值表见 `hoep_prior_art_implementation_audit.md` 和 `hoep_p2_real_data_smoke_results.md`。
+
+## 11. Activation-Aware Functional HOEP（2026-09-22）
+
+### 11.1 假设与边界
+
+原 HOEP 使用规范坐标中的算子 Frobenius 能量：
+
+$$
+E_i^{\rm op}=\lambda_i=\|c_i\|_2^2.
+$$
+
+新增诊断检验历史输入的对角非中心二阶矩是否会改变方向重要性：
+
+$$
+q_i=\sum_j A_{ij}^2v_j,
+\qquad
+E_i^{\rm func}=\lambda_iq_i.
+$$
+
+该量只允许称为 **diagonal-activation-weighted, per-transition historical branch-output energy surrogate**。它不是完整协方差下的 functional bound、全网络输出 bound 或 global forgetting bound。
+
+新增固定状态为 12 个 ViT block 各一个 `[768]` FP32 RMS 和 count，约 36 KiB，不随任务数增长。统计来自每个任务边界对当前任务训练集的 test preprocessing 确定性前向；不保存图像、样本特征或 per-task covariance。
+
+### 11.2 两阶段协议
+
+Phase A 只开启：
+
+```text
+sa_hoep_energy_metric=operator
+sa_hoep_functional_diagnostics=true
+```
+
+训练仍使用原 operator mask；functional mask 只写入 `hoep_functional_diagnostics.pt`。记录每分支、每层和全网络的 `lambda`、`q`、`lambda*q`、两种 mask、谱簇、Jaccard、Spearman、能量暴露比例与 token count。
+
+进入 Functional-HOEP 的 Go 条件：
+
+1. 至少两个数据集有至少 30% 的 Task 1--9 transition 满足 `operator-mask functional exposure > 0.075` 或 `Jaccard < 0.8`；
+2. 至少 30% 分支的 functional mask 满足 `0 < k < r`；
+3. 校准、DDP 同步、有限值、task-boundary operator equivalence 全部通过。
+
+仅通过后才允许运行：
+
+```text
+sa_hoep_energy_metric=functional_diag
+```
+
+固定预算仍为 0.05，不按数据集调参。Phase B 单 seed 若不能在三个数据集均距同 seed 最佳端点不超过 0.30，且至少两个数据集 Final 或 AAA 提升 0.30，则停止，不进入多 seed。
+
+### 11.3 实现状态
+
+- [x] 功能能量数学内核、算子谱重根簇约束和全局前缀预算；
+- [x] eval-only、no-grad、DDP 不重叠分片的任务边界二阶矩校准；
+- [x] checkpoint 兼容与缺失统计硬错误；
+- [x] rank-0 研究 artifact 和 Go/No-Go 分析脚本；
+- [x] CPU/状态回归测试（125 passed）与两 rank NCCL smoke；
+- [ ] 三数据集真实 Task 0/1 smoke；
+- [ ] Phase A 三数据集 T=10 shadow diagnostic；
+- [ ] 仅在 Go 条件通过后执行 Phase B。

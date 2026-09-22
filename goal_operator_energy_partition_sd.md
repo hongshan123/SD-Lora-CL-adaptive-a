@@ -365,5 +365,6 @@ sa_hoep_energy_metric=functional_diag
 - [x] rank-0 研究 artifact 和 Go/No-Go 分析脚本；
 - [x] CPU/状态回归测试（125 passed）与两 rank NCCL smoke；
 - [x] 三数据集真实 Task 0/1 smoke；结果见 `functional_hoep_smoke_results.md`；
-- [ ] Phase A 三数据集 T=10 shadow diagnostic（2026-09-22 已启动，C100/INR 并行，CUB 动态续跑）；
-- [ ] 仅在 Go 条件通过后执行 Phase B。
+- [x] Phase A 三数据集 T=10 shadow diagnostic；结果见 `functional_hoep_phase_a_results.md`；
+- [x] 执行预注册 Go/No-Go：仅 CIFAR-100 通过 transition 差异条件，ImageNet-R/CUB-200 未通过，最终判定 No-Go；
+- [x] 按停止规则不启动 Phase B，不搜索数据集专属预算。

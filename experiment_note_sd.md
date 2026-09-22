@@ -1125,3 +1125,5 @@
 - 修复原则是不放宽恢复校验，而是让初始构造与 `Learner.update_network()` 传递同一组 risk/metric/floor/ridge/bisection/shadow 设置。新增真实工厂入口回归测试，SBGC 定向测试为 35 passed。受影响的 C100/INR/CUB P1 输出均作废并从 Task 0 重跑。
 - 2026-09-22 17:19：第二轮 P1 的 CUB 已完整结束；C100/INR 在 Task 7 训练中被外部进程组终止，日志无 traceback/OOM/NCCL 错误，最后分别停在 epoch15 左右。两条不完整结果已归档到 `SBGC_P1_INTERRUPTED_EXTERNAL_20260922_1719`，不得用于最终统计。
 - 由于现有 `sa_resume` 只解除 artifact guard、trainer task loop 仍从 Task 0 开始，拒绝把残留 state 伪装成严格续跑。C100/INR 从 Task 0 重跑，并改由 user systemd 直接托管 `nohup torchrun`（units `sbgc-p1-c100-20260922c`、`sbgc-p1-inr-20260922c`），避免训练生命周期依赖 tmux/Agent 工具会话。
+- 2026-09-22 19:53：systemd 重跑中 C100 完整成功，得到 Final `87.83`、AAA `92.321`、Forgetting `7.911`。INR 在 Task1 epoch7 出现 rank1 比 rank0 多一次 ALLREDUCE 的 NCCL watchdog timeout；该 run 仅 Task0 artifact 有效，已归档到 `SBGC_P1_FAILED_NCCL_INR_20260922`，不得用于 P1 汇总。
+- INR 改用首轮曾稳定运行的 GPU `6,7` 从 Task0 重跑，由 unit `sbgc-p1-inr-20260922d` 托管。C100/CUB 完整结果不重复运行；最终 Go/No-Go 仍等待 INR 满 9 个 transition。

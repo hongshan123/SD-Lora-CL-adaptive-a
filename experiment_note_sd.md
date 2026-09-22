@@ -1134,3 +1134,5 @@
 - 九份 P2 配置已冻结：Fisher/uniform 仅在 metric、实验身份和输出目录上不同；CUO 三数据集在当前 commit 重跑。GPU 2、3 明确排除，三组双卡均处于空闲状态。
 - 科学判断保持克制：P1 的 GO 只证明约束与 Fisher 差异非空。C100 全序列 distortion 中位数 `0.10575` 已略超 10%，Task1 三数据集约 `0.45--0.50`，因此 P2 最可能暴露的是早期塑性损失；在完整结果前不预防性修正。
 - 2026-09-22 21:39：首次 P2 启动在 Task0 Epoch1 前被确定性检查拒绝。user-systemd 环境未继承 `CUBLAS_WORKSPACE_CONFIG`，三个数据集均报 CuBLAS deterministic RuntimeError；每个输出只有 `run_manifest.json`，没有 epoch、artifact 或性能结果。该批次整体归档，不进入统计。修复仅向队列显式注入 `:4096:8`，不改算法或配置。
+- 2026-09-22 21:40：修复提交 `3009a37` 后由 unit `sbgc-p2-strict-20260922b` 从 Task0 重启。C100/INR/CUB 三条 Fisher 分别运行在 `0,1`、`4,5`、`6,7`，GPU 2、3 空闲；后续 uniform/CUO 由同一数据集队列自动接续。
+- 首个真实边界核验通过：CUB Task0 已进入 Task1，operator error `1.231045e-07`，tensor/RNG hash PASS；calibration/solver/boundary 为 `3.813/0.000/4.055s`，峰值/新增峰值显存为 `2851.9/2451.7 MiB`，持久状态计数 `389520`。该值只验证插桩和生命周期，不作为性能结果。

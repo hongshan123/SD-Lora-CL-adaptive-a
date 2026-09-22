@@ -20,6 +20,7 @@ from backbone.sa_lora import (
     SharedALoRA_ViT_timm,
     _SensitivityBudgetedGQKV,
 )
+from backbone.sbgc import normalize_sensitivity, update_running_moment
 
 
 class _TinyAttention(nn.Module):
@@ -113,6 +114,23 @@ def _calibrate(model, rank, task, device):
         for tensor in (wrapper.projection_q, wrapper.projection_v)
     ]
     model.prepare_sbgc_calibration()
+    wrapper = model._sbgc_wrappers()[0]
+    prior_covariances = (
+        wrapper.projected_covariance_q.detach().double().clone(),
+        wrapper.projected_covariance_v.detach().double().clone(),
+    )
+    prior_sensitivities = (
+        wrapper.sensitivity_q.detach().double().clone(),
+        wrapper.sensitivity_v.detach().double().clone(),
+    )
+    prior_covariance_counts = (
+        wrapper.covariance_count_q,
+        wrapper.covariance_count_v,
+    )
+    prior_sensitivity_counts = (
+        wrapper.sensitivity_count_q,
+        wrapper.sensitivity_count_v,
+    )
     after_p = [
         tensor.detach().clone()
         for wrapper in model._sbgc_wrappers()
@@ -123,6 +141,9 @@ def _calibrate(model, rank, task, device):
 
     local_batch = rank + 2
     inputs = torch.randn(local_batch, 3, 6, device=device)
+    gathered_inputs = [None] * dist.get_world_size()
+    dist.all_gather_object(gathered_inputs, inputs.detach().cpu())
+    global_inputs = torch.cat(gathered_inputs).double()
     model(inputs)
     outputs = model.sbgc_calibration_outputs()
     weights = torch.linspace(0.2, 2.0, 6, device=device)
@@ -133,6 +154,42 @@ def _calibrate(model, rank, task, device):
     model.accumulate_sbgc_sensitivities(gradients, local_batch)
     stats = model.finalize_sbgc_calibration()
     expected_tokens = sum((other + 2) * 3 for other in range(dist.get_world_size()))
+    expected_sensitivity = normalize_sensitivity(weights.detach().cpu().double().square())
+    for branch_index, (projection, covariance, sensitivity) in enumerate(
+        (
+            (wrapper.projection_q, wrapper.projected_covariance_q, wrapper.sensitivity_q),
+            (wrapper.projection_v, wrapper.projected_covariance_v, wrapper.sensitivity_v),
+        )
+    ):
+        coordinates = global_inputs.reshape(-1, 6) @ projection.detach().cpu().double().t()
+        current_covariance = coordinates.t() @ coordinates / expected_tokens
+        expected_covariance, _ = update_running_moment(
+            prior_covariances[branch_index],
+            prior_covariance_counts[branch_index],
+            current_covariance,
+            expected_tokens,
+        )
+        expected_running_sensitivity, _ = update_running_moment(
+            prior_sensitivities[branch_index],
+            prior_sensitivity_counts[branch_index],
+            expected_sensitivity,
+            expected_tokens,
+        )
+        expected_running_sensitivity = normalize_sensitivity(
+            expected_running_sensitivity
+        )
+        assert torch.allclose(
+            covariance.detach().cpu().double(),
+            expected_covariance,
+            atol=2e-6,
+            rtol=2e-6,
+        )
+        assert torch.allclose(
+            sensitivity.detach().cpu().double(),
+            expected_running_sensitivity,
+            atol=2e-6,
+            rtol=2e-6,
+        )
     if rank == 0:
         assert stats["branch_count"] == 2
         assert all(

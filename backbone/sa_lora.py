@@ -68,6 +68,7 @@ SA_STATE_VERSION_UNION = 3
 SA_STATE_VERSION_LIVE_A = 4
 SA_STATE_VERSION_CUO = 5
 SA_STATE_VERSION_SBGC = 6
+SA_STATE_VERSION_SBGC_GUARD = 7
 SA_MERGE_MODE_GAUGE = "gauge"
 SA_MERGE_MODE_UNION_SVD = "union_svd"
 SA_MERGE_MODE_LIVE_A_AGGREGATE_B = "live_a_aggregate_b"
@@ -1992,6 +1993,9 @@ class SharedALoRA_ViT_timm(nn.Module):
         g_solver_ridge=1e-6,
         g_bisection_steps=40,
         g_shadow_only=False,
+        g_plasticity_guard=False,
+        g_holdout_fraction=0.0,
+        g_guard_ce_tolerance=0.01,
         freeze_old_scales=False,
         normalize_current_branch=False,
         live_a_history_groups=1,
@@ -2079,6 +2083,9 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.g_solver_ridge = float(g_solver_ridge)
         self.g_bisection_steps = int(g_bisection_steps)
         self.g_shadow_only = bool(g_shadow_only)
+        self.g_plasticity_guard = bool(g_plasticity_guard)
+        self.g_holdout_fraction = float(g_holdout_fraction)
+        self.g_guard_ce_tolerance = float(g_guard_ce_tolerance)
         if cumulative_merge == SA_MERGE_MODE_SBGC:
             if not cumulative_state:
                 raise ValueError(
@@ -2431,12 +2438,15 @@ class SharedALoRA_ViT_timm(nn.Module):
                     "cuo_lowrank state task_id does not match the requested task"
                 )
             self.cumulative_state = True
-        elif state_version == SA_STATE_VERSION_SBGC:
+        elif state_version in (
+            SA_STATE_VERSION_SBGC,
+            SA_STATE_VERSION_SBGC_GUARD,
+        ):
             if self.cumulative_merge != SA_MERGE_MODE_SBGC:
                 raise ValueError(
                     "artifact is v{} sensitivity_budgeted_g but "
                     "sa_cumulative_merge={}".format(
-                        SA_STATE_VERSION_SBGC, self.cumulative_merge
+                        state_version, self.cumulative_merge
                     )
                 )
             required_sbgc_keys = {
@@ -2457,11 +2467,55 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "bisection_steps",
                 "shadow_only",
             }
+            if state_version == SA_STATE_VERSION_SBGC_GUARD:
+                required_sbgc_keys.update({
+                    "guard_enabled",
+                    "guard_selected_name",
+                    "guard_selected_budget",
+                    "guard_selected_aggregate_risk",
+                    "guard_selected_max_branch_risk",
+                    "guard_holdout_fraction",
+                    "guard_ce_tolerance",
+                })
             if set(state) != required_sbgc_keys:
                 raise ValueError(
                     "sensitivity_budgeted_g state must contain only the v{} "
-                    "fixed-coordinate fields".format(SA_STATE_VERSION_SBGC)
+                    "fixed-coordinate fields".format(state_version)
                 )
+            if self.g_plasticity_guard != (
+                state_version == SA_STATE_VERSION_SBGC_GUARD
+            ):
+                raise ValueError("SBGC guard mode differs from the saved state")
+            if self.g_plasticity_guard:
+                if state["guard_enabled"] is not True:
+                    raise ValueError("SBGC guard artifact is not enabled")
+                if state["guard_selected_name"] not in (
+                    None, "0.05", "0.10", "0.20", "0.40", "0.80", "additive"
+                ):
+                    raise ValueError("SBGC guard selected name is invalid")
+                if state["guard_selected_name"] is None and int(state["task_id"]) > 1:
+                    raise ValueError("SBGC guard selection is missing after Task 0")
+                expected_budget = (
+                    None
+                    if state["guard_selected_name"] in (None, "additive")
+                    else float(state["guard_selected_name"])
+                )
+                if state["guard_selected_budget"] != expected_budget:
+                    raise ValueError("SBGC guard selected budget is inconsistent")
+                for key in (
+                    "guard_selected_aggregate_risk",
+                    "guard_selected_max_branch_risk",
+                ):
+                    if not math.isfinite(float(state[key])) or float(state[key]) < 0:
+                        raise ValueError("SBGC {} is invalid".format(key))
+                for key, requested in (
+                    ("guard_holdout_fraction", self.g_holdout_fraction),
+                    ("guard_ce_tolerance", self.g_guard_ce_tolerance),
+                ):
+                    if not math.isclose(
+                        float(state[key]), requested, rel_tol=0.0, abs_tol=0.0
+                    ):
+                        raise ValueError("SBGC {} differs from saved state".format(key))
             if state["merge_mode"] != SA_MERGE_MODE_SBGC:
                 raise ValueError("SBGC state has an invalid merge_mode")
             if int(state["rank"]) != self.rank:
@@ -2529,6 +2583,16 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.sbgc_sensitivity_diag = []
         self.sbgc_covariance_count = []
         self.sbgc_sensitivity_count = []
+        self._sbgc_guard_selection = (
+            {
+                "name": state["guard_selected_name"],
+                "budget": state["guard_selected_budget"],
+                "aggregate_risk": float(state["guard_selected_aggregate_risk"]),
+                "max_branch_risk": float(state["guard_selected_max_branch_risk"]),
+            }
+            if state_version == SA_STATE_VERSION_SBGC_GUARD
+            else None
+        )
         if self.cumulative_state:
             expected_branches = 2 * len(self.lora_layer)
             if self.cumulative_merge == SA_MERGE_MODE_SBGC:
@@ -4979,6 +5043,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 SA_STATE_VERSION_LIVE_A,
                 SA_STATE_VERSION_CUO,
                 SA_STATE_VERSION_SBGC,
+                SA_STATE_VERSION_SBGC_GUARD,
             ):
                 raise ValueError("unsupported shared-A state version")
             return state
@@ -5115,6 +5180,12 @@ class SharedALoRA_ViT_timm(nn.Module):
         if not self._sbgc_calibration_prepared:
             raise RuntimeError("SBGC calibration must be prepared before finalization")
         is_main = not self._sbgc_distributed() or dist.get_rank() == 0
+        guard_problems = (
+            []
+            if is_main and self.task_id > 0
+            and getattr(self, "_sbgc_guard_capture", False)
+            else None
+        )
         scale = self.wrapped_param[0].param.detach().reshape(())
         branch_diagnostics = []
         boundary_candidates = (
@@ -5208,6 +5279,17 @@ class SharedALoRA_ViT_timm(nn.Module):
                         ):
                             raise RuntimeError(
                                 "SBGC historical sensitivity is missing or invalid"
+                            )
+                        if guard_problems is not None:
+                            guard_problems.append(
+                                {
+                                    "historical": old.clone(),
+                                    "target": target.clone(),
+                                    "historical_covariance": hist_cov.clone(),
+                                    "current_covariance": current_covariance.clone(),
+                                    "historical_sensitivity": hist_sens.clone(),
+                                    "current_sensitivity": current_sensitivity.clone(),
+                                }
                             )
                         if old.is_cuda:
                             torch.cuda.synchronize(old.device)
@@ -5410,6 +5492,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._sbgc_calibration_prepared = False
         self._sbgc_calibration_finalized = True
         self._sbgc_boundary_candidates = boundary_candidates if is_main else None
+        self._sbgc_guard_problems = guard_problems
         self._last_sbgc_branch_diagnostics = branch_diagnostics if is_main else None
         if is_main:
             active = [
@@ -5713,7 +5796,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         )
         self.task_id += 1
         state = {
-            "version": SA_STATE_VERSION_SBGC,
+            "version": (
+                SA_STATE_VERSION_SBGC_GUARD
+                if self.g_plasticity_guard else SA_STATE_VERSION_SBGC
+            ),
             "task_id": self.task_id,
             "rank": self.rank,
             "merge_mode": SA_MERGE_MODE_SBGC,
@@ -5730,6 +5816,22 @@ class SharedALoRA_ViT_timm(nn.Module):
             "bisection_steps": self.g_bisection_steps,
             "shadow_only": self.g_shadow_only,
         }
+        if self.g_plasticity_guard:
+            selection = self._sbgc_guard_selection or {
+                "name": None,
+                "budget": None,
+                "aggregate_risk": 0.0,
+                "max_branch_risk": 0.0,
+            }
+            state.update({
+                "guard_enabled": True,
+                "guard_selected_name": selection["name"],
+                "guard_selected_budget": selection["budget"],
+                "guard_selected_aggregate_risk": selection["aggregate_risk"],
+                "guard_selected_max_branch_risk": selection["max_branch_risk"],
+                "guard_holdout_fraction": self.g_holdout_fraction,
+                "guard_ce_tolerance": self.g_guard_ce_tolerance,
+            })
         torch.save(state, _join_path(filename, SA_STATE_FILENAME))
         self.sbgc_projection_down = projection_down
         self.sbgc_unified_up = unified_up
@@ -6173,7 +6275,10 @@ class SharedALoRA_ViT_timm(nn.Module):
             wrappers = self._sbgc_wrappers()
             torch.save(
                 {
-                    "version": SA_STATE_VERSION_SBGC,
+                    "version": (
+                        SA_STATE_VERSION_SBGC_GUARD
+                        if self.g_plasticity_guard else SA_STATE_VERSION_SBGC
+                    ),
                     "task_id": (
                         self.task_id - 1
                         if self._sbgc_deployment_saved

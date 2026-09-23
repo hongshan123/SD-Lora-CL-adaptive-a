@@ -40,7 +40,16 @@ from backbone.sa_lora import (
     live_a_historical_outputs,
     register_live_a_historical_capture_hooks,
 )
-from backbone.sbgc import sbgc_state_scalar_counts
+from backbone.sbgc import (
+    historical_response_risk,
+    sbgc_state_scalar_counts,
+    solve_sensitivity_budgeted_g,
+    weighted_response_energy,
+)
+from backbone.sbgc_guard import (
+    choose_guard_candidate,
+    stratified_holdout_indices,
+)
 from backbone.linears import PrototypeCosineHead, MultiPrototypeCosineHead
 from utils.canonical_hash import (
     compare_named_tensors,
@@ -63,6 +72,7 @@ COORDINATE_DIAGNOSTICS_FILENAME = "sa_coordinate_diagnostics.json"
 HOEP_FUNCTIONAL_DIAGNOSTICS_FILENAME = "hoep_functional_diagnostics.pt"
 SBGC_DIAGNOSTICS_FILENAME = "sbgc_diagnostics.pt"
 SBGC_ATTRIBUTION_FILENAME = "sbgc_boundary_attribution.json"
+SBGC_GUARD_FILENAME = "sbgc_guard_selection.json"
 
 
 def summarize_boundary_logits(logits, targets, known_classes):
@@ -151,6 +161,12 @@ def validate_sbgc_config(args):
         "g_solver_ridge": float(args.get("sa_g_solver_ridge", 1e-6)),
         "g_bisection_steps": args.get("sa_g_bisection_steps", 40),
         "g_shadow_only": bool(args.get("sa_g_shadow_only", False)),
+        "g_plasticity_guard": bool(args.get("sa_g_plasticity_guard", False)),
+        "g_holdout_fraction": float(args.get(
+            "sa_g_holdout_fraction",
+            0.1 if args.get("sa_g_plasticity_guard", False) else 0.0,
+        )),
+        "g_guard_ce_tolerance": float(args.get("sa_g_guard_ce_tolerance", 0.01)),
     }
     if not args.get("sa_cumulative_state", False):
         raise ValueError(
@@ -948,6 +964,39 @@ class Learner(SDLoraLearner):
             )
         self._sbgc_boundary_candidates = None
         self._sbgc_premerge_logits = None
+        self._sa_g_plasticity_guard = bool(args.get("sa_g_plasticity_guard", False))
+        self._sa_g_holdout_fraction = float(
+            args.get("sa_g_holdout_fraction", 0.1 if self._sa_g_plasticity_guard else 0.0)
+        )
+        self._sa_g_guard_ce_tolerance = float(
+            args.get("sa_g_guard_ce_tolerance", 0.01)
+        )
+        if not math.isfinite(self._sa_g_holdout_fraction) or not (
+            0.0 <= self._sa_g_holdout_fraction < 0.5
+        ):
+            raise ValueError("sa_g_holdout_fraction must be in [0, 0.5)")
+        if self._sa_g_holdout_fraction > 0 and self._sa_sbgc_settings is None:
+            raise ValueError("sa_g_holdout_fraction requires sensitivity_budgeted_g")
+        if self._sa_g_plasticity_guard:
+            if self._sa_sbgc_settings is None:
+                raise ValueError("sa_g_plasticity_guard requires sensitivity_budgeted_g")
+            if self._sa_sbgc_settings["g_shadow_only"]:
+                raise ValueError("sa_g_plasticity_guard requires deployed SBGC")
+            if self._sa_sbgc_settings["g_sensitivity_metric"] != "fisher_diag":
+                raise ValueError("sa_g_plasticity_guard requires fisher_diag")
+            if not args.get("sa_use_prototype_classifier", False):
+                raise ValueError("sa_g_plasticity_guard requires prototype classifier")
+            if self._sa_g_holdout_fraction <= 0:
+                raise ValueError("sa_g_plasticity_guard requires a holdout")
+            if not math.isfinite(self._sa_g_guard_ce_tolerance) or (
+                self._sa_g_guard_ce_tolerance < 0
+            ):
+                raise ValueError("sa_g_guard_ce_tolerance must be nonnegative")
+            if abs(self._sa_sbgc_settings["g_risk_budget"] - 0.05) > 1e-12:
+                raise ValueError("sa_g_plasticity_guard requires initial 0.05 budget")
+        self._sa_g_train_indices = None
+        self._sa_g_validation_indices = None
+        self._sa_g_task_labels = None
         sbgc_calibration_batch_size = args.get(
             "sa_g_calibration_batch_size", 16
         )
@@ -2136,6 +2185,7 @@ class Learner(SDLoraLearner):
             source="train",
             mode="test",
         )
+        dataset = self._sbgc_split_dataset(dataset, "train")
         per_class = {
             class_id: []
             for class_id in range(self._known_classes, self._total_classes)
@@ -2174,6 +2224,263 @@ class Learner(SDLoraLearner):
             prototypes,
             aggregate=self.args.get("sa_k_prototype_aggregate", "max"),
         ).to(self._device)
+
+    def _prepare_task_train_dataset(self, data_manager, dataset):
+        self._sa_g_train_indices = None
+        self._sa_g_validation_indices = None
+        self._sa_g_task_labels = None
+        if self._cur_task == 0 or self._sa_g_holdout_fraction == 0:
+            return dataset
+        if not hasattr(dataset, "labels"):
+            raise RuntimeError("SBGC holdout requires dataset.labels")
+        labels = np.asarray(dataset.labels)
+        train, validation = stratified_holdout_indices(
+            labels,
+            self._sa_g_holdout_fraction,
+            int(self.args["seed"]) + 1000 * self._cur_task,
+        )
+        self._sa_g_train_indices = train
+        self._sa_g_validation_indices = validation
+        self._sa_g_task_labels = labels.copy()
+        logging.info(
+            "[SBGC Holdout] task %d train=%d validation=%d fraction=%.3f",
+            self._cur_task,
+            len(train),
+            len(validation),
+            self._sa_g_holdout_fraction,
+        )
+        return Subset(dataset, train)
+
+    def _sbgc_split_dataset(self, dataset, split):
+        if getattr(self, "_sa_g_train_indices", None) is None:
+            if split == "validation":
+                raise RuntimeError("SBGC validation split is unavailable")
+            return dataset
+        if not hasattr(dataset, "labels") or not np.array_equal(
+            np.asarray(dataset.labels), self._sa_g_task_labels
+        ):
+            raise RuntimeError("SBGC train/test-preprocessing sample order differs")
+        indices = (
+            self._sa_g_train_indices
+            if split == "train"
+            else self._sa_g_validation_indices
+        )
+        if split not in ("train", "validation"):
+            raise ValueError("SBGC split must be train or validation")
+        return Subset(dataset, indices)
+
+    def _sbgc_guard_validation_ce(self, raw_network, dataset, head):
+        total_loss = 0.0
+        total_count = 0
+        loader = deterministic_loader(
+            dataset,
+            batch_size=self.args["batch_size"],
+            shuffle=False,
+            num_workers=0,
+            seed=0,
+        )
+        with torch.no_grad():
+            for _, inputs, targets in loader:
+                features = raw_network.backbone(inputs.to(self._device))
+                logits = head(features)["logits"]
+                loss = F.cross_entropy(
+                    logits,
+                    targets.to(self._device),
+                    reduction="sum",
+                )
+                total_loss += float(loss)
+                total_count += len(targets)
+        if total_count == 0 or not math.isfinite(total_loss):
+            raise RuntimeError("SBGC guard validation CE is empty or nonfinite")
+        return total_loss / total_count
+
+    def _sbgc_guard_candidates(self, backbone):
+        problems = backbone._sbgc_guard_problems
+        if not problems or len(problems) != len(self._sbgc_up_tensors(backbone)):
+            raise RuntimeError("SBGC guard is missing branch problems")
+        candidates = {}
+        for budget in (0.05, 0.10, 0.20, 0.40, 0.80, None):
+            name = "additive" if budget is None else f"{budget:.2f}"
+            values, diagnostics = [], []
+            numerator = 0.0
+            denominator = 0.0
+            for problem, destination in zip(
+                problems, self._sbgc_up_tensors(backbone)
+            ):
+                if budget is None:
+                    candidate = problem["target"]
+                    result = {
+                        "constraint_active": False,
+                        "current_distortion": 0.0,
+                        "eta": 0.0,
+                    }
+                else:
+                    candidate, result = solve_sensitivity_budgeted_g(
+                        problem["historical"],
+                        problem["target"],
+                        problem["historical_covariance"],
+                        problem["current_covariance"],
+                        problem["historical_sensitivity"],
+                        problem["current_sensitivity"],
+                        risk_budget=budget,
+                        ridge=backbone.g_solver_ridge,
+                        bisection_steps=backbone.g_bisection_steps,
+                    )
+                deployed = candidate.to(destination).detach().clone()
+                risk = historical_response_risk(
+                    deployed.to(torch.float64),
+                    problem["historical"],
+                    problem["historical_covariance"],
+                    problem["historical_sensitivity"],
+                )
+                if budget is not None and float(risk) > budget + 1e-6:
+                    raise RuntimeError("SBGC guard candidate violates its budget")
+                diff = deployed.to(torch.float64) - problem["historical"]
+                numerator += float(weighted_response_energy(
+                    diff,
+                    problem["historical_covariance"],
+                    problem["historical_sensitivity"],
+                ))
+                denominator += float(weighted_response_energy(
+                    problem["historical"],
+                    problem["historical_covariance"],
+                    problem["historical_sensitivity"],
+                ))
+                result = dict(result)
+                result["achieved_risk"] = float(risk)
+                result["target_risk"] = float(historical_response_risk(
+                    problem["target"],
+                    problem["historical"],
+                    problem["historical_covariance"],
+                    problem["historical_sensitivity"],
+                ))
+                diagnostics.append(result)
+                values.append(deployed)
+            candidates[name] = {
+                "values": values,
+                "diagnostics": diagnostics,
+                "risk": numerator / (denominator + 1e-12),
+                "max_branch_risk": max(
+                    item["achieved_risk"] for item in diagnostics
+                ),
+                "budget": budget,
+            }
+        return candidates
+
+    def _apply_sbgc_plasticity_guard(self, raw_network, data_manager):
+        backbone = raw_network.backbone
+        selected_name = None
+        record = None
+        if self._is_main_process():
+            original = [tensor.detach().clone() for tensor in self._sbgc_up_tensors(backbone)]
+            was_training = raw_network.training
+            rng_before = rng_state_hash()
+            try:
+                raw_network.eval()
+                with rng_preserving():
+                    candidates = self._sbgc_guard_candidates(backbone)
+                    validation = data_manager.get_dataset(
+                        np.arange(self._known_classes, self._total_classes),
+                        source="train",
+                        mode="test",
+                    )
+                    validation = self._sbgc_split_dataset(
+                        validation, "validation"
+                    )
+                    for name, candidate in candidates.items():
+                        self._set_sbgc_up_tensors(backbone, candidate["values"])
+                        head = self._sbgc_candidate_prototype_head(
+                            data_manager, raw_network
+                        )
+                        candidate["loss"] = self._sbgc_guard_validation_ce(
+                            raw_network, validation, head
+                        )
+            finally:
+                self._set_sbgc_up_tensors(backbone, original)
+                raw_network.train(was_training)
+            if rng_state_hash() != rng_before:
+                raise RuntimeError("SBGC plasticity guard changed RNG state")
+            selected_name, threshold = choose_guard_candidate(
+                candidates,
+                candidates["additive"]["loss"],
+                self._sa_g_guard_ce_tolerance,
+            )
+            selected = candidates[selected_name]
+            self._set_sbgc_up_tensors(backbone, selected["values"])
+            record = {
+                "task_id": self._cur_task,
+                "selected": selected_name,
+                "additive_loss": candidates["additive"]["loss"],
+                "loss_threshold": threshold,
+                "validation_count": len(validation),
+                "candidates": {
+                    name: {
+                        "loss": value["loss"],
+                        "risk": value["risk"],
+                        "max_branch_risk": value["max_branch_risk"],
+                        "budget": value["budget"],
+                    }
+                    for name, value in candidates.items()
+                },
+            }
+            path = os.path.join(self.args["filepath"], SBGC_GUARD_FILENAME)
+            artifact = {"version": 1, "tasks": []}
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as handle:
+                    artifact = json.load(handle)
+            artifact["tasks"] = [
+                item for item in artifact["tasks"]
+                if item["task_id"] != self._cur_task
+            ] + [record]
+            artifact["tasks"].sort(key=lambda item: item["task_id"])
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(artifact, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+            branches = backbone._last_sbgc_branch_diagnostics
+            for branch, selected_diag in zip(
+                branches, selected["diagnostics"]
+            ):
+                branch["pre_guard_selected"] = branch["selected"]
+                branch["selected"] = selected_diag
+                branch["deployed_historical_risk"] = selected_diag[
+                    "achieved_risk"
+                ]
+            stats = backbone._last_sbgc_calibration_stats
+            stats["pre_guard_max_risk"] = stats["max_achieved_risk"]
+            stats["max_achieved_risk"] = selected["max_branch_risk"]
+            stats["guard_selected_aggregate_risk"] = selected["risk"]
+            stats["guard_selected_budget"] = selected["budget"]
+            stats["active_constraints"] = sum(
+                item["constraint_active"] for item in selected["diagnostics"]
+            )
+            stats["mean_current_distortion"] = sum(
+                item["current_distortion"] for item in selected["diagnostics"]
+            ) / len(selected["diagnostics"])
+            logging.info(
+                "[SBGC Guard] task %d selected=%s validation_ce=%.6f "
+                "additive_ce=%.6f threshold=%.6f aggregate_risk=%.6f "
+                "max_branch_risk=%.6f",
+                self._cur_task,
+                selected_name,
+                selected["loss"],
+                record["additive_loss"],
+                threshold,
+                selected["risk"],
+                selected["max_branch_risk"],
+            )
+            backbone._sbgc_guard_selection = {
+                "name": selected_name,
+                "budget": selected["budget"],
+                "aggregate_risk": selected["risk"],
+                "max_branch_risk": selected["max_branch_risk"],
+            }
+        if dist.is_available() and dist.is_initialized():
+            for tensor in self._sbgc_up_tensors(backbone):
+                dist.broadcast(tensor, src=0)
+                if not all_ranks_equal(tensor):
+                    raise RuntimeError("SBGC guard G differs across DDP ranks")
+        backbone._sbgc_guard_problems = None
+        return record
 
     def _run_sbgc_boundary_attribution(self, data_manager=None):
         if not getattr(self, "_sa_g_boundary_attribution", False) or self._cur_task == 0:
@@ -2317,6 +2624,7 @@ class Learner(SDLoraLearner):
         dataset = data_manager.get_dataset(
             cur_classes, source="train", mode="test"
         )
+        dataset = self._sbgc_split_dataset(dataset, "train")
         if dist.is_available() and dist.is_initialized():
             rank = dist.get_rank()
             world_size = dist.get_world_size()
@@ -2416,6 +2724,10 @@ class Learner(SDLoraLearner):
                     getattr(self, "_sa_g_boundary_attribution", False)
                     and self._cur_task > 0
                 )
+                backbone._sbgc_guard_capture = (
+                    getattr(self, "_sa_g_plasticity_guard", False)
+                    and self._cur_task > 0
+                )
                 if (
                     getattr(self, "_sa_g_boundary_attribution", False)
                     and self._cur_task > 0
@@ -2483,6 +2795,14 @@ class Learner(SDLoraLearner):
                     time.perf_counter() - sbgc_calibration_started
                 )
                 stats = backbone.finalize_sbgc_calibration()
+                guard_record = None
+                if (
+                    getattr(self, "_sa_g_plasticity_guard", False)
+                    and self._cur_task > 0
+                ):
+                    guard_record = self._apply_sbgc_plasticity_guard(
+                        raw_network, data_manager
+                    )
                 if self._is_main_process() and getattr(
                     self, "_sa_g_boundary_attribution", False
                 ):
@@ -2530,6 +2850,7 @@ class Learner(SDLoraLearner):
                         "risk_budget": backbone.g_risk_budget,
                         "stats": stats,
                         "branches": backbone._last_sbgc_branch_diagnostics,
+                        "plasticity_guard": guard_record,
                     }
                     tasks = [
                         item
@@ -3865,6 +4186,7 @@ class Learner(SDLoraLearner):
         dataset = data_manager.get_dataset(
             cur_classes, source="train", mode="test"
         )
+        dataset = self._sbgc_split_dataset(dataset, "train")
         raw_network.eval()
         per_class = {c: [] for c in cur_classes.tolist()}
         all_features = []

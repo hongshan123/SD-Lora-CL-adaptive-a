@@ -13,6 +13,7 @@ from backbone.sa_lora import (
     SA_MERGED_FILENAME,
     SA_STATE_FILENAME,
     SA_STATE_VERSION_SBGC,
+    SA_STATE_VERSION_SBGC_GUARD,
     SharedALoRA_ViT_timm,
     _SensitivityBudgetedGQKV,
 )
@@ -88,7 +89,7 @@ class _RawNetwork(nn.Module):
         return output
 
 
-def _make_model(run, task, vit=None, metric="fisher_diag", shadow=False):
+def _make_model(run, task, vit=None, metric="fisher_diag", shadow=False, guard=False):
     return SharedALoRA_ViT_timm(
         copy.deepcopy(vit) if vit is not None else _TinyViT(),
         r=2,
@@ -104,6 +105,9 @@ def _make_model(run, task, vit=None, metric="fisher_diag", shadow=False):
         g_solver_ridge=1e-6,
         g_bisection_steps=40,
         g_shadow_only=shadow,
+        g_plasticity_guard=guard,
+        g_holdout_fraction=0.1 if guard else 0.0,
+        g_guard_ce_tolerance=0.01,
     )
 
 
@@ -127,10 +131,10 @@ def _collect_and_finalize(model, inputs):
     return outputs.detach(), stats
 
 
-def _train_and_save_task_zero(run, vit, shadow=False, metric="fisher_diag"):
+def _train_and_save_task_zero(run, vit, shadow=False, metric="fisher_diag", guard=False):
     torch.manual_seed(701)
     model = _make_model(
-        run, task=0, vit=vit, shadow=shadow, metric=metric
+        run, task=0, vit=vit, shadow=shadow, metric=metric, guard=guard
     )
     with torch.no_grad():
         for module in model.w_As + model.w_Bs:
@@ -464,6 +468,78 @@ def test_boundary_attribution_restores_deployed_state_and_rng(tmp_path):
     }
 
 
+def test_guard_candidates_select_and_persist_deployed_g(tmp_path):
+    run = tmp_path / "run"
+    pristine = _TinyViT()
+    _train_and_save_task_zero(run, pristine, guard=True)
+    backbone = _make_model(run, task=1, vit=pristine, guard=True)
+    raw_network = _RawNetwork(backbone).train()
+    with torch.no_grad():
+        for wrapper in backbone._sbgc_wrappers():
+            wrapper.b_q.weight.copy_(4.0 * wrapper.unified_up_q)
+            wrapper.b_v.weight.copy_(4.0 * wrapper.unified_up_v)
+
+    class LabeledDataset(_CalibrationDataset):
+        def __init__(self):
+            super().__init__(count=20)
+            self.targets.add_(1)
+            self.labels = self.targets.numpy().copy()
+
+    class DataManager:
+        def get_dataset(self, classes, source, mode):
+            return LabeledDataset()
+
+    learner = object.__new__(SharedALearner)
+    learner._cur_task = 1
+    learner._known_classes = 1
+    learner._total_classes = 3
+    learner._device = torch.device("cpu")
+    learner.args = {
+        "batch_size": 4,
+        "filepath": str(run),
+        "seed": 1993,
+    }
+    learner._sa_g_holdout_fraction = 0.1
+    learner._sa_g_guard_ce_tolerance = 0.01
+    learner._is_main_process = lambda: True
+    learner._prepare_task_train_dataset(DataManager(), LabeledDataset())
+    torch.save(
+        {0: torch.nn.functional.normalize(torch.ones(18), dim=0)},
+        run / "sa_prototypes.pt",
+    )
+
+    backbone._sbgc_guard_capture = True
+    backbone.prepare_sbgc_calibration()
+    _collect_and_finalize(backbone, torch.randn(8, 4, 6))
+    candidates = learner._sbgc_guard_candidates(backbone)
+    assert list(candidates) == ["0.05", "0.10", "0.20", "0.40", "0.80", "additive"]
+    assert candidates["0.05"]["max_branch_risk"] <= 0.05 + 1e-6
+    assert candidates["0.05"]["risk"] <= candidates["additive"]["risk"]
+    rng_before = rng_state_hash()
+    record = learner._apply_sbgc_plasticity_guard(raw_network, DataManager())
+    assert rng_state_hash() == rng_before
+    assert record["selected"] in candidates
+    assert record["candidates"][record["selected"]]["loss"] <= record["loss_threshold"]
+    chosen = candidates[record["selected"]]["values"]
+    for actual, expected in zip(learner._sbgc_up_tensors(backbone), chosen):
+        assert torch.equal(actual, expected)
+    assert backbone._sbgc_guard_problems is None
+
+    backbone.save_lora_parameters(str(run), task_id=1)
+    state = torch.load(run / SA_STATE_FILENAME, weights_only=True)
+    assert state["version"] == SA_STATE_VERSION_SBGC_GUARD
+    assert state["guard_selected_name"] == record["selected"]
+    assert state["guard_selected_budget"] == candidates[record["selected"]]["budget"]
+    assert state["guard_selected_aggregate_risk"] == pytest.approx(
+        record["candidates"][record["selected"]]["risk"]
+    )
+    restored = _make_model(run, task=2, vit=pristine, guard=True)
+    for actual, expected in zip(
+        learner._sbgc_up_tensors(restored), chosen
+    ):
+        assert torch.equal(actual, expected)
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
@@ -514,6 +590,9 @@ def test_sbgc_accepts_isolated_fixed_projection_configuration():
         "g_solver_ridge": 1e-6,
         "g_bisection_steps": 40,
         "g_shadow_only": False,
+        "g_plasticity_guard": False,
+        "g_holdout_fraction": 0.0,
+        "g_guard_ce_tolerance": 0.01,
     }
 
 

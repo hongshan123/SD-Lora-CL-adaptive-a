@@ -69,6 +69,12 @@ def get_backbone(args, pretrained=False):
                 g_solver_ridge=args.get("sa_g_solver_ridge", 1e-6),
                 g_bisection_steps=args.get("sa_g_bisection_steps", 40),
                 g_shadow_only=args.get("sa_g_shadow_only", False),
+                g_plasticity_guard=args.get("sa_g_plasticity_guard", False),
+                g_holdout_fraction=args.get(
+                    "sa_g_holdout_fraction",
+                    0.1 if args.get("sa_g_plasticity_guard", False) else 0.0,
+                ),
+                g_guard_ce_tolerance=args.get("sa_g_guard_ce_tolerance", 0.01),
                 freeze_old_scales=args.get("sa_freeze_old_scales", False),
                 normalize_current_branch=args.get(
                     "sa_normalize_current_branch", False

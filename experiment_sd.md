@@ -975,3 +975,25 @@
 - 诊断结果：三个数据集 active transition、Fisher/uniform different transition、high-CV branch 比例均为 100%。Fisher distortion 中位数为 `0.10575/0.05797/0.07349`，median-of-medians 为 `0.07349`。
 - 判断：`scripts/analyze_sbgc_shadow.py` 的六项预注册检查全部通过，决策为 GO，允许进入 P2。该阶段没有部署风险约束，不能声称 SBGC 已提升性能。
 - 限制：Fisher 与 uniform distortion 使用不同加权度量，不能直接跨列比较优劣；必须以 P2 的准确率、AAA 和遗忘作结论。
+
+## 2026-09-23：CUB Task 2/6 单任务谱子空间因果干预
+
+- 实验标题：同一历史状态下比较 Frozen-A、Live-A、Raw-gradient Spectral、Stable-demand Spectral。
+- 理论依据：以历史有效算子的最小二乘可恢复损失 `R_rec` 约束 row-space 变化；用当前任务梯度的右奇异空间提供新任务需求。Raw 用一批 32 个类均衡样本，Stable 用 160 个样本/5 批累计梯度；两者的候选基底均须满足每个 Q/V 分支 `R_rec <= 0.05`。该约束仅涉及历史分支，不约束当前 `sBA` 对旧类的功能干扰。
+- 协议：CUB-200 seed1、rank10、20 epoch、SGD lr0.01、双卡每卡 batch64。Task 2 四组均从完成 Task 1 的同一 `sa_state.pt`/FC/prototype 启动；Task 6 四组均从完成 Task 5 的另一份同源状态启动。两份来源均为此前 SBGC attribution 运行，不是单独训练的 Frozen-A checkpoint。固定历史有效算子参与训练前向，任务结束才投影到最终 row-space；此处 Live 是受控干预端点，不是原项目完整 Live-A 流程。
+- 测量：`Delta L_new` 是新类测试样本的全局线性训练头 CE 后减前；新/旧 Top-1 是所有已见类别上的 prototype 头准确率。新类 prototype 在任务自身训练集上计算，旧类 prototype 不更新。`R_rec` 为任务边界历史算子投影残差，而非旧类准确率或全网络遗忘上界。
+
+| Task | 方法 | Delta CE_new | Delta Top1_new (pp) | Delta Top1_old (pp) | Final new/old Top1 (%) | Global R_rec / max branch |
+|---|---|---:|---:|---:|---:|---:|
+| 2 | Frozen | -9.075 | +2.027 | -0.691 | 93.75 / 90.67 | 0 / 0 |
+| 2 | Live | -9.075 | +2.027 | -0.604 | 93.75 / 90.76 | 0.0001 / 0.0007 |
+| 2 | Raw | -9.071 | +4.223 | -51.641 | 95.95 / 39.72 | 0.0244 / 0.0491 |
+| 2 | Stable | -9.071 | +4.054 | -54.318 | 95.78 / 37.05 | 0.0193 / 0.0470 |
+| 6 | Frozen | -10.921 | +5.546 | -1.586 | 91.23 / 86.27 | 0 / 0 |
+| 6 | Live | -10.922 | +5.367 | -1.442 | 91.06 / 86.41 | 0.0004 / 0.0010 |
+| 6 | Raw | -10.883 | +8.587 | -35.939 | 94.28 / 51.92 | 0.0209 / 0.0416 |
+| 6 | Stable | -10.912 | +0.537 | -0.461 | 86.23 / 87.40 | 0.0209 / 0.0493 |
+
+- 验证：8/8 结果均为 20 epoch、24 个分支风险记录、同 Task 内一致的来源 SHA 和训练前旧类准确率；两种 Spectral 的每分支风险均不超过 5%。两项算子级测试通过，日志无异常。正式结果保存在 `CAUSAL_CUB_INTERVENTION_20260923/results/`，代码提交 `28a695d`；cuda11 使用显式 SSH identity `~/.ssh/id_ed25519_pro6000`。
+- 分析：Task 2 的 Stable 比 Raw 旧类再低 2.68 pp，且两者均远差于 Frozen；Task 6 的 Stable 比 Raw 多保留 35.48 pp 旧类，但新类低 8.05 pp。Task 6 Stable 的按样本数加权已见类 Top-1 为 87.23%，仅比 Frozen 的 86.96% 高 0.27 pp；Task 2 则为 56.91% 对 Frozen 的 91.71%。两任务的旧类大幅下降已在 merge 前出现，不能归咎于任务边界 LS 投影。
+- 决策：预设跨两个 transition 的稳定收益条件未满足，停止把此谱方法直接扩为正式 T=10 实验。先诊断新任务 `sBA` 的功能干扰和旧 prototype/头失配；不要把 `R_rec <= 5%` 解释为旧类损失 <=5%。

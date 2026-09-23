@@ -1145,3 +1145,5 @@
 - 该实验回答“相同 LoRA 适配容量在联合数据上的经验可达值”，不能回答全参数模型的理论 Bayes 上限，也不能直接归因任务序列差距来自 forgetting；差距还包含优化、分类头和数据顺序效应。
 - 2026-09-23 09:48：提交 `8128996` 后由 user-systemd unit `sbgc-offline-t1-20260923` 启动三条双卡训练。日志确认 C100 为 `Learning on 0-100`，INR/CUB 为 `Learning on 0-200`；GPU 2、3 空闲。
 - 首轮 sanity：CUB Epoch1 为 `Loss 4.035 / Train 18.99 / Test 55.63`，运行正常；C100/INR 的全类别 epoch 数据量更大，首个 epoch 尚未结束。三路均无 Traceback、OOM、NCCL 或 deterministic error。
+- 2026-09-23 17:07：CUB Task 2/6 的 8 组单任务因果干预在 cuda11 完成。cuda6 的 0/1 卡被其他用户作业占用，首组 OOM 后未使用其部分结果；cuda11 用专用 SSH key 登录并经 1-epoch smoke 核对相同训练前准确率。正式结果为完整 20 epoch，详见 `experiment_sd.md`。
+- 关键判断：`R_rec` 控制的是历史算子被新 row-space 表达的误差，不控制当前 `sBA` 对旧类特征的响应，也不控制 prototype/分类边界。Task 2 的 Raw/Stable 在 merge 前旧类准确率已掉至约 40%/37%，即使两者投影风险都低于 5%。Task 6 的 Stable 保住旧类，但牺牲新类；对 Frozen 的整体优势仅 0.27 pp。该阶段按预设规则 No-Go。

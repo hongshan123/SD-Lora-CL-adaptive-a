@@ -1147,3 +1147,5 @@
 - 首轮 sanity：CUB Epoch1 为 `Loss 4.035 / Train 18.99 / Test 55.63`，运行正常；C100/INR 的全类别 epoch 数据量更大，首个 epoch 尚未结束。三路均无 Traceback、OOM、NCCL 或 deterministic error。
 - 2026-09-23 17:07：CUB Task 2/6 的 8 组单任务因果干预在 cuda11 完成。cuda6 的 0/1 卡被其他用户作业占用，首组 OOM 后未使用其部分结果；cuda11 用专用 SSH key 登录并经 1-epoch smoke 核对相同训练前准确率。正式结果为完整 20 epoch，详见 `experiment_sd.md`。
 - 关键判断：`R_rec` 控制的是历史算子被新 row-space 表达的误差，不控制当前 `sBA` 对旧类特征的响应，也不控制 prototype/分类边界。Task 2 的 Raw/Stable 在 merge 前旧类准确率已掉至约 40%/37%，即使两者投影风险都低于 5%。Task 6 的 Stable 保住旧类，但牺牲新类；对 Frozen 的整体优势仅 0.27 pp。该阶段按预设规则 No-Go。
+- 2026-09-23 19:36：六组 counterfactual 复现完成。Task 2 Raw/Stable、Task 6 Raw 的旧类全局准确率大跌，但关掉当前 `sBA` 后分别恢复至 `93.09/93.01/88.84`；LS 对齐与原历史差异不超过 `0.09 pp`。旧类限定标签准确率仍为 `88.60/88.51/86.13`，说明主要现象是当前分支改变旧样本特征后新类 prototype 赢得全局预测，而非旧类间判别全部崩溃。
+- 下一步判断：继续调 row-space 的 operator-only `R_rec` 预算无法直接控制这个交互。若继续方法研究，应先用旧类响应/分类间隔的无旧样本代理信号评估当前分支的跨类侵入；任何新约束需先在同样两个 transition 做单变量诊断，不直接扩展 T=10 或多 seed。

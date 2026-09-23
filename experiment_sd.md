@@ -905,6 +905,15 @@
 - 结果：Fisher-SBGC 在 C100/INR/CUB 为 `88.28/92.761/5.656`、`78.82/82.479/6.264`、`84.29/89.462/7.952`；Uniform-G 为 `88.31/92.760/5.600`、`78.63/82.408/6.354`、`84.33/89.465/7.781`；CUO 为 `88.23/92.739/4.589`、`78.33/82.530/6.493`、`84.14/89.489/8.180`。
 - 判定：所有风险与状态验收通过，但 Fisher 相对最佳 Frozen/CUO 的 Final/AAA 最大提升仅 `0.10/0.022`，没有数据集达到 `+0.30`；C100 Forgetting 门槛失败，且 Fisher 仅在 INR 优于 Uniform。因此 P2 为 NO-GO，不进入多 seed。
 
+## 2026-09-23：同预算 T=1 离线联合训练参考
+
+- 实验标题：rank10 固定状态 LoRA 在全部类别联合可见时的经验性能参考。
+- 目的：估计当前 368,640 LoRA factor 预算在没有任务边界和持续合并误差时的可达准确率，用于量化 T=10 方法与离线联合训练之间的差距。
+- 定义：CIFAR-100 将 100 类作为唯一 Task0；ImageNet-R/CUB-200 将 200 类作为唯一 Task0。使用当前 SBGC Task0 路径，训练中没有历史风险约束，任务结束 QR canonicalization 严格保持有效算子。
+- 固定协议：原开发 seed、rank10、20 epoch、双卡每卡 batch64、相同 SGD/学习率/weight decay、prototype classifier；GPU 为 `0,1`、`4,5`、`6,7`，避开 `2,3`。
+- 边界：该结果称为 single-seed empirical offline reference，不称数学或统计理论上限。T=1 的 AAA 等于 Final，Forgetting 不定义，主比较只使用 Final。
+- 执行：`run_sbgc_offline_t1_3datasets_2gpu.sh` 三数据集并行，全部 torchrun 由 nohup 包装并每 30 分钟监控；结果待回填。
+
 ## 2026-09-20：Recoverability-Constrained Accessibility Adaptive-A 正式分阶段验证
 
 - 实验标题：从精确历史算子可恢复性到全局预算控制的四阶段累计验证。

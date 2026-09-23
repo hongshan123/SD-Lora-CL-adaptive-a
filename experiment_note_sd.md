@@ -1141,3 +1141,5 @@
 - 2026-09-23 02:45：P2 九条有效运行全部完成，GPU 释放。Uniform metric 复核修复后的 CUB 重跑与后续 CUO 均 status=0；六条 SBGC artifact 都有 Task0--9、216 个 transition 分支，最大风险 `<0.050001`，状态计数均为 389520。
 - 机制判断：Fisher/Uniform 都比 Frozen-P 降低 forgetting，但与 CUO 比没有稳定优势；Fisher 只在 INR 比 Uniform 好 `+0.19 Final/+0.071 AAA`，C100/CUB 反而略低。输出 sensitivity 的非均匀性真实存在，却没有提供跨数据集的有效选择信息。
 - 最终决策：SBGC 固定 5% 主配置未通过 P3 门槛。遵守预注册纪律，不扫描预算、不加 warm-up、不跑 seeds 1--5；后续论文不把 SBGC 作为正贡献。
+- 2026-09-23：启动 T=1 离线联合训练参考前完成口径审计。仓库没有相同 seed、rank10、20 epoch、双卡有效 batch128 的全类别单任务结果，因此需要补跑。三数据集均复用 Fisher-SBGC 的 Task0 实现，使部署状态和当前方法一致，但此时不存在历史风险约束或 G consolidation。
+- 该实验回答“相同 LoRA 适配容量在联合数据上的经验可达值”，不能回答全参数模型的理论 Bayes 上限，也不能直接归因任务序列差距来自 forgetting；差距还包含优化、分类头和数据顺序效应。

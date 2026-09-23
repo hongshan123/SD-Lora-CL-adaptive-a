@@ -1,0 +1,2256 @@
+{
+  "protocol": "train-only frozen-feature prototype CE gradient; no parameter updates",
+  "dataset": "cub",
+  "seed": 1,
+  "completed_tasks": 2,
+  "next_task": 2,
+  "first_class": 40,
+  "class_count": 20,
+  "prototype_samples": 160,
+  "gradient_samples": 160,
+  "holdout_samples": 160,
+  "design_loss_mean": 0.2352292605512048,
+  "holdout_loss_mean": 0.1837028439706046,
+  "budget": 0.05,
+  "median_offspace_fraction": 0.9855112799147877,
+  "median_feasible_current_coverage_gain": 0.4612237682869556,
+  "median_holdout_coverage_gain": 0.2840635498100328,
+  "median_holdout_descent_alignment_gain": 0.037432393267384886,
+  "branches_with_positive_holdout_gain": 24,
+  "branches_with_positive_descent_gain": 22,
+  "branches_with_positive_gain": 24,
+  "branches": [
+    {
+      "rank": 10,
+      "gradient_norm": 6.247978878989934,
+      "old_offspace_fraction": 0.9846239362270767,
+      "old_holdout_offspace_fraction": 0.9872572122904639,
+      "old_descent_alignment": 0.004514288288838666,
+      "train_holdout_cosine": 0.19768452618402083,
+      "sketch_energy_retained": 0.9973650268357712,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.00920264139065785,
+        "current_risk": 0.3863847858591226,
+        "current_coverage_gain": 0.598239150367954,
+        "holdout_coverage_gain": 0.2894484359301719,
+        "holdout_descent_alignment_gain": 0.1569283148079402
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 2.220446049250313e-16,
+          "current_risk": 0.9846239362270767,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 6.779620198571479e-10,
+          "current_risk": 0.9846104275735482,
+          "current_coverage_gain": 1.3508653528448988e-05,
+          "holdout_coverage_gain": 5.941754665728105e-06,
+          "holdout_descent_alignment_gain": 3.61632864157458e-06
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 7.058219830824441e-08,
+          "current_risk": 0.9844847200179712,
+          "current_coverage_gain": 0.00013921620910550825,
+          "holdout_coverage_gain": 6.079912289802536e-05,
+          "holdout_descent_alignment_gain": 3.723309164016357e-05
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 0.0031318088351119933,
+          "current_risk": 0.6334661694449752,
+          "current_coverage_gain": 0.3511577667821014,
+          "holdout_coverage_gain": 0.21384373021210867,
+          "holdout_descent_alignment_gain": 0.1735297869658223
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.00920264139065785,
+          "current_risk": 0.3863847858591226,
+          "current_coverage_gain": 0.598239150367954,
+          "holdout_coverage_gain": 0.2894484359301719,
+          "holdout_descent_alignment_gain": 0.1569283148079402
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.08528156005620469,
+          "current_risk": 0.1417363850572969,
+          "current_coverage_gain": 0.8428875511697798,
+          "holdout_coverage_gain": 0.4865831793137303,
+          "holdout_descent_alignment_gain": 0.2027275517787662
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.34011183175608883,
+          "current_risk": 0.06575505649005509,
+          "current_coverage_gain": 0.9188688797370216,
+          "holdout_coverage_gain": 0.619539247885982,
+          "holdout_descent_alignment_gain": 0.19025757770239926
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9805735279208416,
+          "current_risk": 0.042548922345775675,
+          "current_coverage_gain": 0.942075013881301,
+          "holdout_coverage_gain": 0.6790703519056654,
+          "holdout_descent_alignment_gain": 0.19284007831813504
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9827381050845685,
+          "current_risk": 0.042536225328307475,
+          "current_coverage_gain": 0.9420877108987692,
+          "holdout_coverage_gain": 0.6791105797059829,
+          "holdout_descent_alignment_gain": 0.19283064515263298
+        }
+      ],
+      "layer": 0,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 34.381947888648284,
+      "old_offspace_fraction": 0.9785678798405538,
+      "old_holdout_offspace_fraction": 0.9808389837520063,
+      "old_descent_alignment": 0.00113830740834404,
+      "train_holdout_cosine": 0.044690825424196993,
+      "sketch_energy_retained": 0.9929358306486197,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.0043805968795060934,
+        "current_risk": 0.18299159845300905,
+        "current_coverage_gain": 0.7955762813875448,
+        "holdout_coverage_gain": 0.6604726844664632,
+        "holdout_descent_alignment_gain": 0.03889354499701888
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9785678798405538,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 4.608452508492178e-10,
+          "current_risk": 0.9785587338660611,
+          "current_coverage_gain": 9.145974492752451e-06,
+          "holdout_coverage_gain": 7.214938285038386e-06,
+          "holdout_descent_alignment_gain": 3.949897239591705e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 4.85810850436863e-08,
+          "current_risk": 0.9784731764215798,
+          "current_coverage_gain": 9.470341897399592e-05,
+          "holdout_coverage_gain": 7.385588380193209e-05,
+          "holdout_descent_alignment_gain": 4.169265750999162e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 0.0010774363492844774,
+          "current_risk": 0.23938338591513286,
+          "current_coverage_gain": 0.739184493925421,
+          "holdout_coverage_gain": 0.5983753673087019,
+          "holdout_descent_alignment_gain": 0.03074231578990846
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.0043805968795060934,
+          "current_risk": 0.18299159845300905,
+          "current_coverage_gain": 0.7955762813875448,
+          "holdout_coverage_gain": 0.6604726844664632,
+          "holdout_descent_alignment_gain": 0.03889354499701888
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.06183401500268426,
+          "current_risk": 0.0777532193750412,
+          "current_coverage_gain": 0.9008146604655126,
+          "holdout_coverage_gain": 0.7926772263726037,
+          "holdout_descent_alignment_gain": 0.04409656874442144
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.20830172672029224,
+          "current_risk": 0.0507683745507117,
+          "current_coverage_gain": 0.9277995052898421,
+          "holdout_coverage_gain": 0.8480222580358509,
+          "holdout_descent_alignment_gain": 0.044601808578575076
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9396017070960918,
+          "current_risk": 0.03240830548610418,
+          "current_coverage_gain": 0.9461595743544496,
+          "holdout_coverage_gain": 0.890480631334181,
+          "holdout_descent_alignment_gain": 0.0442036350086252
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9719800309498217,
+          "current_risk": 0.03215183145147482,
+          "current_coverage_gain": 0.946416048389079,
+          "holdout_coverage_gain": 0.890848272273567,
+          "holdout_descent_alignment_gain": 0.044214538277389685
+        }
+      ],
+      "layer": 0,
+      "branch": "v"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 5.104098961097665,
+      "old_offspace_fraction": 0.9857565203240486,
+      "old_holdout_offspace_fraction": 0.9862875139122287,
+      "old_descent_alignment": -0.000638194220030024,
+      "train_holdout_cosine": -0.03398866981963984,
+      "sketch_energy_retained": 0.9800077050258221,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.02551540637850802,
+        "current_risk": 0.4607844498875534,
+        "current_coverage_gain": 0.5249720704364952,
+        "holdout_coverage_gain": 0.09843484334749275,
+        "holdout_descent_alignment_gain": 0.0012807555938585521
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9857565203240486,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 3.7621550319499875e-10,
+          "current_risk": 0.9857491518103381,
+          "current_coverage_gain": 7.368513710526159e-06,
+          "holdout_coverage_gain": 1.3971107626353785e-06,
+          "holdout_descent_alignment_gain": 7.573385440041297e-09
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 3.8347271358318835e-08,
+          "current_risk": 0.9856817712483689,
+          "current_coverage_gain": 7.474907567972533e-05,
+          "holdout_coverage_gain": 1.4056701767795055e-05,
+          "holdout_descent_alignment_gain": 1.3333074082766318e-07
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 4.9127009607019545e-06,
+          "current_risk": 0.9848580713092698,
+          "current_coverage_gain": 0.0008984490147787572,
+          "holdout_coverage_gain": 0.0001523242889741594,
+          "holdout_descent_alignment_gain": 9.209749212249355e-06
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.02551540637850802,
+          "current_risk": 0.4607844498875534,
+          "current_coverage_gain": 0.5249720704364952,
+          "holdout_coverage_gain": 0.09843484334749275,
+          "holdout_descent_alignment_gain": 0.0012807555938585521
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.08625316492822022,
+          "current_risk": 0.30174964412382654,
+          "current_coverage_gain": 0.684006876200222,
+          "holdout_coverage_gain": 0.23238592110570422,
+          "holdout_descent_alignment_gain": -0.010642522032340528
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.5307234788373579,
+          "current_risk": 0.14517993919185856,
+          "current_coverage_gain": 0.84057658113219,
+          "holdout_coverage_gain": 0.42669292043131146,
+          "holdout_descent_alignment_gain": -0.033517736314565755
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9764371713670553,
+          "current_risk": 0.12264467388185296,
+          "current_coverage_gain": 0.8631118464421956,
+          "holdout_coverage_gain": 0.4443606187927134,
+          "holdout_descent_alignment_gain": -0.03621033804124946
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.979963932029998,
+          "current_risk": 0.12262432714452465,
+          "current_coverage_gain": 0.8631321931795239,
+          "holdout_coverage_gain": 0.4442512094974995,
+          "holdout_descent_alignment_gain": -0.036301524549885146
+        }
+      ],
+      "layer": 1,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 24.17745980694089,
+      "old_offspace_fraction": 0.9814486054693398,
+      "old_holdout_offspace_fraction": 0.9835104552339335,
+      "old_descent_alignment": -0.0009715010982193774,
+      "train_holdout_cosine": -0.033685237235979035,
+      "sketch_energy_retained": 0.981399188654304,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.009313299193473679,
+        "current_risk": 0.28664610405180646,
+        "current_coverage_gain": 0.6948025014175333,
+        "holdout_coverage_gain": 0.5080895136448024,
+        "holdout_descent_alignment_gain": -0.039639911667270024
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 1.1102230246251565e-16,
+          "current_risk": 0.9814486054693398,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 2.6105173578372387e-10,
+          "current_risk": 0.9814434845585597,
+          "current_coverage_gain": 5.120910780087584e-06,
+          "holdout_coverage_gain": 3.598945401805942e-06,
+          "holdout_descent_alignment_gain": -2.2047035429456976e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 2.6534962893620673e-08,
+          "current_risk": 0.9813967748088407,
+          "current_coverage_gain": 5.183066049907481e-05,
+          "holdout_coverage_gain": 3.6367548300830776e-05,
+          "holdout_descent_alignment_gain": -2.2676074749605497e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 0.0037688487187248487,
+          "current_risk": 0.3777336198278496,
+          "current_coverage_gain": 0.6037149856414902,
+          "holdout_coverage_gain": 0.46901924049099564,
+          "holdout_descent_alignment_gain": -0.045397637521475825
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.009313299193473679,
+          "current_risk": 0.28664610405180646,
+          "current_coverage_gain": 0.6948025014175333,
+          "holdout_coverage_gain": 0.5080895136448024,
+          "holdout_descent_alignment_gain": -0.039639911667270024
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.05611628075425945,
+          "current_risk": 0.17249730639226113,
+          "current_coverage_gain": 0.8089512990770786,
+          "holdout_coverage_gain": 0.6205228054925175,
+          "holdout_descent_alignment_gain": -0.03793010181758644
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.1839564332497794,
+          "current_risk": 0.1126276666781888,
+          "current_coverage_gain": 0.868820938791151,
+          "holdout_coverage_gain": 0.699899152974118,
+          "holdout_descent_alignment_gain": -0.03627635783620322
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9699814254283108,
+          "current_risk": 0.08305787517616925,
+          "current_coverage_gain": 0.8983907302931705,
+          "holdout_coverage_gain": 0.7467485656525531,
+          "holdout_descent_alignment_gain": -0.035609746726715893
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.974190485024821,
+          "current_risk": 0.0830335429155673,
+          "current_coverage_gain": 0.8984150625537725,
+          "holdout_coverage_gain": 0.7467912254426595,
+          "holdout_descent_alignment_gain": -0.035607691206861365
+        }
+      ],
+      "layer": 1,
+      "branch": "v"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 4.885088088470155,
+      "old_offspace_fraction": 0.9877840578866957,
+      "old_holdout_offspace_fraction": 0.9863128597208816,
+      "old_descent_alignment": -0.0009963474824680669,
+      "train_holdout_cosine": 0.002553560268640893,
+      "sketch_energy_retained": 0.9306858569713792,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.020220865332593596,
+        "current_risk": 0.720004345291417,
+        "current_coverage_gain": 0.26777971259527866,
+        "holdout_coverage_gain": 0.03585934870397911,
+        "holdout_descent_alignment_gain": 0.010489588077079092
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9877840578866957,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 1.9763446434950538e-10,
+          "current_risk": 0.9877803842651806,
+          "current_coverage_gain": 3.6736215150989793e-06,
+          "holdout_coverage_gain": 6.281866722357421e-07,
+          "holdout_descent_alignment_gain": -6.365466013644704e-08
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 1.9932035910663615e-08,
+          "current_risk": 0.9877470848518528,
+          "current_coverage_gain": 3.697303484284653e-05,
+          "holdout_coverage_gain": 6.306459146232513e-06,
+          "holdout_descent_alignment_gain": -6.348744068115052e-07
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 2.183233227204262e-06,
+          "current_risk": 0.9873881778716607,
+          "current_coverage_gain": 0.0003958800150349884,
+          "holdout_coverage_gain": 6.577090642179151e-05,
+          "holdout_descent_alignment_gain": -6.1417294030374076e-06
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.020220865332593596,
+          "current_risk": 0.720004345291417,
+          "current_coverage_gain": 0.26777971259527866,
+          "holdout_coverage_gain": 0.03585934870397911,
+          "holdout_descent_alignment_gain": 0.010489588077079092
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.14588098310427855,
+          "current_risk": 0.350629884749068,
+          "current_coverage_gain": 0.6371541731376277,
+          "holdout_coverage_gain": 0.14462897213134995,
+          "holdout_descent_alignment_gain": 0.009461176587261318
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.5361632157503735,
+          "current_risk": 0.23943274225752464,
+          "current_coverage_gain": 0.748351315629171,
+          "holdout_coverage_gain": 0.24121827712709243,
+          "holdout_descent_alignment_gain": 0.004319988539754166
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9779225507689869,
+          "current_risk": 0.22224284598968336,
+          "current_coverage_gain": 0.7655412118970123,
+          "holdout_coverage_gain": 0.2636769611180688,
+          "holdout_descent_alignment_gain": 0.007916333142773268
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9797747845469068,
+          "current_risk": 0.22223308135781517,
+          "current_coverage_gain": 0.7655509765288805,
+          "holdout_coverage_gain": 0.2637190140585449,
+          "holdout_descent_alignment_gain": 0.007941760500902022
+        }
+      ],
+      "layer": 2,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 21.9109947652422,
+      "old_offspace_fraction": 0.9787868153876468,
+      "old_holdout_offspace_fraction": 0.9834192215544137,
+      "old_descent_alignment": 0.000765040236057888,
+      "train_holdout_cosine": 0.008850793707464803,
+      "sketch_energy_retained": 0.9346563700399819,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.007168616134620276,
+        "current_risk": 0.4233216682835549,
+        "current_coverage_gain": 0.5554651471040919,
+        "holdout_coverage_gain": 0.3016222120474885,
+        "holdout_descent_alignment_gain": 0.024754785842257283
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9787868153876468,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 2.9992996974925745e-10,
+          "current_risk": 0.9787812139143909,
+          "current_coverage_gain": 5.6014732559006575e-06,
+          "holdout_coverage_gain": 3.030696159034285e-06,
+          "holdout_descent_alignment_gain": 1.6289421302139503e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 3.031785067442172e-08,
+          "current_risk": 0.9787303470409345,
+          "current_coverage_gain": 5.646834671224621e-05,
+          "holdout_coverage_gain": 3.0435713099352668e-05,
+          "holdout_descent_alignment_gain": 1.624275354703865e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 6.372013814481825e-06,
+          "current_risk": 0.9778588460442345,
+          "current_coverage_gain": 0.0009279693434123271,
+          "holdout_coverage_gain": 0.000430648250168586,
+          "holdout_descent_alignment_gain": 2.3012081095450114e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.007168616134620276,
+          "current_risk": 0.4233216682835549,
+          "current_coverage_gain": 0.5554651471040919,
+          "holdout_coverage_gain": 0.3016222120474885,
+          "holdout_descent_alignment_gain": 0.024754785842257283
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.07305485214551166,
+          "current_risk": 0.26463668967859555,
+          "current_coverage_gain": 0.7141501257090512,
+          "holdout_coverage_gain": 0.4929224703003894,
+          "holdout_descent_alignment_gain": 0.006628973041663382
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.2407424779362627,
+          "current_risk": 0.20586316329847043,
+          "current_coverage_gain": 0.7729236520891763,
+          "holdout_coverage_gain": 0.5514096004598407,
+          "holdout_descent_alignment_gain": 0.008448802068074916
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9721393399616175,
+          "current_risk": 0.17970486578806455,
+          "current_coverage_gain": 0.7990819495995822,
+          "holdout_coverage_gain": 0.5944411578639325,
+          "holdout_descent_alignment_gain": 0.006798564114824517
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9752166408506404,
+          "current_risk": 0.17968794331905946,
+          "current_coverage_gain": 0.7990988720685873,
+          "holdout_coverage_gain": 0.5944658418757303,
+          "holdout_descent_alignment_gain": 0.006811330701781747
+        }
+      ],
+      "layer": 2,
+      "branch": "v"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 6.847529079268188,
+      "old_offspace_fraction": 0.9858801103797578,
+      "old_holdout_offspace_fraction": 0.9852422173357759,
+      "old_descent_alignment": -0.00013972392082418303,
+      "train_holdout_cosine": -0.029148147228466478,
+      "sketch_energy_retained": 0.9298001641734759,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.024020302092895185,
+        "current_risk": 0.5361441466502799,
+        "current_coverage_gain": 0.4497359637294779,
+        "holdout_coverage_gain": 0.1018169066880269,
+        "holdout_descent_alignment_gain": -0.006232174679004996
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 3.3306690738754696e-16,
+          "current_risk": 0.9858801103797578,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 4.675478892934848e-10,
+          "current_risk": 0.9858714265926543,
+          "current_coverage_gain": 8.683787103502816e-06,
+          "holdout_coverage_gain": 2.4628917524305294e-06,
+          "holdout_descent_alignment_gain": 2.240284119289787e-06
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 4.769953165784102e-08,
+          "current_risk": 0.9857919581760414,
+          "current_coverage_gain": 8.81522037163851e-05,
+          "holdout_coverage_gain": 2.487573848530822e-05,
+          "holdout_descent_alignment_gain": 2.277662578885818e-05
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 5.964986228734759e-06,
+          "current_risk": 0.9848367085146337,
+          "current_coverage_gain": 0.0010434018651240828,
+          "holdout_coverage_gain": 0.00027775914660599366,
+          "holdout_descent_alignment_gain": 0.00027359834971893757
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.024020302092895185,
+          "current_risk": 0.5361441466502799,
+          "current_coverage_gain": 0.4497359637294779,
+          "holdout_coverage_gain": 0.1018169066880269,
+          "holdout_descent_alignment_gain": -0.006232174679004996
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.10576358098553518,
+          "current_risk": 0.3105036794157696,
+          "current_coverage_gain": 0.6753764309639881,
+          "holdout_coverage_gain": 0.20751323236134678,
+          "holdout_descent_alignment_gain": -0.02014774798782602
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.35349955436378144,
+          "current_risk": 0.23909367543797266,
+          "current_coverage_gain": 0.7467864349417851,
+          "holdout_coverage_gain": 0.29884476418340544,
+          "holdout_descent_alignment_gain": -0.024822185287240974
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9654329921504117,
+          "current_risk": 0.22001945188919814,
+          "current_coverage_gain": 0.7658606584905596,
+          "holdout_coverage_gain": 0.3122296587441612,
+          "holdout_descent_alignment_gain": -0.02363728609338948
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9710998078756159,
+          "current_risk": 0.2199882202976845,
+          "current_coverage_gain": 0.7658918900820733,
+          "holdout_coverage_gain": 0.3122734037818423,
+          "holdout_descent_alignment_gain": -0.023608989153410212
+        }
+      ],
+      "layer": 3,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 22.286718925119448,
+      "old_offspace_fraction": 0.9771305179451036,
+      "old_holdout_offspace_fraction": 0.9767839923437948,
+      "old_descent_alignment": 0.00021311517328092422,
+      "train_holdout_cosine": 0.0059368545644954375,
+      "sketch_energy_retained": 0.941625328742452,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.007450787415030691,
+        "current_risk": 0.3726170886372626,
+        "current_coverage_gain": 0.604513429307841,
+        "holdout_coverage_gain": 0.5646669737812026,
+        "holdout_descent_alignment_gain": 0.014114915455352461
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9771305179451036,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 2.8938440532755294e-10,
+          "current_risk": 0.9771250719605582,
+          "current_coverage_gain": 5.445984545437987e-06,
+          "holdout_coverage_gain": 4.688499447125238e-06,
+          "holdout_descent_alignment_gain": -1.1979589512219058e-09
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 2.9227795073083485e-08,
+          "current_risk": 0.9770756511832136,
+          "current_coverage_gain": 5.486676189003781e-05,
+          "holdout_coverage_gain": 4.722740533114056e-05,
+          "holdout_descent_alignment_gain": -1.6250397931536886e-08
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 4.7587970237739086e-06,
+          "current_risk": 0.9763750379736449,
+          "current_coverage_gain": 0.0007554799714587501,
+          "holdout_coverage_gain": 0.0006513325719997853,
+          "holdout_descent_alignment_gain": -3.3106822793925364e-06
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.007450787415030691,
+          "current_risk": 0.3726170886372626,
+          "current_coverage_gain": 0.604513429307841,
+          "holdout_coverage_gain": 0.5646669737812026,
+          "holdout_descent_alignment_gain": 0.014114915455352461
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.055895865629984276,
+          "current_risk": 0.2151867754231167,
+          "current_coverage_gain": 0.7619437425219869,
+          "holdout_coverage_gain": 0.6777016186064272,
+          "holdout_descent_alignment_gain": 0.0058503285874009926
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.1602674317658178,
+          "current_risk": 0.17182903349066325,
+          "current_coverage_gain": 0.8053014844544404,
+          "holdout_coverage_gain": 0.7122790056313464,
+          "holdout_descent_alignment_gain": 0.005123887158123295
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9550671712110375,
+          "current_risk": 0.1499332324191558,
+          "current_coverage_gain": 0.8271972855259478,
+          "holdout_coverage_gain": 0.7250254494205143,
+          "holdout_descent_alignment_gain": 0.005275406099839856
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9672636771091582,
+          "current_risk": 0.14985966781362758,
+          "current_coverage_gain": 0.827270850131476,
+          "holdout_coverage_gain": 0.7250820750193341,
+          "holdout_descent_alignment_gain": 0.0053020429886052175
+        }
+      ],
+      "layer": 3,
+      "branch": "v"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 5.480506986269873,
+      "old_offspace_fraction": 0.9871537164775479,
+      "old_holdout_offspace_fraction": 0.9880000798321228,
+      "old_descent_alignment": 0.001036535498836247,
+      "train_holdout_cosine": 0.026026419349799493,
+      "sketch_energy_retained": 0.8831241074580559,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.013880459440347881,
+        "current_risk": 0.8445325476836156,
+        "current_coverage_gain": 0.14262116879393227,
+        "holdout_coverage_gain": 0.04309598461268627,
+        "holdout_descent_alignment_gain": 0.0026824220839937922
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9871537164775479,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 3.0480373780505943e-10,
+          "current_risk": 0.987148342254028,
+          "current_coverage_gain": 5.3742235198717125e-06,
+          "holdout_coverage_gain": 7.216442362567577e-07,
+          "holdout_descent_alignment_gain": 4.3587950728060827e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 3.0849911514252426e-08,
+          "current_risk": 0.9870994851226497,
+          "current_coverage_gain": 5.4231354898237605e-05,
+          "holdout_coverage_gain": 7.255182917553782e-06,
+          "holdout_descent_alignment_gain": 4.394672579302811e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 3.5081675113790567e-06,
+          "current_risk": 0.9865563038029579,
+          "current_coverage_gain": 0.0005974126745900143,
+          "holdout_coverage_gain": 7.694315428419252e-05,
+          "holdout_descent_alignment_gain": 4.790677177387648e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.013880459440347881,
+          "current_risk": 0.8445325476836156,
+          "current_coverage_gain": 0.14262116879393227,
+          "holdout_coverage_gain": 0.04309598461268627,
+          "holdout_descent_alignment_gain": 0.0026824220839937922
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.15573978405757527,
+          "current_risk": 0.4498451240118181,
+          "current_coverage_gain": 0.5373085924657298,
+          "holdout_coverage_gain": 0.2454639908652717,
+          "holdout_descent_alignment_gain": 0.019192218417717177
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.5188403769392897,
+          "current_risk": 0.326914462916278,
+          "current_coverage_gain": 0.6602392535612699,
+          "holdout_coverage_gain": 0.2927271673552311,
+          "holdout_descent_alignment_gain": 0.025394791772418778
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9797325770321959,
+          "current_risk": 0.3071123311867485,
+          "current_coverage_gain": 0.6800413852907994,
+          "holdout_coverage_gain": 0.30065712846939474,
+          "holdout_descent_alignment_gain": 0.024373821993682532
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.981663774231149,
+          "current_risk": 0.30710262873218197,
+          "current_coverage_gain": 0.6800510877453659,
+          "holdout_coverage_gain": 0.3006228126698379,
+          "holdout_descent_alignment_gain": 0.024355763773023592
+        }
+      ],
+      "layer": 4,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 20.973395675561086,
+      "old_offspace_fraction": 0.9793242888868394,
+      "old_holdout_offspace_fraction": 0.981762466940409,
+      "old_descent_alignment": 0.005266310161028616,
+      "train_holdout_cosine": 0.23095512188605616,
+      "sketch_energy_retained": 0.9497284925502437,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.008212645006653418,
+        "current_risk": 0.3093744441668608,
+        "current_coverage_gain": 0.6699498447199786,
+        "holdout_coverage_gain": 0.5958995981246799,
+        "holdout_descent_alignment_gain": 0.20486117291247863
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9793242888868394,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 2.9103885967884935e-10,
+          "current_risk": 0.9793187636185992,
+          "current_coverage_gain": 5.525268240269554e-06,
+          "holdout_coverage_gain": 4.552931835655194e-06,
+          "holdout_descent_alignment_gain": 1.5781384992740247e-06
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 2.935365206457874e-08,
+          "current_risk": 0.9792686836011202,
+          "current_coverage_gain": 5.560528571924017e-05,
+          "holdout_coverage_gain": 4.581371524370326e-05,
+          "holdout_descent_alignment_gain": 1.5896761655397225e-05
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 6.603782660707935e-06,
+          "current_risk": 0.9783734908789867,
+          "current_coverage_gain": 0.0009507980078526934,
+          "holdout_coverage_gain": 0.0008078302480345467,
+          "holdout_descent_alignment_gain": 0.00028894321219693174
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.008212645006653418,
+          "current_risk": 0.3093744441668608,
+          "current_coverage_gain": 0.6699498447199786,
+          "holdout_coverage_gain": 0.5958995981246799,
+          "holdout_descent_alignment_gain": 0.20486117291247863
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.0545748323112758,
+          "current_risk": 0.16554601529726076,
+          "current_coverage_gain": 0.8137782735895787,
+          "holdout_coverage_gain": 0.7124781434497327,
+          "holdout_descent_alignment_gain": 0.21817643429848357
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.13145566445451196,
+          "current_risk": 0.1402947978905995,
+          "current_coverage_gain": 0.8390294909962399,
+          "holdout_coverage_gain": 0.7295495648467364,
+          "holdout_descent_alignment_gain": 0.21991063693053078
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9535344247439006,
+          "current_risk": 0.11981204351550223,
+          "current_coverage_gain": 0.8595122453713372,
+          "holdout_coverage_gain": 0.7452410426754217,
+          "holdout_descent_alignment_gain": 0.22170144186143112
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9709229910183901,
+          "current_risk": 0.11969748625885501,
+          "current_coverage_gain": 0.8596268026279844,
+          "holdout_coverage_gain": 0.7453862356707318,
+          "holdout_descent_alignment_gain": 0.22172223274504696
+        }
+      ],
+      "layer": 4,
+      "branch": "v"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 6.05903336893256,
+      "old_offspace_fraction": 0.9832759851181355,
+      "old_holdout_offspace_fraction": 0.9825504100428973,
+      "old_descent_alignment": 0.0008832624745294805,
+      "train_holdout_cosine": 0.03274514348176294,
+      "sketch_energy_retained": 0.8930575324662592,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.018465315737020593,
+        "current_risk": 0.7071264817689114,
+        "current_coverage_gain": 0.27614950334922417,
+        "holdout_coverage_gain": 0.10342798435150524,
+        "holdout_descent_alignment_gain": 0.021452087677436345
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9832759851181355,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 2.318305547532873e-10,
+          "current_risk": 0.98327185097262,
+          "current_coverage_gain": 4.1341455154775275e-06,
+          "holdout_coverage_gain": 1.9416381655812387e-06,
+          "holdout_descent_alignment_gain": 3.8314415160814377e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 2.3374998936454006e-08,
+          "current_risk": 0.9832343861482283,
+          "current_coverage_gain": 4.1598969907186145e-05,
+          "holdout_coverage_gain": 1.9520485427304557e-05,
+          "holdout_descent_alignment_gain": 3.856700071657327e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 2.5611939979963694e-06,
+          "current_risk": 0.9828305994993523,
+          "current_coverage_gain": 0.0004453856187832672,
+          "holdout_coverage_gain": 0.0002071451925772516,
+          "holdout_descent_alignment_gain": 4.148459878632602e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.018465315737020593,
+          "current_risk": 0.7071264817689114,
+          "current_coverage_gain": 0.27614950334922417,
+          "holdout_coverage_gain": 0.10342798435150524,
+          "holdout_descent_alignment_gain": 0.021452087677436345
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.12716443664381005,
+          "current_risk": 0.4598011720644165,
+          "current_coverage_gain": 0.523474813053719,
+          "holdout_coverage_gain": 0.21304990825477832,
+          "holdout_descent_alignment_gain": 0.040417731133035976
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.5876834908743838,
+          "current_risk": 0.3085572787682992,
+          "current_coverage_gain": 0.6747187063498363,
+          "holdout_coverage_gain": 0.2785587151714489,
+          "holdout_descent_alignment_gain": 0.03963092601908761
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9738822175016582,
+          "current_risk": 0.2836120645824045,
+          "current_coverage_gain": 0.699663920535731,
+          "holdout_coverage_gain": 0.29592990527458884,
+          "holdout_descent_alignment_gain": 0.03966546106304908
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9758613236592556,
+          "current_risk": 0.283602008713864,
+          "current_coverage_gain": 0.6996739764042715,
+          "holdout_coverage_gain": 0.29588995981011845,
+          "holdout_descent_alignment_gain": 0.0396832911342649
+        }
+      ],
+      "layer": 5,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 15.65115878488466,
+      "old_offspace_fraction": 0.9855276504503268,
+      "old_holdout_offspace_fraction": 0.988678231666097,
+      "old_descent_alignment": 0.002626587573184991,
+      "train_holdout_cosine": 0.15628710299044105,
+      "sketch_energy_retained": 0.9287389791753805,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.017374124815217162,
+        "current_risk": 0.5160931128342194,
+        "current_coverage_gain": 0.4694345376161073,
+        "holdout_coverage_gain": 0.3398770968487551,
+        "holdout_descent_alignment_gain": 0.11152819458970138
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9855276504503268,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 2.063318405021164e-10,
+          "current_risk": 0.985523820674033,
+          "current_coverage_gain": 3.829776293762244e-06,
+          "holdout_coverage_gain": 2.412927064376902e-06,
+          "holdout_descent_alignment_gain": 7.606349877826643e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 2.0765133390554524e-08,
+          "current_risk": 0.9854891683306083,
+          "current_coverage_gain": 3.8482119718463714e-05,
+          "holdout_coverage_gain": 2.425213261059156e-05,
+          "holdout_descent_alignment_gain": 7.640945530208113e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 2.226628753376758e-06,
+          "current_risk": 0.9851222502532548,
+          "current_coverage_gain": 0.00040540019707191455,
+          "holdout_coverage_gain": 0.00025640929036330196,
+          "holdout_descent_alignment_gain": 8.029955304662264e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.017374124815217162,
+          "current_risk": 0.5160931128342194,
+          "current_coverage_gain": 0.4694345376161073,
+          "holdout_coverage_gain": 0.3398770968487551,
+          "holdout_descent_alignment_gain": 0.11152819458970138
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.10383207306044129,
+          "current_risk": 0.2747807433521694,
+          "current_coverage_gain": 0.7107469070981574,
+          "holdout_coverage_gain": 0.5678207233541999,
+          "holdout_descent_alignment_gain": 0.1361511290143913
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.35657559817301854,
+          "current_risk": 0.19942149727252456,
+          "current_coverage_gain": 0.7861061531778022,
+          "holdout_coverage_gain": 0.6122190188488595,
+          "holdout_descent_alignment_gain": 0.14291552775215566
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9726508896287043,
+          "current_risk": 0.1743970945270904,
+          "current_coverage_gain": 0.8111305559232364,
+          "holdout_coverage_gain": 0.6294277509747864,
+          "holdout_descent_alignment_gain": 0.14543068865893694
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9779139234259745,
+          "current_risk": 0.1743673208502644,
+          "current_coverage_gain": 0.8111603296000623,
+          "holdout_coverage_gain": 0.6294434392868146,
+          "holdout_descent_alignment_gain": 0.1454318226681576
+        }
+      ],
+      "layer": 5,
+      "branch": "v"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 6.370801509240448,
+      "old_offspace_fraction": 0.9874542734766003,
+      "old_holdout_offspace_fraction": 0.9852340069235398,
+      "old_descent_alignment": 0.0003558128961600543,
+      "train_holdout_cosine": 0.06016251127043912,
+      "sketch_energy_retained": 0.9066563213102437,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.02132189791079475,
+        "current_risk": 0.6778846432992627,
+        "current_coverage_gain": 0.30956963017733763,
+        "holdout_coverage_gain": 0.1939607360201535,
+        "holdout_descent_alignment_gain": 0.035971241537750887
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9874542734766003,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 2.366654650032274e-10,
+          "current_risk": 0.9874499887779696,
+          "current_coverage_gain": 4.284698630674377e-06,
+          "holdout_coverage_gain": 1.6396458782930168e-06,
+          "holdout_descent_alignment_gain": 2.793075751840739e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 2.3935710857792003e-08,
+          "current_risk": 0.9874110608202709,
+          "current_coverage_gain": 4.321265632944993e-05,
+          "holdout_coverage_gain": 1.656900618918211e-05,
+          "holdout_descent_alignment_gain": 2.8185677139172982e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 2.70964124648998e-06,
+          "current_risk": 0.9869800216974111,
+          "current_coverage_gain": 0.00047425177918924977,
+          "holdout_coverage_gain": 0.00018625276834183246,
+          "holdout_descent_alignment_gain": 3.1178278019823775e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.02132189791079475,
+          "current_risk": 0.6778846432992627,
+          "current_coverage_gain": 0.30956963017733763,
+          "holdout_coverage_gain": 0.1939607360201535,
+          "holdout_descent_alignment_gain": 0.035971241537750887
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.13481348690834194,
+          "current_risk": 0.3688823589550505,
+          "current_coverage_gain": 0.6185719145215498,
+          "holdout_coverage_gain": 0.3083279218274365,
+          "holdout_descent_alignment_gain": 0.05769612694751898
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.41085096408086363,
+          "current_risk": 0.28561151481380564,
+          "current_coverage_gain": 0.7018427586627947,
+          "holdout_coverage_gain": 0.34534423111887713,
+          "holdout_descent_alignment_gain": 0.0573417117722538
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9748668208297793,
+          "current_risk": 0.26535821100931856,
+          "current_coverage_gain": 0.7220960624672818,
+          "holdout_coverage_gain": 0.34722102592028414,
+          "holdout_descent_alignment_gain": 0.057255106655303596
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9791920913804563,
+          "current_risk": 0.26533521935457804,
+          "current_coverage_gain": 0.7221190541220223,
+          "holdout_coverage_gain": 0.3471046424267977,
+          "holdout_descent_alignment_gain": 0.05723640450867594
+        }
+      ],
+      "layer": 6,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 16.26128511226007,
+      "old_offspace_fraction": 0.9878417237430437,
+      "old_holdout_offspace_fraction": 0.9865079986758211,
+      "old_descent_alignment": 0.0016813852214797845,
+      "train_holdout_cosine": 0.1655114211236688,
+      "sketch_energy_retained": 0.9424269252359522,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.0178771777041018,
+        "current_risk": 0.521723766594544,
+        "current_coverage_gain": 0.4661179571484997,
+        "holdout_coverage_gain": 0.3405975473838896,
+        "holdout_descent_alignment_gain": 0.09448676299809709
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9878417237430437,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 2.203501825448484e-10,
+          "current_risk": 0.9878375739517016,
+          "current_coverage_gain": 4.149791342111797e-06,
+          "holdout_coverage_gain": 2.770035065657872e-06,
+          "holdout_descent_alignment_gain": 7.437639794206224e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 2.2348524253423818e-08,
+          "current_risk": 0.9877997836851401,
+          "current_coverage_gain": 4.19400579035889e-05,
+          "holdout_coverage_gain": 2.798718444951831e-05,
+          "holdout_descent_alignment_gain": 7.531066179845966e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 2.6348875004078565e-06,
+          "current_risk": 0.9873674622985152,
+          "current_coverage_gain": 0.00047426144452844543,
+          "holdout_coverage_gain": 0.00031581985458062345,
+          "holdout_descent_alignment_gain": 8.701501843755679e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.0178771777041018,
+          "current_risk": 0.521723766594544,
+          "current_coverage_gain": 0.4661179571484997,
+          "holdout_coverage_gain": 0.3405975473838896,
+          "holdout_descent_alignment_gain": 0.09448676299809709
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.07491327956974503,
+          "current_risk": 0.2874199235083331,
+          "current_coverage_gain": 0.7004218002347106,
+          "holdout_coverage_gain": 0.5578450385337304,
+          "holdout_descent_alignment_gain": 0.13661947070524366
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.4054648203577432,
+          "current_risk": 0.17538245471879077,
+          "current_coverage_gain": 0.8124592690242529,
+          "holdout_coverage_gain": 0.6230110894019435,
+          "holdout_descent_alignment_gain": 0.15341180122410558
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9745140363665319,
+          "current_risk": 0.1534961358705007,
+          "current_coverage_gain": 0.834345587872543,
+          "holdout_coverage_gain": 0.6379355090251793,
+          "holdout_descent_alignment_gain": 0.15465279530852993
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9781205506985052,
+          "current_risk": 0.15347595256420898,
+          "current_coverage_gain": 0.8343657711788347,
+          "holdout_coverage_gain": 0.6379874484117309,
+          "holdout_descent_alignment_gain": 0.15467466571355423
+        }
+      ],
+      "layer": 6,
+      "branch": "v"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 6.213376737394208,
+      "old_offspace_fraction": 0.9844265495793314,
+      "old_holdout_offspace_fraction": 0.9846789120602001,
+      "old_descent_alignment": 0.0016882105373855175,
+      "train_holdout_cosine": 0.11176768133228131,
+      "sketch_energy_retained": 0.9152270829687267,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.02004326614955876,
+        "current_risk": 0.7583428269052845,
+        "current_coverage_gain": 0.22608372267404686,
+        "holdout_coverage_gain": 0.11171959767881745,
+        "holdout_descent_alignment_gain": 0.01934514318313087
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9844265495793314,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 2.0810198009257874e-10,
+          "current_risk": 0.9844227448572863,
+          "current_coverage_gain": 3.8047220450865282e-06,
+          "holdout_coverage_gain": 1.624896233010098e-06,
+          "holdout_descent_alignment_gain": 3.827104461645147e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 2.0907523823332497e-08,
+          "current_risk": 0.9843883677849378,
+          "current_coverage_gain": 3.818179439363245e-05,
+          "holdout_coverage_gain": 1.6288864282731907e-05,
+          "holdout_descent_alignment_gain": 3.832944473176805e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 2.1962770830885603e-06,
+          "current_risk": 0.9840303860170254,
+          "current_coverage_gain": 0.0003961635623059845,
+          "holdout_coverage_gain": 0.00016704622453711515,
+          "holdout_descent_alignment_gain": 3.887625200239375e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.02004326614955876,
+          "current_risk": 0.7583428269052845,
+          "current_coverage_gain": 0.22608372267404686,
+          "holdout_coverage_gain": 0.11171959767881745,
+          "holdout_descent_alignment_gain": 0.01934514318313087
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.12884445662873878,
+          "current_risk": 0.43181125013325206,
+          "current_coverage_gain": 0.5526152994460793,
+          "holdout_coverage_gain": 0.3348808686572312,
+          "holdout_descent_alignment_gain": 0.08504279245978831
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.7176334712215209,
+          "current_risk": 0.27705117521520384,
+          "current_coverage_gain": 0.7073753743641276,
+          "holdout_coverage_gain": 0.4126073891625063,
+          "holdout_descent_alignment_gain": 0.10199546057889829
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9828431045596667,
+          "current_risk": 0.2582669124031194,
+          "current_coverage_gain": 0.726159637176212,
+          "holdout_coverage_gain": 0.43739282855656625,
+          "holdout_descent_alignment_gain": 0.1056079061941411
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9837930262652023,
+          "current_risk": 0.25826201998107656,
+          "current_coverage_gain": 0.7261645295982548,
+          "holdout_coverage_gain": 0.4373945951138878,
+          "holdout_descent_alignment_gain": 0.10562280218624387
+        }
+      ],
+      "layer": 7,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 15.681024829424707,
+      "old_offspace_fraction": 0.9859027973936428,
+      "old_holdout_offspace_fraction": 0.9846769031830953,
+      "old_descent_alignment": 0.0030995051144683296,
+      "train_holdout_cosine": 0.17004535894838368,
+      "sketch_energy_retained": 0.9151583381450292,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.0206470193464674,
+        "current_risk": 0.6803602072384758,
+        "current_coverage_gain": 0.30554259015516705,
+        "holdout_coverage_gain": 0.29355410934399795,
+        "holdout_descent_alignment_gain": 0.07932725373741621
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9859027973936428,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 1.6203327568575787e-10,
+          "current_risk": 0.9858998354305899,
+          "current_coverage_gain": 2.961963052938721e-06,
+          "holdout_coverage_gain": 1.5946247540199465e-06,
+          "holdout_descent_alignment_gain": 6.001640493720831e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 1.631486146180805e-08,
+          "current_risk": 0.9858730244306737,
+          "current_coverage_gain": 2.9772962969132344e-05,
+          "holdout_coverage_gain": 1.5995496002063625e-05,
+          "holdout_descent_alignment_gain": 6.0331535983127946e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 1.7579792485067358e-06,
+          "current_risk": 0.9855879735563972,
+          "current_coverage_gain": 0.0003148238372456813,
+          "holdout_coverage_gain": 0.00016556056968952682,
+          "holdout_descent_alignment_gain": 6.386011145902018e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.0206470193464674,
+          "current_risk": 0.6803602072384758,
+          "current_coverage_gain": 0.30554259015516705,
+          "holdout_coverage_gain": 0.29355410934399795,
+          "holdout_descent_alignment_gain": 0.07932725373741621
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.12291381322749484,
+          "current_risk": 0.4174856528124,
+          "current_coverage_gain": 0.5684171445812428,
+          "holdout_coverage_gain": 0.4599228904730057,
+          "holdout_descent_alignment_gain": 0.1235114693386131
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.5577402647864733,
+          "current_risk": 0.258997096751449,
+          "current_coverage_gain": 0.7269057006421938,
+          "holdout_coverage_gain": 0.5509356929874358,
+          "holdout_descent_alignment_gain": 0.14485101510557163
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9753129786270878,
+          "current_risk": 0.24080606304043506,
+          "current_coverage_gain": 0.7450967343532078,
+          "holdout_coverage_gain": 0.5576097685820286,
+          "holdout_descent_alignment_gain": 0.14605151066754934
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9777438291623011,
+          "current_risk": 0.24079328264200783,
+          "current_coverage_gain": 0.745109514751635,
+          "holdout_coverage_gain": 0.5575703297253917,
+          "holdout_descent_alignment_gain": 0.14605349316301686
+        }
+      ],
+      "layer": 7,
+      "branch": "v"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 5.6490082275737485,
+      "old_offspace_fraction": 0.9854949093792487,
+      "old_holdout_offspace_fraction": 0.9882294591048122,
+      "old_descent_alignment": 0.0009116021844969841,
+      "train_holdout_cosine": 0.06045215774198051,
+      "sketch_energy_retained": 0.9325820613482976,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.025648750709730495,
+        "current_risk": 0.7275190440253999,
+        "current_coverage_gain": 0.25797586535384875,
+        "holdout_coverage_gain": 0.135108832751757,
+        "holdout_descent_alignment_gain": 0.020109461513508918
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9854949093792487,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 1.83170034695479e-10,
+          "current_risk": 0.9854914965582378,
+          "current_coverage_gain": 3.4128210109063417e-06,
+          "holdout_coverage_gain": 1.5513876419070982e-06,
+          "holdout_descent_alignment_gain": 1.6991498725594297e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 1.842074071056743e-08,
+          "current_risk": 0.9854606350777564,
+          "current_coverage_gain": 3.427430149227639e-05,
+          "holdout_coverage_gain": 1.5576631803404517e-05,
+          "holdout_descent_alignment_gain": 1.6998360621222827e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 1.9564064337451725e-06,
+          "current_risk": 0.9851363544116799,
+          "current_coverage_gain": 0.00035855496756875826,
+          "holdout_coverage_gain": 0.00016262925190391186,
+          "holdout_descent_alignment_gain": 1.7044273753075026e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.025648750709730495,
+          "current_risk": 0.7275190440253999,
+          "current_coverage_gain": 0.25797586535384875,
+          "holdout_coverage_gain": 0.135108832751757,
+          "holdout_descent_alignment_gain": 0.020109461513508918
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.14084138051062745,
+          "current_risk": 0.37899014500171024,
+          "current_coverage_gain": 0.6065047643775384,
+          "holdout_coverage_gain": 0.36643899584629225,
+          "holdout_descent_alignment_gain": 0.03365237194082947
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.6146710212743407,
+          "current_risk": 0.24018538978825887,
+          "current_coverage_gain": 0.7453095195909898,
+          "holdout_coverage_gain": 0.45460094648269656,
+          "holdout_descent_alignment_gain": 0.04275714683633433
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9816680196666151,
+          "current_risk": 0.21901634094740607,
+          "current_coverage_gain": 0.7664785684318426,
+          "holdout_coverage_gain": 0.46135947149017986,
+          "holdout_descent_alignment_gain": 0.04603822498950953
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9828706514204931,
+          "current_risk": 0.21900998433717578,
+          "current_coverage_gain": 0.7664849250420729,
+          "holdout_coverage_gain": 0.4613955092887283,
+          "holdout_descent_alignment_gain": 0.04604396906570133
+        }
+      ],
+      "layer": 8,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 12.573737690004533,
+      "old_offspace_fraction": 0.9899841463771358,
+      "old_holdout_offspace_fraction": 0.9876943056116911,
+      "old_descent_alignment": 0.0020745595407015522,
+      "train_holdout_cosine": 0.14381420549886828,
+      "sketch_energy_retained": 0.9111869180662308,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.02366186348753818,
+        "current_risk": 0.6733138966785495,
+        "current_coverage_gain": 0.31667024969858637,
+        "holdout_coverage_gain": 0.24373982245118286,
+        "holdout_descent_alignment_gain": 0.07348782933190039
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9899841463771358,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 1.0648537607238495e-10,
+          "current_risk": 0.9899822088097512,
+          "current_coverage_gain": 1.9375673846466768e-06,
+          "holdout_coverage_gain": 1.1862815532115434e-06,
+          "holdout_descent_alignment_gain": 4.6288439584964147e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 1.0712458031747474e-08,
+          "current_risk": 0.9899646827386172,
+          "current_coverage_gain": 1.9463638518679716e-05,
+          "holdout_coverage_gain": 1.1908798788762276e-05,
+          "holdout_descent_alignment_gain": 4.653927660508168e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 1.1414888839711423e-06,
+          "current_risk": 0.9897800165553609,
+          "current_coverage_gain": 0.00020412982177497874,
+          "holdout_coverage_gain": 0.00012406492947392156,
+          "holdout_descent_alignment_gain": 4.927103160568382e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.02366186348753818,
+          "current_risk": 0.6733138966785495,
+          "current_coverage_gain": 0.31667024969858637,
+          "holdout_coverage_gain": 0.24373982245118286,
+          "holdout_descent_alignment_gain": 0.07348782933190039
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.1703825448364631,
+          "current_risk": 0.4023182440834667,
+          "current_coverage_gain": 0.5876659022936691,
+          "holdout_coverage_gain": 0.4230949613599455,
+          "holdout_descent_alignment_gain": 0.09745886690735879
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.5334736132703726,
+          "current_risk": 0.27602006529722345,
+          "current_coverage_gain": 0.7139640810799124,
+          "holdout_coverage_gain": 0.4951784856839573,
+          "holdout_descent_alignment_gain": 0.11470118226325082
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9846492527928455,
+          "current_risk": 0.25436192402612745,
+          "current_coverage_gain": 0.7356222223510084,
+          "holdout_coverage_gain": 0.5042257721829484,
+          "holdout_descent_alignment_gain": 0.11461999480191225
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9859958039264926,
+          "current_risk": 0.25435493706876844,
+          "current_coverage_gain": 0.7356292093083674,
+          "holdout_coverage_gain": 0.5041676328422677,
+          "holdout_descent_alignment_gain": 0.11461322441976417
+        }
+      ],
+      "layer": 8,
+      "branch": "v"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 6.685758546762858,
+      "old_offspace_fraction": 0.986770203618609,
+      "old_holdout_offspace_fraction": 0.9877020314366312,
+      "old_descent_alignment": 0.0009725873483053057,
+      "train_holdout_cosine": 0.11767978003600071,
+      "sketch_energy_retained": 0.9582438920704024,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.024732985389619988,
+        "current_risk": 0.5304406241931975,
+        "current_coverage_gain": 0.4563295794254115,
+        "holdout_coverage_gain": 0.2771828235605013,
+        "holdout_descent_alignment_gain": 0.04614940169503707
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.986770203618609,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 2.188538239522586e-10,
+          "current_risk": 0.9867660132363351,
+          "current_coverage_gain": 4.190382273949744e-06,
+          "holdout_coverage_gain": 2.0857808834540137e-06,
+          "holdout_descent_alignment_gain": 1.0682245376984496e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 2.2172306435308542e-08,
+          "current_risk": 0.9867278876668587,
+          "current_coverage_gain": 4.231595175030467e-05,
+          "holdout_coverage_gain": 2.1066998699970085e-05,
+          "holdout_descent_alignment_gain": 1.0551124944342552e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 2.571867605549727e-06,
+          "current_risk": 0.9862973938817791,
+          "current_coverage_gain": 0.00047280973682994887,
+          "holdout_coverage_gain": 0.0002365168541962337,
+          "holdout_descent_alignment_gain": 8.829385444729756e-06
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.024732985389619988,
+          "current_risk": 0.5304406241931975,
+          "current_coverage_gain": 0.4563295794254115,
+          "holdout_coverage_gain": 0.2771828235605013,
+          "holdout_descent_alignment_gain": 0.04614940169503707
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.12411440870906587,
+          "current_risk": 0.2701472583887453,
+          "current_coverage_gain": 0.7166229452298637,
+          "holdout_coverage_gain": 0.43459772853476253,
+          "holdout_descent_alignment_gain": 0.09288043394493874
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.43828157155365477,
+          "current_risk": 0.18465920162622307,
+          "current_coverage_gain": 0.8021110019923859,
+          "holdout_coverage_gain": 0.46246161686775655,
+          "holdout_descent_alignment_gain": 0.10329580328821993
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.973545626910418,
+          "current_risk": 0.16668200730481786,
+          "current_coverage_gain": 0.8200881963137912,
+          "holdout_coverage_gain": 0.48239800516038756,
+          "holdout_descent_alignment_gain": 0.10593107436824667
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.976988062066915,
+          "current_risk": 0.1666624655819623,
+          "current_coverage_gain": 0.8201077380366467,
+          "holdout_coverage_gain": 0.4823684156126824,
+          "holdout_descent_alignment_gain": 0.10592337396959796
+        }
+      ],
+      "layer": 9,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 17.75743505241861,
+      "old_offspace_fraction": 0.9829971640188732,
+      "old_holdout_offspace_fraction": 0.9849745720889191,
+      "old_descent_alignment": 0.0029361044347619857,
+      "train_holdout_cosine": 0.14809674149945137,
+      "sketch_energy_retained": 0.9463617127588481,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.022399444834029003,
+        "current_risk": 0.6074894799266513,
+        "current_coverage_gain": 0.3755076840922219,
+        "holdout_coverage_gain": 0.2786786636898937,
+        "holdout_descent_alignment_gain": 0.08174496044651296
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9829971640188732,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 1.9875201484609306e-10,
+          "current_risk": 0.9829934049140712,
+          "current_coverage_gain": 3.7591048019924855e-06,
+          "holdout_coverage_gain": 2.2232539216293645e-06,
+          "holdout_descent_alignment_gain": 6.054426508667922e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 2.0012216328524346e-08,
+          "current_risk": 0.9829593786427814,
+          "current_coverage_gain": 3.778537609178123e-05,
+          "holdout_coverage_gain": 2.2328015869099715e-05,
+          "holdout_descent_alignment_gain": 6.083606709400644e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 2.1612331346787528e-06,
+          "current_risk": 0.9825970314167413,
+          "current_coverage_gain": 0.0004001326021318974,
+          "holdout_coverage_gain": 0.00023425536860255392,
+          "holdout_descent_alignment_gain": 6.42195154756625e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.022399444834029003,
+          "current_risk": 0.6074894799266513,
+          "current_coverage_gain": 0.3755076840922219,
+          "holdout_coverage_gain": 0.2786786636898937,
+          "holdout_descent_alignment_gain": 0.08174496044651296
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.16293960583247546,
+          "current_risk": 0.36435910094091506,
+          "current_coverage_gain": 0.6186380630779581,
+          "holdout_coverage_gain": 0.4006146038623616,
+          "holdout_descent_alignment_gain": 0.09315874446092856
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.5546908134043527,
+          "current_risk": 0.23901054030858015,
+          "current_coverage_gain": 0.743986623710293,
+          "holdout_coverage_gain": 0.4852325502838116,
+          "holdout_descent_alignment_gain": 0.11188477544444457
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9744431882300874,
+          "current_risk": 0.2166939956183167,
+          "current_coverage_gain": 0.7663031684005565,
+          "holdout_coverage_gain": 0.4959293038445538,
+          "holdout_descent_alignment_gain": 0.11169027477049018
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9766509330189744,
+          "current_risk": 0.21668197965026814,
+          "current_coverage_gain": 0.766315184368605,
+          "holdout_coverage_gain": 0.49602268393817095,
+          "holdout_descent_alignment_gain": 0.11167183137615166
+        }
+      ],
+      "layer": 9,
+      "branch": "v"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 13.027719001765135,
+      "old_offspace_fraction": 0.9935920924021038,
+      "old_holdout_offspace_fraction": 0.9915441982501194,
+      "old_descent_alignment": 0.0025814735730113397,
+      "train_holdout_cosine": 0.5510732672448228,
+      "sketch_energy_retained": 0.9952369558451084,
+      "best_feasible": {
+        "current_weight": 1.0,
+        "history_risk": 0.04942638894887941,
+        "current_risk": 0.08842601738589173,
+        "current_coverage_gain": 0.905166075016212,
+        "holdout_coverage_gain": 0.6767530637939614,
+        "holdout_descent_alignment_gain": 0.5360930336663219
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9935920924021038,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 3.4273406335216805e-10,
+          "current_risk": 0.9935852803415745,
+          "current_coverage_gain": 6.81206052932648e-06,
+          "holdout_coverage_gain": 3.0652015270415944e-06,
+          "holdout_descent_alignment_gain": 3.1952237877753108e-06
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 3.616517385562901e-08,
+          "current_risk": 0.993521176567552,
+          "current_coverage_gain": 7.091583455176576e-05,
+          "holdout_coverage_gain": 3.122839586677806e-05,
+          "holdout_descent_alignment_gain": 3.299962729311646e-05
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 3.0758188440227485e-05,
+          "current_risk": 0.9898191934725812,
+          "current_coverage_gain": 0.0037728989295225945,
+          "holdout_coverage_gain": 0.000984692382433261,
+          "holdout_descent_alignment_gain": 0.0015903094864751109
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.008909861582429679,
+          "current_risk": 0.21261489354422658,
+          "current_coverage_gain": 0.7809771988578772,
+          "holdout_coverage_gain": 0.5817431197684901,
+          "holdout_descent_alignment_gain": 0.5135871417860649
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.04942638894887941,
+          "current_risk": 0.08842601738589173,
+          "current_coverage_gain": 0.905166075016212,
+          "holdout_coverage_gain": 0.6767530637939614,
+          "holdout_descent_alignment_gain": 0.5360930336663219
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.2267688612323685,
+          "current_risk": 0.0399953587510915,
+          "current_coverage_gain": 0.9535967336510123,
+          "holdout_coverage_gain": 0.7318556560127556,
+          "holdout_descent_alignment_gain": 0.5458030939032512
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9374580334703762,
+          "current_risk": 0.028559971170936338,
+          "current_coverage_gain": 0.9650321212311674,
+          "holdout_coverage_gain": 0.7358200895605913,
+          "holdout_descent_alignment_gain": 0.5462918805365249
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9782951917182646,
+          "current_risk": 0.028234351465256213,
+          "current_coverage_gain": 0.9653577409368476,
+          "holdout_coverage_gain": 0.7358000639499213,
+          "holdout_descent_alignment_gain": 0.5462308043096344
+        }
+      ],
+      "layer": 10,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 13.95366767371689,
+      "old_offspace_fraction": 0.9843130954053665,
+      "old_holdout_offspace_fraction": 0.9863664417692156,
+      "old_descent_alignment": 0.0017335797900548513,
+      "train_holdout_cosine": 0.16846814270829966,
+      "sketch_energy_retained": 0.9496124943960313,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.020509034853864683,
+        "current_risk": 0.6506793174783709,
+        "current_coverage_gain": 0.33363377792699556,
+        "holdout_coverage_gain": 0.25916925255210777,
+        "holdout_descent_alignment_gain": 0.082408483492861
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 2.220446049250313e-16,
+          "current_risk": 0.9843130954053665,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 1.7326795553884722e-10,
+          "current_risk": 0.9843098069836469,
+          "current_coverage_gain": 3.2884217195938703e-06,
+          "holdout_coverage_gain": 1.717915165122541e-06,
+          "holdout_descent_alignment_gain": 8.007903393443365e-07
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 1.7442521871302574e-08,
+          "current_risk": 0.9842800459819889,
+          "current_coverage_gain": 3.304942337756245e-05,
+          "holdout_coverage_gain": 1.729543444739523e-05,
+          "holdout_descent_alignment_gain": 8.05137027610689e-06
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 1.8782186591570493e-06,
+          "current_risk": 0.9839638591950352,
+          "current_coverage_gain": 0.00034923621033133845,
+          "holdout_coverage_gain": 0.00018662633694055408,
+          "holdout_descent_alignment_gain": 8.535004034673668e-05
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.020509034853864683,
+          "current_risk": 0.6506793174783709,
+          "current_coverage_gain": 0.33363377792699556,
+          "holdout_coverage_gain": 0.25916925255210777,
+          "holdout_descent_alignment_gain": 0.082408483492861
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.14067162440490555,
+          "current_risk": 0.42245628096047805,
+          "current_coverage_gain": 0.5618568144448884,
+          "holdout_coverage_gain": 0.36545629917582534,
+          "holdout_descent_alignment_gain": 0.11416062846922852
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.6449102075276669,
+          "current_risk": 0.25145922154377764,
+          "current_coverage_gain": 0.7328538738615888,
+          "holdout_coverage_gain": 0.4475366207516277,
+          "holdout_descent_alignment_gain": 0.14665688852096762
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9711946221932922,
+          "current_risk": 0.22835407821885723,
+          "current_coverage_gain": 0.7559590171865093,
+          "holdout_coverage_gain": 0.45576852329391604,
+          "holdout_descent_alignment_gain": 0.1478950767037031
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9730541321133994,
+          "current_risk": 0.22834417424344866,
+          "current_coverage_gain": 0.7559689211619178,
+          "holdout_coverage_gain": 0.4558265864751687,
+          "holdout_descent_alignment_gain": 0.1478900702298567
+        }
+      ],
+      "layer": 10,
+      "branch": "v"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 7.241140145510416,
+      "old_offspace_fraction": 0.9849196159481599,
+      "old_holdout_offspace_fraction": 0.9848332413595892,
+      "old_descent_alignment": 0.0024595343255590127,
+      "train_holdout_cosine": 0.07765282429256545,
+      "sketch_energy_retained": 0.9999988698646632,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.016276592957007008,
+        "current_risk": 0.2569673066624466,
+        "current_coverage_gain": 0.7279523092857133,
+        "holdout_coverage_gain": 0.35646409765585907,
+        "holdout_descent_alignment_gain": 0.031100620965957403
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9849196159481599,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 1.1060820037656072e-09,
+          "current_risk": 0.9848975186314117,
+          "current_coverage_gain": 2.209731674818194e-05,
+          "holdout_coverage_gain": 1.0790110566927247e-05,
+          "holdout_descent_alignment_gain": 4.859203139582699e-06
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 1.1513547548691605e-07,
+          "current_risk": 0.9846918891866585,
+          "current_coverage_gain": 0.00022772676150140114,
+          "holdout_coverage_gain": 0.00011198437128989713,
+          "holdout_descent_alignment_gain": 4.947527802971318e-05
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 2.0347791032659934e-05,
+          "current_risk": 0.9814224051281327,
+          "current_coverage_gain": 0.0034972108200271856,
+          "holdout_coverage_gain": 0.0018950416649552437,
+          "holdout_descent_alignment_gain": 0.0005773801255479789
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.016276592957007008,
+          "current_risk": 0.2569673066624466,
+          "current_coverage_gain": 0.7279523092857133,
+          "holdout_coverage_gain": 0.35646409765585907,
+          "holdout_descent_alignment_gain": 0.031100620965957403
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.060186316639314175,
+          "current_risk": 0.031144820812550766,
+          "current_coverage_gain": 0.9537747951356091,
+          "holdout_coverage_gain": 0.4689829744241619,
+          "holdout_descent_alignment_gain": 0.07274450080857711
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.1129139649834201,
+          "current_risk": 0.007511908543571089,
+          "current_coverage_gain": 0.9774077074045888,
+          "holdout_coverage_gain": 0.5187260122587719,
+          "holdout_descent_alignment_gain": 0.07333838831586056
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.20077285784295695,
+          "current_risk": 0.004078032385951946,
+          "current_coverage_gain": 0.980841583562208,
+          "holdout_coverage_gain": 0.5328384906398888,
+          "holdout_descent_alignment_gain": 0.07476143838557028
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.7940855377832607,
+          "current_risk": 0.0033901370947091447,
+          "current_coverage_gain": 0.9815294788534508,
+          "holdout_coverage_gain": 0.5400058863183699,
+          "holdout_descent_alignment_gain": 0.07489392210847849
+        }
+      ],
+      "layer": 11,
+      "branch": "q"
+    },
+    {
+      "rank": 10,
+      "gradient_norm": 6.655589978191323,
+      "old_offspace_fraction": 0.9873155279905218,
+      "old_holdout_offspace_fraction": 0.9851134207591506,
+      "old_descent_alignment": 0.006016578538786054,
+      "train_holdout_cosine": 0.3929279469063268,
+      "sketch_energy_retained": 0.9955195951203022,
+      "best_feasible": {
+        "current_weight": 0.1,
+        "history_risk": 0.027342711649363416,
+        "current_risk": 0.45323160536417406,
+        "current_coverage_gain": 0.5340839226263477,
+        "holdout_coverage_gain": 0.3588377841874427,
+        "holdout_descent_alignment_gain": 0.23591241817343364
+      },
+      "frontier": [
+        {
+          "current_weight": 0.0,
+          "history_risk": 0.0,
+          "current_risk": 0.9873155279905218,
+          "current_coverage_gain": 0.0,
+          "holdout_coverage_gain": 0.0,
+          "holdout_descent_alignment_gain": 0.0
+        },
+        {
+          "current_weight": 0.0001,
+          "history_risk": 2.654088060438653e-10,
+          "current_risk": 0.9873102453289344,
+          "current_coverage_gain": 5.282661587391324e-06,
+          "holdout_coverage_gain": 4.1863263667840656e-06,
+          "holdout_descent_alignment_gain": 3.2158100927090483e-06
+        },
+        {
+          "current_weight": 0.001,
+          "history_risk": 2.6828172350334967e-08,
+          "current_risk": 0.9872622730893803,
+          "current_coverage_gain": 5.3254901141497335e-05,
+          "holdout_coverage_gain": 4.21768767390196e-05,
+          "holdout_descent_alignment_gain": 3.2440123283904686e-05
+        },
+        {
+          "current_weight": 0.01,
+          "history_risk": 3.0376362232242826e-06,
+          "current_risk": 0.9867313633916568,
+          "current_coverage_gain": 0.0005841645988650113,
+          "holdout_coverage_gain": 0.00045900691527078763,
+          "holdout_descent_alignment_gain": 0.00035810256623584284
+        },
+        {
+          "current_weight": 0.1,
+          "history_risk": 0.027342711649363416,
+          "current_risk": 0.45323160536417406,
+          "current_coverage_gain": 0.5340839226263477,
+          "holdout_coverage_gain": 0.3588377841874427,
+          "holdout_descent_alignment_gain": 0.23591241817343364
+        },
+        {
+          "current_weight": 1.0,
+          "history_risk": 0.16553960534088952,
+          "current_risk": 0.18506267775136864,
+          "current_coverage_gain": 0.8022528502391532,
+          "holdout_coverage_gain": 0.5247593200753097,
+          "holdout_descent_alignment_gain": 0.345629077382444
+        },
+        {
+          "current_weight": 10.0,
+          "history_risk": 0.4787045021041222,
+          "current_risk": 0.06773386429274209,
+          "current_coverage_gain": 0.9195816636977797,
+          "holdout_coverage_gain": 0.6108442179158593,
+          "holdout_descent_alignment_gain": 0.3774537055962289
+        },
+        {
+          "current_weight": 100.0,
+          "history_risk": 0.9827157927834835,
+          "current_risk": 0.04460957448753766,
+          "current_coverage_gain": 0.9427059535029841,
+          "holdout_coverage_gain": 0.6465901369121738,
+          "holdout_descent_alignment_gain": 0.38015673162136626
+        },
+        {
+          "current_weight": 1000.0,
+          "history_risk": 0.9844993584239714,
+          "current_risk": 0.04459918121273121,
+          "current_coverage_gain": 0.9427163467777906,
+          "holdout_coverage_gain": 0.6466135754687093,
+          "holdout_descent_alignment_gain": 0.38014876662368285
+        }
+      ],
+      "layer": 11,
+      "branch": "v"
+    }
+  ]
+}

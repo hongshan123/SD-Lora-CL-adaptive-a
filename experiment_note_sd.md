@@ -1143,3 +1143,5 @@
 - 最终决策：SBGC 固定 5% 主配置未通过 P3 门槛。遵守预注册纪律，不扫描预算、不加 warm-up、不跑 seeds 1--5；后续论文不把 SBGC 作为正贡献。
 - 2026-09-23：启动 T=1 离线联合训练参考前完成口径审计。仓库没有相同 seed、rank10、20 epoch、双卡有效 batch128 的全类别单任务结果，因此需要补跑。三数据集均复用 Fisher-SBGC 的 Task0 实现，使部署状态和当前方法一致，但此时不存在历史风险约束或 G consolidation。
 - 该实验回答“相同 LoRA 适配容量在联合数据上的经验可达值”，不能回答全参数模型的理论 Bayes 上限，也不能直接归因任务序列差距来自 forgetting；差距还包含优化、分类头和数据顺序效应。
+- 2026-09-23 09:48：提交 `8128996` 后由 user-systemd unit `sbgc-offline-t1-20260923` 启动三条双卡训练。日志确认 C100 为 `Learning on 0-100`，INR/CUB 为 `Learning on 0-200`；GPU 2、3 空闲。
+- 首轮 sanity：CUB Epoch1 为 `Loss 4.035 / Train 18.99 / Test 55.63`，运行正常；C100/INR 的全类别 epoch 数据量更大，首个 epoch 尚未结束。三路均无 Traceback、OOM、NCCL 或 deterministic error。

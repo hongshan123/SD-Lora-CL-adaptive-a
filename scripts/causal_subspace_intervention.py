@@ -114,6 +114,7 @@ class TaskQKV(nn.Module):
         self.b_v = nn.Parameter(torch.zeros_like(old_up_v))
         self.scale_getter = scale_getter
         self.deployed = False
+        self.current_enabled = True
         self.register_buffer("deployment_down_q", old_down_q.detach().clone())
         self.register_buffer("deployment_down_v", old_down_v.detach().clone())
         self.register_buffer("deployment_up_q", old_up_q.detach().clone())
@@ -128,9 +129,13 @@ class TaskQKV(nn.Module):
         else:
             history_q = F.linear(F.linear(x, self.old_down_q), self.old_up_q)
             history_v = F.linear(F.linear(x, self.old_down_v), self.old_up_v)
-        scale = self.scale_getter()
-        current_q = scale * F.linear(F.linear(x, self.a_q), self.b_q)
-        current_v = scale * F.linear(F.linear(x, self.a_v), self.b_v)
+        if self.current_enabled:
+            scale = self.scale_getter()
+            current_q = scale * F.linear(F.linear(x, self.a_q), self.b_q)
+            current_v = scale * F.linear(F.linear(x, self.a_v), self.b_v)
+        else:
+            current_q = torch.zeros_like(history_q)
+            current_v = torch.zeros_like(history_v)
         return torch.cat(
             (raw[..., :width] + history_q + current_q,
              raw[..., width : 2 * width],
@@ -232,6 +237,7 @@ def evaluate_groups(model, old_prototypes, new_prototypes, old_loader, new_loade
         for name, loader in (("old", old_loader), ("new", new_loader)):
             total = 0
             correct = 0
+            restricted_correct = 0
             loss_sum = 0.0
             fc_correct = 0
             fc_loss_sum = 0.0
@@ -242,10 +248,20 @@ def evaluate_groups(model, old_prototypes, new_prototypes, old_loader, new_loade
                 loss_sum += float(F.cross_entropy(logits, labels, reduction="sum"))
                 fc_loss_sum += float(F.cross_entropy(fc_logits, labels, reduction="sum"))
                 correct += int((logits.argmax(dim=1) == labels).sum())
+                if name == "old":
+                    restricted_logits = logits[:, :len(old_prototypes)]
+                    restricted_labels = labels
+                else:
+                    restricted_logits = logits[:, len(old_prototypes):]
+                    restricted_labels = labels - len(old_prototypes)
+                restricted_correct += int(
+                    (restricted_logits.argmax(dim=1) == restricted_labels).sum()
+                )
                 fc_correct += int((fc_logits.argmax(dim=1) == labels).sum())
                 total += len(labels)
             output[name] = {
                 "prototype_top1": 100 * correct / total,
+                "restricted_prototype_top1": 100 * restricted_correct / total,
                 "prototype_ce": loss_sum / total,
                 "fc_top1": 100 * fc_correct / total,
                 "fc_ce": fc_loss_sum / total,
@@ -436,6 +452,19 @@ def train_one_task(config, source, demand_path, mode, output, device, epochs):
         risks = model.deploy()
         new_prototypes = prototypes_from_current(model, proto_loader, first_class, class_count, device)
         post = evaluate_groups(model, old_prototype_tensor, new_prototypes, old_test, new_test, device)
+        for wrapper in model.wrappers:
+            wrapper.current_enabled = False
+        aligned_history_only = evaluate_groups(
+            model, old_prototype_tensor, new_prototypes, old_test, new_test, device
+        )
+        for wrapper in model.wrappers:
+            wrapper.deployed = False
+        exact_history_only = evaluate_groups(
+            model, old_prototype_tensor, new_prototypes, old_test, new_test, device
+        )
+        for wrapper in model.wrappers:
+            wrapper.deployed = True
+            wrapper.current_enabled = True
         old_energy = []
         for wrapper in model.wrappers:
             for suffix in ("q", "v"):
@@ -454,6 +483,10 @@ def train_one_task(config, source, demand_path, mode, output, device, epochs):
             "before": pre,
             "premerge": premerge,
             "after": post,
+            "counterfactual": {
+                "aligned_history_only": aligned_history_only,
+                "exact_history_only": exact_history_only,
+            },
             "delta_new_ce": post["new"]["fc_ce"] - pre["new"]["fc_ce"],
             "delta_new_top1": post["new"]["prototype_top1"] - pre["new"]["prototype_top1"],
             "delta_old_top1": post["old"]["prototype_top1"] - pre["old"]["prototype_top1"],

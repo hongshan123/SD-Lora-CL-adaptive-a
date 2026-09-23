@@ -3,10 +3,16 @@ from pathlib import Path
 
 import torch
 from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from causal_subspace_intervention import TaskQKV, choose_spectral_down, recoverability
+from causal_subspace_intervention import (
+    TaskQKV,
+    choose_spectral_down,
+    evaluate_groups,
+    recoverability,
+)
 
 
 def test_spectral_candidate_obeys_exact_historical_budget():
@@ -38,3 +44,46 @@ def test_fixed_basis_deployment_preserves_current_output():
     after = wrapper(inputs)
     assert max(risks) < 1e-12
     assert torch.allclose(before, after, atol=4e-6, rtol=1e-6)
+
+
+def test_counterfactual_current_branch_can_be_disabled_without_changing_weights():
+    torch.manual_seed(17)
+    down = torch.randn(3, 16)
+    up = torch.randn(16, 3)
+    wrapper = TaskQKV(
+        nn.Linear(16, 48), down, up, down, up,
+        lambda: torch.tensor(0.8), live=False,
+    )
+    with torch.no_grad():
+        wrapper.b_q.normal_()
+        wrapper.b_v.normal_()
+    inputs = torch.randn(2, 5, 16)
+    full = wrapper(inputs)
+    wrapper.current_enabled = False
+    without_current = wrapper(inputs)
+    expected_q = 0.8 * nn.functional.linear(
+        nn.functional.linear(inputs, wrapper.a_q), wrapper.b_q
+    )
+    assert torch.allclose(full[..., :16] - without_current[..., :16], expected_q, atol=2e-6)
+    wrapper.current_enabled = True
+    assert torch.allclose(wrapper(inputs), full)
+
+
+def test_old_only_accuracy_separates_new_prototype_competition():
+    class IdentityFeatures(nn.Module):
+        def forward(self, inputs):
+            return torch.zeros(len(inputs), 3), inputs
+
+    old = torch.tensor([[0.8, 0.6], [0.0, 1.0]])
+    new = torch.tensor([[1.0, 0.0]])
+    old_loader = DataLoader(TensorDataset(
+        torch.arange(1), torch.tensor([[1.0, 0.0]]), torch.tensor([0]),
+    ))
+    new_loader = DataLoader(TensorDataset(
+        torch.arange(1), torch.tensor([[1.0, 0.0]]), torch.tensor([2]),
+    ))
+    scores = evaluate_groups(
+        IdentityFeatures(), old, new, old_loader, new_loader, torch.device("cpu")
+    )
+    assert scores["old"]["prototype_top1"] == 0.0
+    assert scores["old"]["restricted_prototype_top1"] == 100.0

@@ -3,20 +3,35 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TORCHRUN="/home/hongzhijun/miniconda3/envs/sdlora/bin/torchrun"
-OFFLINE_SERVICE="sbgc-offline-t1-20260923.service"
 export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"
 
 cd "${ROOT}"
-while systemctl --user --quiet is-active "${OFFLINE_SERVICE}"; do
-    printf '[%s] Waiting for %s\n' "$(date '+%F %T')" "${OFFLINE_SERVICE}"
-    sleep 60
-done
+
+wait_for_pair() {
+    local pair="$1" first second
+    IFS=, read -r first second <<< "${pair}"
+    while true; do
+        local memory=()
+        mapfile -t memory < <(
+            nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits
+        )
+        if [[ "${memory[first]:-999999}" =~ ^[0-9]+$ \
+            && "${memory[second]:-999999}" =~ ^[0-9]+$ \
+            && "${memory[first]}" -lt 512 \
+            && "${memory[second]}" -lt 512 ]]; then
+            return
+        fi
+        printf '[%s] Waiting for free GPU pair %s\n' "$(date '+%F %T')" "${pair}"
+        sleep 60
+    done
+}
 
 run_job() {
     local dataset="$1" pair="$2" base_config="$3" output_dir="$4"
     local name="sbgc_attribution_${dataset}_t2_20260923"
     local config="exps/${name}.json"
+    wait_for_pair "${pair}"
     if [[ -e "${output_dir}" ]]; then
         printf '[%s] Refusing to overwrite %s\n' "$(date '+%F %T')" "${output_dir}"
         return 2

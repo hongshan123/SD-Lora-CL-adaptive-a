@@ -62,6 +62,7 @@ from utils.rng_utils import (
     rng_preserving,
     rng_state_hash,
 )
+from utils.sa_task_snapshots import save_post_merge, save_pre_merge
 from models.sdlora import Learner as SDLoraLearner
 
 
@@ -2604,6 +2605,20 @@ class Learner(SDLoraLearner):
     def _before_task_save(self, raw_network, train_loader):
         """Run deterministic task-boundary calibrations before persistence."""
         backbone = raw_network.backbone
+        if self.args.get("sa_save_task_snapshots", False) and self._is_main_process():
+            prototype_path = os.path.join(self.args["filepath"], PROTOTYPES_FILENAME)
+            old_prototypes = (
+                torch.load(prototype_path, map_location="cpu")
+                if self._known_classes > 0 else {}
+            )
+            if self._known_classes > 0 and len(old_prototypes) != self._known_classes:
+                raise RuntimeError("pre-merge snapshot has incomplete old prototypes")
+            directory = save_pre_merge(
+                self.args["filepath"], backbone, raw_network.fc,
+                old_prototypes, self._cur_task, self._known_classes,
+                self._total_classes, self.args,
+            )
+            logging.info("[TaskSnapshot] pre-merge task %d: %s", self._cur_task, directory)
         run_cuo = backbone.cumulative_merge == "cuo_lowrank"
         run_sbgc = backbone.cumulative_merge == "sensitivity_budgeted_g"
         run_hoep = (
@@ -3283,6 +3298,13 @@ class Learner(SDLoraLearner):
         if self._dual_head:
             self._prepare_dual_head(data_manager, self._raw_network())
         self._run_sbgc_boundary_attribution(data_manager)
+        if self.args.get("sa_save_task_snapshots", False):
+            if self._is_main_process():
+                directory = save_post_merge(
+                    self.args["filepath"], self._cur_task, self.args
+                )
+                logging.info("[TaskSnapshot] post-merge task %d: %s", self._cur_task, directory)
+            self._barrier()
 
     def _p0_hash_store(self):
         """JSON file holding per-task tensor/RNG hashes for cross-run audits."""

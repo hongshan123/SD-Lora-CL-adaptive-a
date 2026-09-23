@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TORCHRUN="/home/hongzhijun/miniconda3/envs/sdlora/bin/torchrun"
+JQ="/home/hongzhijun/miniconda3/bin/jq"
 export HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
 export CUBLAS_WORKSPACE_CONFIG="${CUBLAS_WORKSPACE_CONFIG:-:4096:8}"
 
@@ -36,7 +37,7 @@ run_job() {
         printf '[%s] Refusing to overwrite %s\n' "$(date '+%F %T')" "${output_dir}"
         return 2
     fi
-    jq --arg name "${name}" --arg output "./${output_dir}/" \
+    "${JQ}" --arg name "${name}" --arg output "./${output_dir}/" \
         '.prefix = $name | .filepath = $output | .max_tasks = 2 | .sa_g_boundary_attribution = true' \
         "${base_config}" > "${config}"
     printf '[%s] START %s GPUs=%s\n' "$(date '+%F %T')" "${name}" "${pair}"

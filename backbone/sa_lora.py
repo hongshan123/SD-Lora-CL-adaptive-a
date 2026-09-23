@@ -5117,6 +5117,11 @@ class SharedALoRA_ViT_timm(nn.Module):
         is_main = not self._sbgc_distributed() or dist.get_rank() == 0
         scale = self.wrapped_param[0].param.detach().reshape(())
         branch_diagnostics = []
+        boundary_candidates = (
+            {"additive": [], "uniform": [], "fisher": []}
+            if getattr(self, "_sbgc_capture_boundary_candidates", False)
+            else None
+        )
         solver_seconds = 0.0
         wrappers = self._sbgc_wrappers()
         for wrapper in wrappers:
@@ -5250,6 +5255,15 @@ class SharedALoRA_ViT_timm(nn.Module):
                     )
                     if self.g_shadow_only:
                         selected = target
+                    if boundary_candidates is not None:
+                        for name, candidate in (
+                            ("additive", target),
+                            ("uniform", uniform_candidate),
+                            ("fisher", fisher_candidate),
+                        ):
+                            boundary_candidates[name].append(
+                                candidate.detach().cpu().float().clone()
+                            )
                     deployed = selected.to(unified_up)
                     deployed_risk = 0.0
                     deployed_fisher_risk = 0.0
@@ -5395,6 +5409,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 weight.weight.zero_()
         self._sbgc_calibration_prepared = False
         self._sbgc_calibration_finalized = True
+        self._sbgc_boundary_candidates = boundary_candidates if is_main else None
         self._last_sbgc_branch_diagnostics = branch_diagnostics if is_main else None
         if is_main:
             active = [

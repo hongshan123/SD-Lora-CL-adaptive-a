@@ -112,3 +112,11 @@ P1 数值见 `sbgc_p1_shadow_results.md`。C100/INR/CUB 的 Fisher distortion �
 P2 固定使用风险预算 `0.05`，不加入 warm-up 或数据集专属调参。三数据集分别使用 GPU `0,1`、`4,5`、`6,7`，每条数据集队列按 Fisher、uniform、CUO 顺序执行。Frozen-P 复用 P1 additive deployment；CUO 在当前提交上全部重跑。进入 P3 的门槛为：三数据集 Final/AAA 均距最佳 Frozen-P/CUO 不超过 `0.30`，至少两个数据集有一项提升 `0.30`，且 Forgetting 不高于两基线最小值 `0.50` 以上。
 
 P2 完整结果见 `sbgc_p2_strict_results.md`。Fisher-SBGC 的 C100/INR/CUB `Final/AAA/F` 分别为 `88.28/92.761/5.656`、`78.82/82.479/6.264`、`84.29/89.462/7.952`。虽然三数据集均满足非劣 0.30，但没有任何数据集相对最佳 Frozen-P/CUO 提升 0.30；C100 forgetting 比 CUO 高 1.067，Fisher 也只在 INR 超过 Uniform。研究线停止于 P2，不扫描预算、不运行多 seed。
+
+## 6. P2 后任务边界归因（仅诊断）
+
+2026-09-23 启动三数据集同协议的单任务联合训练参考；其最终结果尚未完成，不把中途测试准确率当作上限。随后运行三个 Task 0/1 归因实验，训练协议与 P2 一致，只增加 `sa_g_boundary_attribution=true`。
+
+在同一个任务末训练状态和同一个分类头上，依次临时部署 additive、uniform-budget、Fisher-budget 的 `G`，评估旧/新类 Top-1、平均正确类 margin 与 CE。另记录训练态 FC 与 additive FC 的逐样本 logits 差，检验吸收等价性。原型头是实际部署分支下计算的固定头；候选切换时**不重新校准原型**，因此原型结果仅用于定位表示变化，不能视为各候选独立训练的最终成绩。所有诊断只评估测试集，不据此选参或训练。
+
+输出为每条 run 的 `sbgc_boundary_attribution.json`；候选 `G` 仅临时存在内存中，评估后恢复实际部署 `G`，不写入 artifact 或增加持久状态。若 additive 与 trained logits 不等价，先审计实现；若受限合并导致新类 margin/准确率下降而旧类未获益，停止此风险代理；若 FC 不变而原型结果变化，优先审计分类头/原型校准。尚未作性能结论。

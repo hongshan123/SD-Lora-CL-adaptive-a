@@ -16,7 +16,7 @@ from backbone.sa_lora import (
     SharedALoRA_ViT_timm,
     _SensitivityBudgetedGQKV,
 )
-from models.sa_sdlora import validate_sbgc_config
+from models.sa_sdlora import summarize_boundary_logits, validate_sbgc_config
 from models.sa_sdlora import Learner as SharedALearner
 from utils.inc_net import get_backbone
 from utils.rng_utils import rng_state_hash
@@ -79,6 +79,7 @@ class _RawNetwork(nn.Module):
         super().__init__()
         self.backbone = backbone
         self.fc = _DictLinear(18, 2)
+        self.prototype_head = None
 
     def forward(self, inputs):
         features = self.backbone(inputs)
@@ -377,6 +378,82 @@ def test_learner_boundary_pass_preserves_rng_head_and_existing_gradients(tmp_pat
     assert stats["boundary_seconds"] >= stats["calibration_seconds"]
     assert stats["peak_cuda_allocated_mib"] == 0.0
     assert stats["additional_peak_cuda_allocated_mib"] == 0.0
+
+
+def test_boundary_summary_separates_old_and_new_margins():
+    logits = torch.tensor([[3.0, 1.0], [0.0, 2.0], [2.0, 1.0]])
+    targets = torch.tensor([0, 1, 1])
+    result = summarize_boundary_logits(logits, targets, known_classes=1)
+    assert result["old"]["count"] == 1
+    assert result["old"]["top1"] == pytest.approx(100.0)
+    assert result["old"]["mean_margin"] == pytest.approx(2.0)
+    assert result["new"]["count"] == 2
+    assert result["new"]["top1"] == pytest.approx(50.0)
+    assert result["new"]["mean_margin"] == pytest.approx(0.5)
+
+
+def test_boundary_attribution_restores_deployed_state_and_rng(tmp_path):
+    run = tmp_path / "run"
+    pristine = _TinyViT()
+    _train_and_save_task_zero(run, pristine)
+    backbone = _make_model(run, task=1, vit=pristine)
+    raw_network = _RawNetwork(backbone).train()
+    raw_network.fc = _DictLinear(18, 3)
+    with torch.no_grad():
+        for wrapper in backbone._sbgc_wrappers():
+            wrapper.b_q.weight.copy_(4.0 * wrapper.unified_up_q)
+            wrapper.b_v.weight.copy_(4.0 * wrapper.unified_up_v)
+
+    class TaskOneDataManager:
+        def get_dataset(self, classes, source, mode):
+            dataset = _CalibrationDataset(count=4)
+            dataset.targets.add_(1)
+            return dataset
+
+    learner = object.__new__(SharedALearner)
+    learner._cur_task = 1
+    learner._known_classes = 1
+    learner._total_classes = 3
+    learner._device = torch.device("cpu")
+    learner.args = {"batch_size": 2, "filepath": str(run)}
+    learner._cuo_calibration_data_manager = TaskOneDataManager()
+    learner._eval_test_dataset = _CalibrationDataset(count=4)
+    learner._sa_g_calibration_batch_size = 2
+    learner._sa_g_boundary_attribution = True
+    learner._loader_workers = lambda: 0
+    learner._is_main_process = lambda: True
+    learner._raw_network = lambda: raw_network
+    before_rng = rng_state_hash()
+
+    learner._before_task_save(raw_network, train_loader=None)
+    assert rng_state_hash() == before_rng
+    assert learner._sbgc_boundary_candidates is not None
+    backbone.save_lora_parameters(str(run), task_id=1)
+    raw_network.backbone = _make_model(run, task=2, vit=pristine)
+    deployed = [
+        value.clone() for value in learner._sbgc_up_tensors(raw_network.backbone)
+    ]
+    raw_network.prototype_head = _DictLinear(18, 3)
+    before_run_rng = rng_state_hash()
+
+    learner._run_sbgc_boundary_attribution()
+
+    assert rng_state_hash() == before_run_rng
+    assert all(
+        torch.equal(value, saved)
+        for value, saved in zip(
+            learner._sbgc_up_tensors(raw_network.backbone), deployed
+        )
+    )
+    assert raw_network.training is True
+    import json
+
+    artifact = json.loads((run / "sbgc_boundary_attribution.json").read_text())
+    record = artifact["tasks"][0]
+    assert artifact["evaluation_only"] is True
+    assert record["premerge_to_additive_max_abs"] < 1e-5
+    assert set(record["candidates"]) == {"additive", "uniform", "fisher"}
+    assert set(record["candidates"]["fisher"]) == {"fc", "proto"}
 
 
 @pytest.mark.parametrize(

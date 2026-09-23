@@ -61,6 +61,37 @@ P0_HASHES_FILENAME = "p0_hashes.json"
 COORDINATE_DIAGNOSTICS_FILENAME = "sa_coordinate_diagnostics.json"
 HOEP_FUNCTIONAL_DIAGNOSTICS_FILENAME = "hoep_functional_diagnostics.pt"
 SBGC_DIAGNOSTICS_FILENAME = "sbgc_diagnostics.pt"
+SBGC_ATTRIBUTION_FILENAME = "sbgc_boundary_attribution.json"
+
+
+def summarize_boundary_logits(logits, targets, known_classes):
+    """Summarize a fixed classifier's old/new class behavior."""
+    logits = logits.detach().float().cpu()
+    targets = targets.detach().long().cpu()
+    if logits.ndim != 2 or targets.ndim != 1 or len(logits) != len(targets):
+        raise ValueError("boundary logits and targets have incompatible shapes")
+    if len(targets) == 0 or targets.min() < 0 or targets.max() >= logits.shape[1]:
+        raise ValueError("boundary targets are empty or outside the classifier")
+    correct_logits = logits.gather(1, targets[:, None]).squeeze(1)
+    competing = logits.clone()
+    competing.scatter_(1, targets[:, None], -torch.inf)
+    margins = correct_logits - competing.max(dim=1).values
+    correct = logits.argmax(dim=1).eq(targets)
+    losses = F.cross_entropy(logits, targets, reduction="none")
+    result = {}
+    for name, mask in (
+        ("all", torch.ones_like(targets, dtype=torch.bool)),
+        ("old", targets < known_classes),
+        ("new", targets >= known_classes),
+    ):
+        count = int(mask.sum())
+        result[name] = {
+            "count": count,
+            "top1": 100.0 * float(correct[mask].float().mean()) if count else None,
+            "mean_margin": float(margins[mask].mean()) if count else None,
+            "mean_ce": float(losses[mask].mean()) if count else None,
+        }
+    return result
 
 
 def validate_cuo_lowrank_config(args):
@@ -907,6 +938,15 @@ class Learner(SDLoraLearner):
         super().__init__(args)
         self._sa_cuo_lambda = validate_cuo_lowrank_config(args)
         self._sa_sbgc_settings = validate_sbgc_config(args)
+        self._sa_g_boundary_attribution = bool(
+            args.get("sa_g_boundary_attribution", False)
+        )
+        if self._sa_g_boundary_attribution and self._sa_sbgc_settings is None:
+            raise ValueError(
+                "sa_g_boundary_attribution requires sensitivity_budgeted_g"
+            )
+        self._sbgc_boundary_candidates = None
+        self._sbgc_premerge_logits = None
         sbgc_calibration_batch_size = args.get(
             "sa_g_calibration_batch_size", 16
         )
@@ -2036,6 +2076,144 @@ class Learner(SDLoraLearner):
         artifact["tasks"] = tasks
         torch.save(artifact, path)
 
+    @staticmethod
+    def _sbgc_up_tensors(backbone):
+        return [
+            tensor
+            for wrapper in backbone._sbgc_wrappers()
+            for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+        ]
+
+    @staticmethod
+    def _set_sbgc_up_tensors(backbone, values):
+        tensors = Learner._sbgc_up_tensors(backbone)
+        if len(tensors) != len(values):
+            raise ValueError("SBGC attribution candidate branch count mismatch")
+        with torch.no_grad():
+            for destination, source in zip(tensors, values):
+                if destination.shape != source.shape:
+                    raise ValueError("SBGC attribution candidate shape mismatch")
+                destination.copy_(source.to(destination))
+
+    def _collect_sbgc_boundary_logits(self, raw_network, include_proto=True):
+        loader = deterministic_loader(
+            self._eval_test_dataset,
+            batch_size=self.args["batch_size"],
+            shuffle=False,
+            num_workers=0,
+            seed=0,
+        )
+        outputs = {"fc": [], "proto": []}
+        targets = []
+        with torch.no_grad():
+            for _, inputs, batch_targets in loader:
+                features = raw_network.backbone(
+                    inputs.to(self._device, non_blocking=True)
+                )
+                outputs["fc"].append(raw_network.fc(features)["logits"].cpu())
+                if include_proto and raw_network.prototype_head is not None:
+                    outputs["proto"].append(
+                        raw_network.prototype_head(features)["logits"].cpu()
+                    )
+                targets.append(batch_targets.cpu())
+        return {
+            name: torch.cat(parts) for name, parts in outputs.items() if parts
+        }, torch.cat(targets)
+
+    def _run_sbgc_boundary_attribution(self):
+        if not getattr(self, "_sa_g_boundary_attribution", False) or self._cur_task == 0:
+            return
+        if not self._is_main_process():
+            return
+        candidates = self._sbgc_boundary_candidates
+        if candidates is None or self._sbgc_premerge_logits is None:
+            raise RuntimeError("SBGC boundary attribution is missing a candidate")
+        raw_network = self._raw_network()
+        backbone = raw_network.backbone
+        deployed = [tensor.detach().clone() for tensor in self._sbgc_up_tensors(backbone)]
+        was_training = raw_network.training
+        rng_before = rng_state_hash()
+        modes = {}
+        additive_logits = None
+        try:
+            raw_network.eval()
+            with rng_preserving():
+                for mode in ("additive", "uniform", "fisher"):
+                    self._set_sbgc_up_tensors(backbone, candidates[mode])
+                    logits, targets = self._collect_sbgc_boundary_logits(raw_network)
+                    if additive_logits is None:
+                        additive_logits = logits["fc"]
+                        reference_targets = targets
+                    elif not torch.equal(reference_targets, targets):
+                        raise RuntimeError("SBGC attribution target order changed")
+                    modes[mode] = {
+                        name: summarize_boundary_logits(
+                            value, targets, self._known_classes
+                        )
+                        for name, value in logits.items()
+                    }
+        finally:
+            self._set_sbgc_up_tensors(backbone, deployed)
+            raw_network.train(was_training)
+        if rng_state_hash() != rng_before:
+            raise RuntimeError("SBGC boundary attribution changed RNG state")
+        if any(
+            not torch.equal(destination, saved)
+            for destination, saved in zip(self._sbgc_up_tensors(backbone), deployed)
+        ):
+            raise RuntimeError("SBGC boundary attribution changed deployed G")
+        premerge_logits, premerge_targets = self._sbgc_premerge_logits
+        if not torch.equal(premerge_targets, reference_targets):
+            raise RuntimeError("SBGC premerge target order changed")
+        difference = additive_logits - premerge_logits
+        record = {
+            "task_id": self._cur_task,
+            "known_classes": self._known_classes,
+            "total_classes": self._total_classes,
+            "premerge_fc": summarize_boundary_logits(
+                premerge_logits, premerge_targets, self._known_classes
+            ),
+            "premerge_to_additive_max_abs": float(difference.abs().max()),
+            "premerge_to_additive_relative_l2": float(
+                torch.linalg.vector_norm(difference)
+                / torch.linalg.vector_norm(premerge_logits).clamp_min(1e-12)
+            ),
+            "candidates": modes,
+        }
+        path = os.path.join(self.args["filepath"], SBGC_ATTRIBUTION_FILENAME)
+        artifact = {
+            "version": 1,
+            "evaluation_only": True,
+            "head_policy": "fixed_deployed_head_no_recalibration",
+            "tasks": [],
+        }
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as handle:
+                artifact = json.load(handle)
+        artifact["tasks"] = [
+            item for item in artifact["tasks"]
+            if item["task_id"] != self._cur_task
+        ] + [record]
+        artifact["tasks"].sort(key=lambda item: item["task_id"])
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(artifact, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        logging.info(
+            "[SBGC Attribution] task %d premerge/additive max_abs=%.3e "
+            "FC old/new additive=%.2f/%.2f uniform=%.2f/%.2f "
+            "fisher=%.2f/%.2f",
+            self._cur_task,
+            record["premerge_to_additive_max_abs"],
+            modes["additive"]["fc"]["old"]["top1"],
+            modes["additive"]["fc"]["new"]["top1"],
+            modes["uniform"]["fc"]["old"]["top1"],
+            modes["uniform"]["fc"]["new"]["top1"],
+            modes["fisher"]["fc"]["old"]["top1"],
+            modes["fisher"]["fc"]["new"]["top1"],
+        )
+        self._sbgc_boundary_candidates = None
+        self._sbgc_premerge_logits = None
+
     def _before_task_save(self, raw_network, train_loader):
         """Run deterministic task-boundary calibrations before persistence."""
         backbone = raw_network.backbone
@@ -2154,6 +2332,23 @@ class Learner(SDLoraLearner):
         raw_network.eval()
         try:
             if run_sbgc:
+                backbone._sbgc_capture_boundary_candidates = (
+                    getattr(self, "_sa_g_boundary_attribution", False)
+                    and self._cur_task > 0
+                )
+                if (
+                    getattr(self, "_sa_g_boundary_attribution", False)
+                    and self._cur_task > 0
+                    and self._is_main_process()
+                ):
+                    with rng_preserving():
+                        pre_logits, pre_targets = self._collect_sbgc_boundary_logits(
+                            raw_network, include_proto=False
+                        )
+                    self._sbgc_premerge_logits = (
+                        pre_logits["fc"], pre_targets
+                    )
+            if run_sbgc:
                 backbone.prepare_sbgc_calibration()
             if run_cuo:
                 backbone.prepare_cuo_calibration()
@@ -2208,6 +2403,12 @@ class Learner(SDLoraLearner):
                     time.perf_counter() - sbgc_calibration_started
                 )
                 stats = backbone.finalize_sbgc_calibration()
+                if self._is_main_process() and getattr(
+                    self, "_sa_g_boundary_attribution", False
+                ):
+                    self._sbgc_boundary_candidates = (
+                        backbone._sbgc_boundary_candidates
+                    )
                 if self._device.type == "cuda":
                     torch.cuda.synchronize(self._device)
                     peak_allocated = torch.cuda.max_memory_allocated(self._device)
@@ -2680,6 +2881,7 @@ class Learner(SDLoraLearner):
                 )
         if self._dual_head:
             self._prepare_dual_head(data_manager, self._raw_network())
+        self._run_sbgc_boundary_attribution()
 
     def _p0_hash_store(self):
         """JSON file holding per-task tensor/RNG hashes for cross-run audits."""

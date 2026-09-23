@@ -90,6 +90,9 @@ class Learner(BaseLearner):
         """Optional all-rank task-boundary work before the rank-zero writer."""
         return None
 
+    def _prepare_task_train_dataset(self, data_manager, dataset):
+        return dataset
+
     def _sync_sum(self, value):
         tensor = torch.tensor(float(value), device=self._device)
         if self._is_distributed():
@@ -115,6 +118,9 @@ class Learner(BaseLearner):
             np.arange(self._known_classes, self._total_classes),
             source="train",
             mode="train",
+        )
+        train_dataset = self._prepare_task_train_dataset(
+            data_manager, train_dataset
         )
         train_sampler = (
             DistributedSampler(

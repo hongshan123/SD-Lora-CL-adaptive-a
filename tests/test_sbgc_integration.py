@@ -434,9 +434,13 @@ def test_boundary_attribution_restores_deployed_state_and_rng(tmp_path):
         value.clone() for value in learner._sbgc_up_tensors(raw_network.backbone)
     ]
     raw_network.prototype_head = _DictLinear(18, 3)
+    deployed_head = raw_network.prototype_head
+    prototype_path = run / "sa_prototypes.pt"
+    torch.save({0: torch.nn.functional.normalize(torch.ones(18), dim=0)}, prototype_path)
+    original_prototypes = prototype_path.read_bytes()
     before_run_rng = rng_state_hash()
 
-    learner._run_sbgc_boundary_attribution()
+    learner._run_sbgc_boundary_attribution(TaskOneDataManager())
 
     assert rng_state_hash() == before_run_rng
     assert all(
@@ -446,6 +450,8 @@ def test_boundary_attribution_restores_deployed_state_and_rng(tmp_path):
         )
     )
     assert raw_network.training is True
+    assert raw_network.prototype_head is deployed_head
+    assert prototype_path.read_bytes() == original_prototypes
     import json
 
     artifact = json.loads((run / "sbgc_boundary_attribution.json").read_text())
@@ -453,7 +459,9 @@ def test_boundary_attribution_restores_deployed_state_and_rng(tmp_path):
     assert artifact["evaluation_only"] is True
     assert record["premerge_to_additive_max_abs"] < 1e-5
     assert set(record["candidates"]) == {"additive", "uniform", "fisher"}
-    assert set(record["candidates"]["fisher"]) == {"fc", "proto"}
+    assert set(record["candidates"]["fisher"]) == {
+        "fc", "proto", "proto_recalibrated"
+    }
 
 
 @pytest.mark.parametrize(

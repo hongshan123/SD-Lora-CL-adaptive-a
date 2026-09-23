@@ -41,6 +41,7 @@ from backbone.sa_lora import (
     register_live_a_historical_capture_hooks,
 )
 from backbone.sbgc import sbgc_state_scalar_counts
+from backbone.linears import PrototypeCosineHead, MultiPrototypeCosineHead
 from utils.canonical_hash import (
     compare_named_tensors,
     hash_named_tensors,
@@ -2120,7 +2121,61 @@ class Learner(SDLoraLearner):
             name: torch.cat(parts) for name, parts in outputs.items() if parts
         }, torch.cat(targets)
 
-    def _run_sbgc_boundary_attribution(self):
+    def _sbgc_candidate_prototype_head(self, data_manager, raw_network):
+        path = os.path.join(self.args["filepath"], PROTOTYPES_FILENAME)
+        saved = torch.load(path, map_location="cpu", weights_only=True)
+        prototypes = {
+            int(class_id): vectors
+            for class_id, vectors in saved.items()
+            if int(class_id) < self._known_classes
+        }
+        if len(prototypes) != self._known_classes:
+            raise RuntimeError("SBGC attribution is missing old class prototypes")
+        dataset = data_manager.get_dataset(
+            np.arange(self._known_classes, self._total_classes),
+            source="train",
+            mode="test",
+        )
+        per_class = {
+            class_id: []
+            for class_id in range(self._known_classes, self._total_classes)
+        }
+        loader = deterministic_loader(
+            dataset,
+            batch_size=64,
+            shuffle=False,
+            num_workers=0,
+            seed=0,
+        )
+        with torch.no_grad():
+            for _, inputs, targets in loader:
+                features = raw_network.backbone(
+                    inputs.to(self._device, non_blocking=True)
+                )
+                if not self.args.get("sa_raw_prototypes", False):
+                    features = F.normalize(features, p=2, dim=1)
+                for feature, target in zip(features.cpu(), targets):
+                    per_class[int(target)].append(feature)
+        k = int(self.args.get("sa_k_prototypes", 1))
+        for class_id, features in per_class.items():
+            if not features:
+                raise RuntimeError("SBGC attribution class has no calibration data")
+            if k <= 1:
+                prototypes[class_id] = F.normalize(
+                    torch.stack(features).mean(dim=0), p=2, dim=0
+                )
+            else:
+                prototypes[class_id] = self._cluster_prototypes(features, k)
+        if len(prototypes) != self._total_classes:
+            raise RuntimeError("SBGC attribution prototype count mismatch")
+        if k <= 1:
+            return PrototypeCosineHead(prototypes).to(self._device)
+        return MultiPrototypeCosineHead(
+            prototypes,
+            aggregate=self.args.get("sa_k_prototype_aggregate", "max"),
+        ).to(self._device)
+
+    def _run_sbgc_boundary_attribution(self, data_manager=None):
         if not getattr(self, "_sa_g_boundary_attribution", False) or self._cur_task == 0:
             return
         if not self._is_main_process():
@@ -2128,9 +2183,12 @@ class Learner(SDLoraLearner):
         candidates = self._sbgc_boundary_candidates
         if candidates is None or self._sbgc_premerge_logits is None:
             raise RuntimeError("SBGC boundary attribution is missing a candidate")
+        if data_manager is None:
+            raise RuntimeError("SBGC boundary attribution requires the data manager")
         raw_network = self._raw_network()
         backbone = raw_network.backbone
         deployed = [tensor.detach().clone() for tensor in self._sbgc_up_tensors(backbone)]
+        deployed_head = raw_network.prototype_head
         was_training = raw_network.training
         rng_before = rng_state_hash()
         modes = {}
@@ -2140,6 +2198,7 @@ class Learner(SDLoraLearner):
             with rng_preserving():
                 for mode in ("additive", "uniform", "fisher"):
                     self._set_sbgc_up_tensors(backbone, candidates[mode])
+                    raw_network.prototype_head = deployed_head
                     logits, targets = self._collect_sbgc_boundary_logits(raw_network)
                     if additive_logits is None:
                         additive_logits = logits["fc"]
@@ -2152,8 +2211,29 @@ class Learner(SDLoraLearner):
                         )
                         for name, value in logits.items()
                     }
+                    if deployed_head is not None:
+                        raw_network.prototype_head = (
+                            self._sbgc_candidate_prototype_head(
+                                data_manager, raw_network
+                            )
+                        )
+                        recalibrated, recalibrated_targets = (
+                            self._collect_sbgc_boundary_logits(raw_network)
+                        )
+                        if not torch.equal(reference_targets, recalibrated_targets):
+                            raise RuntimeError(
+                                "SBGC recalibrated target order changed"
+                            )
+                        modes[mode]["proto_recalibrated"] = (
+                            summarize_boundary_logits(
+                                recalibrated["proto"],
+                                recalibrated_targets,
+                                self._known_classes,
+                            )
+                        )
         finally:
             self._set_sbgc_up_tensors(backbone, deployed)
+            raw_network.prototype_head = deployed_head
             raw_network.train(was_training)
         if rng_state_hash() != rng_before:
             raise RuntimeError("SBGC boundary attribution changed RNG state")
@@ -2184,7 +2264,7 @@ class Learner(SDLoraLearner):
         artifact = {
             "version": 1,
             "evaluation_only": True,
-            "head_policy": "fixed_deployed_head_no_recalibration",
+            "head_policy": "fixed_deployed_and_candidate_current_only_recalibrated",
             "tasks": [],
         }
         if os.path.exists(path):
@@ -2881,7 +2961,7 @@ class Learner(SDLoraLearner):
                 )
         if self._dual_head:
             self._prepare_dual_head(data_manager, self._raw_network())
-        self._run_sbgc_boundary_attribution()
+        self._run_sbgc_boundary_attribution(data_manager)
 
     def _p0_hash_store(self):
         """JSON file holding per-task tensor/RNG hashes for cross-run audits."""

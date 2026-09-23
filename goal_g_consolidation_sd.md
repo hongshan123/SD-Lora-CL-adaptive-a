@@ -103,10 +103,12 @@ P2 单 seed严格比较 Frozen-P additive、`cuo_lowrank`、uniform-budget G、F
 - [x] 三数据集真实 P0 Task 0/1 smoke，工程验收通过；
 - [x] 三数据集 P1 shadow diagnostic 完成；
 - [x] 预注册 Go/No-Go 六项检查全部通过，决策为 GO；
-- [~] P2 正式比较 Frozen-P、CUO、uniform-budget G 和 Fisher SBGC；配置、计时诊断和队列已冻结，等待正式运行完成。
+- [x] P2 正式比较 Frozen-P、CUO、uniform-budget G 和 Fisher SBGC；预注册结论为 NO-GO，不进入 P3。
 
 P0 数值见 `sbgc_p0_real_data_smoke_results.md`。三数据集 Task 1 均为 24/24 分支激活风险约束，但 current-target distortion 已达 0.42--0.58；P1 必须以 shadow 方式验证该现象是否贯穿完整序列。
 
 P1 数值见 `sbgc_p1_shadow_results.md`。C100/INR/CUB 的 Fisher distortion 中位数分别为 `0.10575/0.05797/0.07349`，median-of-medians 为 `0.07349`；三个数据集的 active/different transition fraction 和 high-CV branch fraction 均为 100%。该结果只允许进入 P2，不构成 SBGC 性能提升证据。
 
 P2 固定使用风险预算 `0.05`，不加入 warm-up 或数据集专属调参。三数据集分别使用 GPU `0,1`、`4,5`、`6,7`，每条数据集队列按 Fisher、uniform、CUO 顺序执行。Frozen-P 复用 P1 additive deployment；CUO 在当前提交上全部重跑。进入 P3 的门槛为：三数据集 Final/AAA 均距最佳 Frozen-P/CUO 不超过 `0.30`，至少两个数据集有一项提升 `0.30`，且 Forgetting 不高于两基线最小值 `0.50` 以上。
+
+P2 完整结果见 `sbgc_p2_strict_results.md`。Fisher-SBGC 的 C100/INR/CUB `Final/AAA/F` 分别为 `88.28/92.761/5.656`、`78.82/82.479/6.264`、`84.29/89.462/7.952`。虽然三数据集均满足非劣 0.30，但没有任何数据集相对最佳 Frozen-P/CUO 提升 0.30；C100 forgetting 比 CUO 高 1.067，Fisher 也只在 INR 超过 Uniform。研究线停止于 P2，不扫描预算、不运行多 seed。

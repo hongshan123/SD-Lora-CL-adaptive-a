@@ -1138,3 +1138,6 @@
 - 首个真实边界核验通过：CUB Task0 已进入 Task1，operator error `1.231045e-07`，tensor/RNG hash PASS；calibration/solver/boundary 为 `3.813/0.000/4.055s`，峰值/新增峰值显存为 `2851.9/2451.7 MiB`，持久状态计数 `389520`。该值只验证插桩和生命周期，不作为性能结果。
 - 2026-09-22 22:16：首个完整 Fisher-SBGC 结果为 CUB `Final/AAA/F=84.29/89.462/7.952`。相对 P1 Frozen-P 为 `+0.10/-0.007/-0.711`，说明当前 5% 风险约束降低了 forgetting，但尚未达到 Final/AAA `+0.30` 的 P3 门槛。
 - CUB uniform 随后在 Task1 部署检查中以 Fisher-weighted risk `0.076496` 被拒绝。执行代码确认 uniform candidate 的求解约束使用全 1 sensitivity，但部署复核固定使用历史 Fisher，二者口径不一致。修复要求按 selected metric 检查预算，同时额外记录两种风险；该失败 run 归档且不得统计，Fisher 正式结果不受影响。
+- 2026-09-23 02:45：P2 九条有效运行全部完成，GPU 释放。Uniform metric 复核修复后的 CUB 重跑与后续 CUO 均 status=0；六条 SBGC artifact 都有 Task0--9、216 个 transition 分支，最大风险 `<0.050001`，状态计数均为 389520。
+- 机制判断：Fisher/Uniform 都比 Frozen-P 降低 forgetting，但与 CUO 比没有稳定优势；Fisher 只在 INR 比 Uniform 好 `+0.19 Final/+0.071 AAA`，C100/CUB 反而略低。输出 sensitivity 的非均匀性真实存在，却没有提供跨数据集的有效选择信息。
+- 最终决策：SBGC 固定 5% 主配置未通过 P3 门槛。遵守预注册纪律，不扫描预算、不加 warm-up、不跑 seeds 1--5；后续论文不把 SBGC 作为正贡献。

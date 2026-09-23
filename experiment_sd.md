@@ -902,6 +902,8 @@
 - 诊断：每任务记录 calibration、solver、boundary wall time，CUDA peak/additional peak memory，以及逐分支风险、distortion、eta、sensitivity CV 和候选差异。诊断不进入 checkpoint 或算法判断。
 - 验收：风险 `<=0.050001`；三数据集 Final/AAA 均距最佳 Frozen/CUO 不超过 `0.30`；至少两个数据集有 Final 或 AAA 提升 `0.30`；Forgetting 不高于两基线最小值 `0.50` 以上。
 - 禁止项：P2 完成前不测试 `0.01/0.10`，不加入 warm-up，不依据中途结果修改预算。实现提交 `b8664c7`，配置提交 `23107d5`，完整测试 `436 passed`。
+- 结果：Fisher-SBGC 在 C100/INR/CUB 为 `88.28/92.761/5.656`、`78.82/82.479/6.264`、`84.29/89.462/7.952`；Uniform-G 为 `88.31/92.760/5.600`、`78.63/82.408/6.354`、`84.33/89.465/7.781`；CUO 为 `88.23/92.739/4.589`、`78.33/82.530/6.493`、`84.14/89.489/8.180`。
+- 判定：所有风险与状态验收通过，但 Fisher 相对最佳 Frozen/CUO 的 Final/AAA 最大提升仅 `0.10/0.022`，没有数据集达到 `+0.30`；C100 Forgetting 门槛失败，且 Fisher 仅在 INR 优于 Uniform。因此 P2 为 NO-GO，不进入多 seed。
 
 ## 2026-09-20：Recoverability-Constrained Accessibility Adaptive-A 正式分阶段验证
 

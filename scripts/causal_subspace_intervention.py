@@ -24,7 +24,7 @@ import torch.distributed as dist
 from torch import nn
 from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch.utils.data.distributed import DistributedSampler
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -213,6 +213,142 @@ def current_task_dataset(manager, task_index, mode):
     return manager.get_dataset(np.arange(first, last), source="train", mode=mode)
 
 
+def split_current_calibration(dataset, first_class, class_count, seed):
+    rng = np.random.default_rng(seed)
+    prototype, calibration = [], []
+    labels = np.asarray(dataset.labels)
+    for label in range(first_class, first_class + class_count):
+        indices = np.flatnonzero(labels == label)
+        if len(indices) < 5:
+            raise ValueError(f"class {label} has fewer than five training samples")
+        rng.shuffle(indices)
+        holdout = max(1, len(indices) // 5)
+        calibration.extend(indices[:holdout].tolist())
+        prototype.extend(indices[holdout:].tolist())
+    return prototype, calibration
+
+
+def gate_score(history_features, full_features, old_prototypes, new_prototypes):
+    old_similarity = F.normalize(history_features, dim=-1) @ F.normalize(old_prototypes, dim=-1).T
+    new_similarity = F.normalize(full_features, dim=-1) @ F.normalize(new_prototypes, dim=-1).T
+    return new_similarity.max(dim=1).values - old_similarity.max(dim=1).values
+
+
+def calibrate_new_recall(new_scores, target_recall):
+    if not 0 < target_recall <= 1 or len(new_scores) == 0:
+        raise ValueError("target recall must be in (0, 1] and calibration cannot be empty")
+    ordered = torch.sort(new_scores.detach().float().cpu()).values
+    return float(ordered[int(np.floor((1 - target_recall) * len(ordered)))])
+
+
+def gate_metrics(old, new, threshold):
+    old_to_new = old["score"] >= threshold
+    new_to_new = new["score"] >= threshold
+    old_history = old["history_correct"].float()
+    old_full = old["full_correct"].float()
+    new_history = new["history_correct"].float()
+    new_full = new["full_correct"].float()
+    old_gated = torch.where(old_to_new, old_full, old_history)
+    new_gated = torch.where(new_to_new, new_full, new_history)
+    old_count, new_count = len(old_gated), len(new_gated)
+    if not old_count or not new_count:
+        raise ValueError("both evaluation groups must be nonempty")
+    total = old_count + new_count
+    old_scores = np.sort(old["score"].detach().cpu().numpy())
+    new_scores = new["score"].detach().cpu().numpy()
+    below = np.searchsorted(old_scores, new_scores, side="left")
+    equal = np.searchsorted(old_scores, new_scores, side="right") - below
+    auc = float(np.mean((below + 0.5 * equal) / old_count))
+    weighted = lambda a, b: float(100 * (a.sum() + b.sum()) / total)
+    return {
+        "threshold": float(threshold),
+        "gate_auc": auc,
+        "routing_old_to_new_rate": float(old_to_new.float().mean()),
+        "routing_new_to_old_rate": float((~new_to_new).float().mean()),
+        "old_gated_top1": float(100 * old_gated.mean()),
+        "new_gated_top1": float(100 * new_gated.mean()),
+        "full_top1": weighted(old_full, new_full),
+        "history_only_top1": weighted(old_history, new_history),
+        "oracle_top1": weighted(old_history, new_full),
+        "gated_top1": weighted(old_gated, new_gated),
+        "oracle_gap_pp": weighted(old_history, new_full) - weighted(old_gated, new_gated),
+        "old_misroute_cost_pp": float(100 * ((old_history - old_full) * old_to_new).mean()),
+        "new_misroute_cost_pp": float(100 * ((new_full - new_history) * (~new_to_new)).mean()),
+        "old_samples": old_count,
+        "new_samples": new_count,
+    }
+
+
+def collect_gate_predictions(model, loader, old_prototypes, new_prototypes, device):
+    weights = F.normalize(torch.cat((old_prototypes.to(device), new_prototypes), dim=0), dim=-1)
+    old_count = len(old_prototypes)
+    rows = {name: [] for name in ("score", "history_correct", "full_correct")}
+    model.eval()
+    try:
+        with torch.no_grad():
+            for _, images, labels in loader:
+                images = images.to(device, non_blocking=True)
+                labels = labels.to(device, non_blocking=True)
+                for wrapper in model.wrappers:
+                    wrapper.current_enabled = True
+                _, full_features = model(images)
+                for wrapper in model.wrappers:
+                    wrapper.current_enabled = False
+                _, history_features = model(images)
+                full_logits = F.normalize(full_features, dim=-1) @ weights.T
+                history_logits = F.normalize(history_features, dim=-1) @ weights.T
+                rows["score"].append(gate_score(
+                    history_features, full_features, weights[:old_count], weights[old_count:]
+                ).cpu())
+                rows["full_correct"].append((full_logits.argmax(dim=1) == labels).cpu())
+                rows["history_correct"].append((history_logits.argmax(dim=1) == labels).cpu())
+    finally:
+        for wrapper in model.wrappers:
+            wrapper.current_enabled = True
+    return {name: torch.cat(chunks) for name, chunks in rows.items()}
+
+
+def evaluate_gating(model, manager, task_index, first_class, class_count,
+                    old_prototypes, old_loader, new_loader, seed, device):
+    current = current_task_dataset(manager, task_index, "test")
+    prototype_indices, calibration_indices = split_current_calibration(
+        current, first_class, class_count, seed + 1701
+    )
+    prototype_loader = DataLoader(Subset(current, prototype_indices), batch_size=64, num_workers=2)
+    calibration_loader = DataLoader(Subset(current, calibration_indices), batch_size=64, num_workers=2)
+    new_prototypes = prototypes_from_current(
+        model, prototype_loader, first_class, class_count, device
+    )
+    calibration = collect_gate_predictions(
+        model, calibration_loader, old_prototypes, new_prototypes, device
+    )
+    thresholds = {
+        str(recall): calibrate_new_recall(calibration["score"], recall)
+        for recall in (0.90, 0.95, 0.99)
+    }
+    old = collect_gate_predictions(model, old_loader, old_prototypes, new_prototypes, device)
+    new = collect_gate_predictions(model, new_loader, old_prototypes, new_prototypes, device)
+    return {
+        "protocol": "current-task train only; deterministic test transform; 80/20 per-class split",
+        "prototype_train_samples": len(prototype_indices),
+        "calibration_train_samples": len(calibration_indices),
+        "calibration_seed": seed + 1701,
+        "score": "max_new_cosine(full) - max_old_cosine(history_only)",
+        "calibration_score_quantiles": np.quantile(
+            calibration["score"].numpy(), (0, 0.05, 0.5, 0.95, 1)
+        ).tolist(),
+        "old_test_score_quantiles": np.quantile(old["score"].numpy(), (0, 0.05, 0.5, 0.95, 1)).tolist(),
+        "new_test_score_quantiles": np.quantile(new["score"].numpy(), (0, 0.05, 0.5, 0.95, 1)).tolist(),
+        "target_new_recall": {
+            recall: {
+                **gate_metrics(old, new, threshold),
+                "calibration_new_recall": float((calibration["score"] >= threshold).float().mean()),
+            }
+            for recall, threshold in thresholds.items()
+        },
+    }
+
+
 def prototypes_from_current(model, loader, first_class, new_classes, device):
     sums = torch.zeros(new_classes, 768, device=device)
     counts = torch.zeros(new_classes, device=device)
@@ -371,7 +507,7 @@ def estimate_demand(config, source, output, device, prototype_per_class=8, deman
     }))
 
 
-def train_one_task(config, source, demand_path, mode, output, device, epochs):
+def train_one_task(config, source, demand_path, mode, output, device, epochs, gate_diagnostic=False):
     local_rank = int(os.environ["LOCAL_RANK"])
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
@@ -496,6 +632,11 @@ def train_one_task(config, source, demand_path, mode, output, device, epochs):
             "train_ce_curve": history,
             "seconds": time.monotonic() - start,
         }
+        if gate_diagnostic:
+            result["gate_diagnostic"] = evaluate_gating(
+                model, manager, task_index, first_class, class_count,
+                old_prototype_tensor, old_test, new_test, seed, device,
+            )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps({k: v for k, v in result.items() if k not in ("historical_risk_per_branch", "train_ce_curve")}, indent=2), flush=True)
@@ -511,6 +652,7 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--mode", choices=("estimate", "frozen", "live", "raw", "stable"), required=True)
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--gate-diagnostic", action="store_true")
     args = parser.parse_args()
     config = json.loads(args.config.read_text())
     if config["dataset"] != "cub" or int(config["lora_rank"]) != 10:
@@ -524,7 +666,11 @@ def main():
         epochs = int(config["epochs"]) if args.epochs is None else args.epochs
         if epochs < 1:
             raise ValueError("epochs must be positive")
-        train_one_task(config, args.source, args.demand, args.mode, args.output, torch.device(f"cuda:{int(os.environ['LOCAL_RANK'])}"), epochs)
+        train_one_task(
+            config, args.source, args.demand, args.mode, args.output,
+            torch.device(f"cuda:{int(os.environ['LOCAL_RANK'])}"), epochs,
+            gate_diagnostic=args.gate_diagnostic,
+        )
 
 
 if __name__ == "__main__":

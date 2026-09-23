@@ -9,9 +9,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from causal_subspace_intervention import (
     TaskQKV,
+    calibrate_new_recall,
     choose_spectral_down,
     evaluate_groups,
+    gate_metrics,
+    gate_score,
     recoverability,
+    split_current_calibration,
 )
 
 
@@ -87,3 +91,52 @@ def test_old_only_accuracy_separates_new_prototype_competition():
     )
     assert scores["old"]["prototype_top1"] == 0.0
     assert scores["old"]["restricted_prototype_top1"] == 100.0
+
+
+def test_calibration_split_is_disjoint_and_class_balanced():
+    class Data:
+        labels = torch.tensor([20] * 10 + [21] * 10)
+
+    prototype, calibration = split_current_calibration(Data(), 20, 2, seed=7)
+    assert len(prototype) == 16
+    assert len(calibration) == 4
+    assert set(prototype).isdisjoint(calibration)
+    assert sum(i < 10 for i in calibration) == 2
+    assert (prototype, calibration) == split_current_calibration(Data(), 20, 2, seed=7)
+
+
+def test_gate_score_compares_history_old_with_full_new():
+    old = torch.tensor([[1.0, 0.0]])
+    new = torch.tensor([[0.0, 1.0]])
+    history = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+    full = history.clone()
+    assert torch.allclose(gate_score(history, full, old, new), torch.tensor([-1.0, 1.0]))
+
+
+def test_threshold_uses_only_new_calibration_scores():
+    calibration = torch.tensor([-1.0, 0.0, 1.0, 2.0])
+    threshold = calibrate_new_recall(calibration, 0.75)
+    assert threshold == 0.0
+    assert (calibration >= threshold).float().mean() >= 0.75
+
+
+def test_gate_metrics_decomposes_misrouting_cost_and_oracle_gap():
+    old = {
+        "score": torch.tensor([-1.0, 1.0]),
+        "history_correct": torch.tensor([True, True]),
+        "full_correct": torch.tensor([False, False]),
+    }
+    new = {
+        "score": torch.tensor([2.0, -2.0]),
+        "history_correct": torch.tensor([False, False]),
+        "full_correct": torch.tensor([True, True]),
+    }
+    result = gate_metrics(old, new, threshold=0.0)
+    assert result["routing_old_to_new_rate"] == 0.5
+    assert result["routing_new_to_old_rate"] == 0.5
+    assert result["oracle_top1"] == 100.0
+    assert result["gated_top1"] == 50.0
+    assert result["old_misroute_cost_pp"] == 50.0
+    assert result["new_misroute_cost_pp"] == 50.0
+    weighted_cost = 0.5 * result["old_misroute_cost_pp"] + 0.5 * result["new_misroute_cost_pp"]
+    assert result["oracle_gap_pp"] == weighted_cost

@@ -120,3 +120,5 @@ P2 完整结果见 `sbgc_p2_strict_results.md`。Fisher-SBGC 的 C100/INR/CUB `F
 在同一个任务末训练状态和同一个分类头上，依次临时部署 additive、uniform-budget、Fisher-budget 的 `G`，评估旧/新类 Top-1、平均正确类 margin 与 CE。另记录训练态 FC 与 additive FC 的逐样本 logits 差，检验吸收等价性。原型头是实际部署分支下计算的固定头；候选切换时**不重新校准原型**，因此原型结果仅用于定位表示变化，不能视为各候选独立训练的最终成绩。所有诊断只评估测试集，不据此选参或训练。
 
 输出为每条 run 的 `sbgc_boundary_attribution.json`；候选 `G` 仅临时存在内存中，评估后恢复实际部署 `G`，不写入 artifact 或增加持久状态。若 additive 与 trained logits 不等价，先审计实现；若受限合并导致新类 margin/准确率下降而旧类未获益，停止此风险代理；若 FC 不变而原型结果变化，优先审计分类头/原型校准。尚未作性能结论。
+
+2026-09-23 结果：三条 T=1 参考和三条 T=2 归因均成功完成。详见 `sbgc_boundary_attribution_results.md`。训练态/additive FC logits 相对误差约 `7e-7`--`1.2e-6`；Task 1 的 24/24 分支均触发约束。受限合并在三个数据集都提高旧类准确率、降低新类准确率，固定原型头的整体 Top-1 均不及 additive。该结果支持“首个合并边界过度限制当前写入”的判断，但不能推断后续任务同样如此，也不能把 T=1 联合训练差值全归因于合并。

@@ -53,8 +53,10 @@ every joint intervention fails.
 
 The matched ImageNet-R seed 1995 Frozen-P snapshot run is active as
 `frozen-margin-inr-t10-20260924-r3.service`. The first two failed launches
-are retained as failure artifacts. Do not interpret the incomplete run as a
-three-dataset result.
+are retained as failure artifacts. `margin-inr-postprocess-20260924.service`
+waits for training to stop, requires all ten complete snapshots, then runs
+the read-only INR calibration and three G-proxy transitions. Do not interpret
+the incomplete run as a three-dataset result.
 
 ## P2: G candidate surrogate, shadow only
 
@@ -73,19 +75,29 @@ mean inverse-KL Spearman. At least two datasets must pass before a `G`
 selector may be designed. Uninformative comparisons are not counted as
 successes. Stage-gate JSON is research output, not model state.
 
-Early evidence: CUB Task 1 and Task 6 have nearly tied old-class accuracy
-across candidates. CIFAR-100 Task 1 moves in the opposite direction from
-the KL proxy: `alpha=0.5` has KL 0.00287 / old Top-1 95.8%, whereas
-`alpha=1` has KL 0.01002 / old Top-1 96.1%. The surrogate is not yet
-validated; no automatic or retrospective candidate selection is allowed.
+Across five CIFAR-100 and six CUB-200 transitions, the stage gate is not
+met. CIFAR-100 has two informative tasks: only 1/3 candidate pairs are
+ranked correctly, with mean inverse-KL Spearman -0.25. CUB has one
+informative task, whose sole candidate pair is ranked backwards. The
+remaining CUB task comparisons are below the preregistered 0.20 pp old
+Top-1 difference and cannot count as supporting evidence.
+
+Counterexamples are concrete. CIFAR-100 Task 1 moves opposite to the KL
+proxy: `alpha=0.5` has KL 0.00287 / old Top-1 95.8%, whereas `alpha=1`
+has KL 0.01002 / old Top-1 96.1%. CUB Task 8 likewise has KL
+0.00036 / old Top-1 86.35% at `alpha=0.5`, versus KL 0.00145 / old Top-1
+86.61% at `alpha=1`. The new-class Top-1 also rises from 82.50% to
+83.02%. Thus the current-data old-class KL is not a trustworthy sign test
+for the net old/new accuracy response to this `G` write. No automatic or
+retrospective candidate selection is allowed.
 
 ## Decision rule
 
 - Keep the Frozen-P additive implementation and all stored snapshots intact.
 - Do not add head bias to the deployed classifier after the bias-only failures.
 - Do not add a `G` decision rule until the preregistered two-dataset proxy
-  gate passes. If it does not, report a mechanism-negative result rather
-  than tuning a threshold on old test labels.
+  gate passes. It currently does not. Report a mechanism-negative result
+  rather than tuning a threshold on old test labels.
 - The eventual joint single-seed experiment, if eligible, must report Final,
   AAA, old/new Top-1, adjacent and long-horizon forgetting, extra state,
   runtime, and paired predictions on C100/INR/CUB. Seeds are held for a
@@ -97,3 +109,6 @@ validated; no automatic or retrospective candidate selection is allowed.
 python -m pytest -q tests/test_counterfactual_g_head_swap.py tests/test_margin_calibration.py tests/test_margin_g_proxy.py tests/test_summarize_margin_study.py
 python scripts/summarize_margin_study.py --calibration MARGIN_CALIBRATION_20260924/c100_t10.json --calibration MARGIN_CALIBRATION_20260924/cub_t10.json --proxy MARGIN_G_PROXY_20260924/cub_task1.json --proxy MARGIN_G_PROXY_20260924/cub_task6.json --proxy MARGIN_G_PROXY_20260924/c100_task1.json --output MARGIN_G_PROXY_20260924/stage_gate_partial.json
 ```
+
+`MARGIN_G_PROXY_20260924/stage_gate_c100_cub.json` is the current
+machine-readable two-dataset gate using all completed candidate runs.

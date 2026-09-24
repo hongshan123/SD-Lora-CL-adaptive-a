@@ -3,7 +3,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from backbone.sa_lora import _LiveAAggregateQKV
+from backbone.sa_lora import _LiveAAggregateQKV, _SensitivityBudgetedGQKV
 from utils.sa_task_snapshots import audit_snapshot, capture_pre_merge, save_post_merge
 from scripts.diagnose_main_branch_intrusion import summarize_intrusion
 
@@ -50,6 +50,41 @@ def test_pre_merge_snapshot_reconstructs_both_branch_outputs():
     assert torch.allclose(actual_current, expected_current, atol=1e-6)
     assert snapshot["task_id"] == 1
     assert len(snapshot["old_prototypes"]) == 1
+
+
+def test_sbgc_pre_merge_snapshot_reconstructs_fixed_p_and_current_branch():
+    torch.manual_seed(17)
+    down = nn.Linear(5, 2, bias=False)
+    up = nn.Linear(2, 5, bias=False)
+    scale = torch.tensor(0.7)
+    projection = torch.randn(2, 5)
+    aggregate = torch.randn(5, 2)
+    wrapper = _SensitivityBudgetedGQKV(
+        nn.Linear(5, 15), down, down, up, up,
+        projection, aggregate, projection, aggregate,
+        [nn.Identity()], 0,
+    )
+    backbone = FakeBackbone(wrapper, down, up, scale)
+    backbone.cumulative_merge = "sensitivity_budgeted_g"
+    snapshot = capture_pre_merge(backbone, nn.Linear(5, 3), {}, 1, 2, 3)
+    branch = snapshot["branches"][0]
+    inputs = torch.randn(2, 4, 5)
+    historical = torch.nn.functional.linear(
+        torch.nn.functional.linear(inputs, branch["historical_down"]),
+        branch["historical_up"],
+    )
+    current = snapshot["current_scale"] * torch.nn.functional.linear(
+        torch.nn.functional.linear(inputs, branch["down"]),
+        branch["current_up"],
+    )
+    expected_historical = torch.nn.functional.linear(
+        torch.nn.functional.linear(inputs, wrapper.projection_q),
+        wrapper.unified_up_q,
+    )
+    expected_current = scale * up(down(inputs))
+    assert snapshot["version"] == 2
+    assert torch.allclose(historical, expected_historical)
+    assert torch.allclose(current, expected_current)
 
 
 def test_post_merge_copies_task_local_artifacts(tmp_path):

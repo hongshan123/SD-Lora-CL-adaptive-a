@@ -38,6 +38,10 @@ Do not attribute a Fisher-vs-Frozen-P difference solely to Fisher weighting.
   0.566 INR, and 0.583 CUB. This is a pre-registered plasticity warning,
   not evidence of an accuracy benefit. Two-epoch accuracy is not comparable
   to the 20-epoch reference.
+- The existing task-snapshot writer only supported Live-A. SBGC v2 snapshot
+  support was added and CUB Task 0/1 was repeated with snapshots enabled.
+  Both snapshots passed checksum audit; task-wise accuracy matched the
+  no-snapshot smoke to logged precision.
 - Full T=10 Fisher then additive queues are the next step.
 
 ## Checks

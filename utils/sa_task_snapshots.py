@@ -8,7 +8,7 @@ from pathlib import Path
 
 import torch
 
-from backbone.sa_lora import _LiveAAggregateQKV
+from backbone.sa_lora import _LiveAAggregateQKV, _SensitivityBudgetedGQKV
 
 
 def _cpu(tensor):
@@ -51,37 +51,57 @@ def audit_snapshot(directory, finalize=False):
 
 
 def capture_pre_merge(backbone, fc, old_prototypes, task_id, known_classes, total_classes):
-    if backbone.cumulative_merge != "live_a_aggregate_b":
-        raise ValueError("task snapshots currently support live_a_aggregate_b only")
+    wrapper_type = {
+        "live_a_aggregate_b": _LiveAAggregateQKV,
+        "sensitivity_budgeted_g": _SensitivityBudgetedGQKV,
+    }.get(backbone.cumulative_merge)
+    if wrapper_type is None:
+        raise ValueError("task snapshots do not support this cumulative merge")
     wrappers = [
         block.attn.qkv for block in backbone.lora_vit.blocks
-        if isinstance(block.attn.qkv, _LiveAAggregateQKV)
+        if isinstance(block.attn.qkv, wrapper_type)
     ]
     if len(wrappers) != len(backbone.lora_vit.blocks):
-        raise RuntimeError("every attention block must have a live-A QKV wrapper")
+        raise RuntimeError("every attention block must have the configured QKV wrapper")
     branches = []
     for wrapper in wrappers:
         for suffix in ("q", "v"):
-            branches.append({
+            branch = {
                 "down": _cpu(getattr(wrapper, "a_" + suffix).weight),
                 "current_up": _cpu(getattr(wrapper, "b_" + suffix).weight),
-                "historical_up": _cpu(getattr(wrapper, "aggregate_" + suffix)),
-            })
-    return {
-        "version": 1,
+            }
+            if backbone.cumulative_merge == "sensitivity_budgeted_g":
+                branch["historical_down"] = _cpu(
+                    getattr(wrapper, "projection_" + suffix)
+                )
+                branch["historical_up"] = _cpu(
+                    getattr(wrapper, "unified_up_" + suffix)
+                )
+            else:
+                branch["historical_up"] = _cpu(
+                    getattr(wrapper, "aggregate_" + suffix)
+                )
+            branches.append(branch)
+    snapshot = {
+        "version": 2 if backbone.cumulative_merge == "sensitivity_budgeted_g" else 1,
         "stage": "pre_merge",
         "task_id": int(task_id),
         "known_classes": int(known_classes),
         "total_classes": int(total_classes),
         "branches": branches,
         "current_scale": _cpu(backbone.wrapped_param[0].param).reshape(()),
-        "normalize_current_branch": bool(wrappers[0].normalize_current_branch),
+        "normalize_current_branch": bool(
+            getattr(wrappers[0], "normalize_current_branch", False)
+        ),
         "fc_weight": _cpu(fc.weight),
         "fc_bias": _cpu(fc.bias),
         "old_prototypes": {
             int(key): _cpu(value) for key, value in old_prototypes.items()
         },
     }
+    if snapshot["version"] == 2:
+        snapshot["merge_mode"] = backbone.cumulative_merge
+    return snapshot
 
 
 def save_pre_merge(run_dir, backbone, fc, old_prototypes, task_id,

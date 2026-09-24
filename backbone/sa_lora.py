@@ -57,8 +57,10 @@ from backbone.sa_operator_stability import (
 from backbone.sbgc import (
     historical_response_risk,
     normalize_sensitivity,
+    solve_global_sensitivity_budgeted_g,
     solve_sensitivity_budgeted_g,
     update_running_moment,
+    weighted_response_energy,
 )
 
 
@@ -69,6 +71,7 @@ SA_STATE_VERSION_LIVE_A = 4
 SA_STATE_VERSION_CUO = 5
 SA_STATE_VERSION_SBGC = 6
 SA_STATE_VERSION_SBGC_GUARD = 7
+SA_STATE_VERSION_SBGC_GLOBAL = 8
 SA_MERGE_MODE_GAUGE = "gauge"
 SA_MERGE_MODE_UNION_SVD = "union_svd"
 SA_MERGE_MODE_LIVE_A_AGGREGATE_B = "live_a_aggregate_b"
@@ -1988,6 +1991,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         cumulative_rank=None,
         cuo_lambda=0.1,
         g_risk_budget=0.05,
+        g_budget_scope="branch",
         g_sensitivity_metric="fisher_diag",
         g_sensitivity_floor=1e-4,
         g_solver_ridge=1e-6,
@@ -2078,6 +2082,7 @@ class SharedALoRA_ViT_timm(nn.Module):
             if not math.isfinite(self.cuo_lambda) or self.cuo_lambda <= 0:
                 raise ValueError("sa_cuo_lambda must be strictly positive and finite")
         self.g_risk_budget = float(g_risk_budget)
+        self.g_budget_scope = str(g_budget_scope)
         self.g_sensitivity_metric = str(g_sensitivity_metric)
         self.g_sensitivity_floor = float(g_sensitivity_floor)
         self.g_solver_ridge = float(g_solver_ridge)
@@ -2108,6 +2113,12 @@ class SharedALoRA_ViT_timm(nn.Module):
                 0.0 <= self.g_risk_budget <= 1.0
             ):
                 raise ValueError("sa_g_risk_budget must be finite and in [0, 1]")
+            if self.g_budget_scope not in ("branch", "global"):
+                raise ValueError("sa_g_budget_scope must be branch or global")
+            if self.g_budget_scope == "global" and self.g_plasticity_guard:
+                raise ValueError("global SBGC budget is incompatible with plasticity guard")
+            if self.g_budget_scope == "global" and self.g_shadow_only:
+                raise ValueError("global SBGC budget requires deployed consolidation")
             if self.g_sensitivity_metric not in ("uniform", "fisher_diag"):
                 raise ValueError(
                     "sa_g_sensitivity_metric must be uniform or fisher_diag"
@@ -2441,6 +2452,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         elif state_version in (
             SA_STATE_VERSION_SBGC,
             SA_STATE_VERSION_SBGC_GUARD,
+            SA_STATE_VERSION_SBGC_GLOBAL,
         ):
             if self.cumulative_merge != SA_MERGE_MODE_SBGC:
                 raise ValueError(
@@ -2477,11 +2489,19 @@ class SharedALoRA_ViT_timm(nn.Module):
                     "guard_holdout_fraction",
                     "guard_ce_tolerance",
                 })
+            if state_version == SA_STATE_VERSION_SBGC_GLOBAL:
+                required_sbgc_keys.add("budget_scope")
             if set(state) != required_sbgc_keys:
                 raise ValueError(
                     "sensitivity_budgeted_g state must contain only the v{} "
                     "fixed-coordinate fields".format(state_version)
                 )
+            saved_scope = (
+                state["budget_scope"]
+                if state_version == SA_STATE_VERSION_SBGC_GLOBAL else "branch"
+            )
+            if saved_scope != self.g_budget_scope:
+                raise ValueError("SBGC budget_scope differs from saved state")
             if self.g_plasticity_guard != (
                 state_version == SA_STATE_VERSION_SBGC_GUARD
             ):
@@ -5044,6 +5064,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 SA_STATE_VERSION_CUO,
                 SA_STATE_VERSION_SBGC,
                 SA_STATE_VERSION_SBGC_GUARD,
+                SA_STATE_VERSION_SBGC_GLOBAL,
             ):
                 raise ValueError("unsupported shared-A state version")
             return state
@@ -5195,6 +5216,9 @@ class SharedALoRA_ViT_timm(nn.Module):
         )
         solver_seconds = 0.0
         wrappers = self._sbgc_wrappers()
+        global_problems = [] if is_main and self.g_budget_scope == "global" and self.task_id > 0 else None
+        global_destinations = []
+        global_fisher_hist_sens = []
         for wrapper in wrappers:
             q_statistics, v_statistics = wrapper.consume_sbgc_statistics()
             branch_specs = (
@@ -5280,6 +5304,23 @@ class SharedALoRA_ViT_timm(nn.Module):
                             raise RuntimeError(
                                 "SBGC historical sensitivity is missing or invalid"
                             )
+                        if global_problems is not None:
+                            global_hist_sens = (
+                                hist_sens if self.g_sensitivity_metric == "fisher_diag"
+                                else torch.ones_like(hist_sens)
+                            )
+                            global_cur_sens = (
+                                current_sensitivity
+                                if self.g_sensitivity_metric == "fisher_diag"
+                                else torch.ones_like(current_sensitivity)
+                            )
+                            global_problems.append((
+                                old.clone(), target.clone(), hist_cov.clone(),
+                                current_covariance.clone(), global_hist_sens.clone(),
+                                global_cur_sens.clone(),
+                            ))
+                            global_destinations.append(unified_up)
+                            global_fisher_hist_sens.append(hist_sens.clone())
                         if guard_problems is not None:
                             guard_problems.append(
                                 {
@@ -5453,6 +5494,72 @@ class SharedALoRA_ViT_timm(nn.Module):
                     wrapper.covariance_count_v = counts[0]
                     wrapper.sensitivity_count_v = counts[1]
 
+        self._last_sbgc_global_diagnostics = None
+        if global_problems is not None:
+            if len(global_problems) != 2 * len(wrappers):
+                raise RuntimeError("global SBGC problem count differs from Q/V branches")
+            if global_destinations[0].is_cuda:
+                torch.cuda.synchronize(global_destinations[0].device)
+            global_started = time.perf_counter()
+            global_candidates, global_result = solve_global_sensitivity_budgeted_g(
+                global_problems,
+                risk_budget=self.g_risk_budget,
+                ridge=self.g_solver_ridge,
+                bisection_steps=self.g_bisection_steps,
+            )
+            if global_destinations[0].is_cuda:
+                torch.cuda.synchronize(global_destinations[0].device)
+            solver_seconds += time.perf_counter() - global_started
+            numerator = 0.0
+            denominator = 0.0
+            for index, (destination, candidate, problem) in enumerate(zip(
+                global_destinations, global_candidates, global_problems
+            )):
+                old, target, hist_cov, cur_cov, hist_sens, cur_sens = problem
+                deployed = candidate.to(destination)
+                destination.copy_(deployed)
+                numerator += float(weighted_response_energy(
+                    deployed.double() - old, hist_cov, hist_sens
+                ))
+                denominator += float(weighted_response_energy(old, hist_cov, hist_sens))
+                branch_risk = float(historical_response_risk(
+                    deployed.double(), old, hist_cov, hist_sens
+                ))
+                branch = branch_diagnostics[index]
+                branch["selected"] = {
+                    "eta": global_result["eta"],
+                    "target_risk": float(historical_response_risk(
+                        target, old, hist_cov, hist_sens
+                    )),
+                    "achieved_risk": branch_risk,
+                    "current_distortion": global_result["branch_current_distortions"][index],
+                    "constraint_active": global_result["constraint_active"],
+                }
+                branch["deployed_historical_risk"] = branch_risk
+                branch["deployed_fisher_risk"] = float(historical_response_risk(
+                    deployed.double(), old, hist_cov, global_fisher_hist_sens[index]
+                )) if self.g_sensitivity_metric == "uniform" else branch_risk
+                branch["deployed_uniform_risk"] = float(historical_response_risk(
+                    deployed.double(), old, hist_cov, torch.ones_like(hist_sens)
+                ))
+                branch["deployed_update_norm"] = float(torch.linalg.matrix_norm(
+                    deployed.double() - old
+                ))
+            deployed_global_risk = numerator / (denominator + 1e-12)
+            if deployed_global_risk > self.g_risk_budget + 1e-6:
+                raise RuntimeError("FP32 global SBGC deployment violates risk budget")
+            global_result["deployed_aggregate_risk"] = deployed_global_risk
+            self._last_sbgc_global_diagnostics = global_result
+            if boundary_candidates is not None:
+                boundary_candidates["fisher"] = [
+                    tensor.detach().cpu().float().clone()
+                    for tensor in global_destinations
+                ]
+        if self.g_budget_scope == "global" and self._sbgc_distributed():
+            for wrapper in wrappers:
+                dist.broadcast(wrapper.unified_up_q, src=0)
+                dist.broadcast(wrapper.unified_up_v, src=0)
+
         self.sbgc_projection_down = [
             tensor.detach().cpu().float().clone()
             for wrapper in wrappers
@@ -5525,6 +5632,10 @@ class SharedALoRA_ViT_timm(nn.Module):
                 )
                 / max(len(branch_diagnostics), 1),
                 "solver_seconds": solver_seconds,
+                "aggregate_achieved_risk": (
+                    self._last_sbgc_global_diagnostics["deployed_aggregate_risk"]
+                    if self._last_sbgc_global_diagnostics is not None else None
+                ),
             }
         else:
             self._last_sbgc_calibration_stats = None
@@ -5797,8 +5908,9 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.task_id += 1
         state = {
             "version": (
-                SA_STATE_VERSION_SBGC_GUARD
-                if self.g_plasticity_guard else SA_STATE_VERSION_SBGC
+                SA_STATE_VERSION_SBGC_GLOBAL if self.g_budget_scope == "global"
+                else SA_STATE_VERSION_SBGC_GUARD if self.g_plasticity_guard
+                else SA_STATE_VERSION_SBGC
             ),
             "task_id": self.task_id,
             "rank": self.rank,
@@ -5816,6 +5928,8 @@ class SharedALoRA_ViT_timm(nn.Module):
             "bisection_steps": self.g_bisection_steps,
             "shadow_only": self.g_shadow_only,
         }
+        if self.g_budget_scope == "global":
+            state["budget_scope"] = "global"
         if self.g_plasticity_guard:
             selection = self._sbgc_guard_selection or {
                 "name": None,
@@ -6276,8 +6390,9 @@ class SharedALoRA_ViT_timm(nn.Module):
             torch.save(
                 {
                     "version": (
-                        SA_STATE_VERSION_SBGC_GUARD
-                        if self.g_plasticity_guard else SA_STATE_VERSION_SBGC
+                        SA_STATE_VERSION_SBGC_GLOBAL if self.g_budget_scope == "global"
+                        else SA_STATE_VERSION_SBGC_GUARD if self.g_plasticity_guard
+                        else SA_STATE_VERSION_SBGC
                     ),
                     "task_id": (
                         self.task_id - 1

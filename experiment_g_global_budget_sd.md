@@ -23,7 +23,7 @@ the Fisher merge helps C100 (+0.54 Final) but hurts INR (-0.10) and CUB
 (-0.41). Old holdout-CE guard was also tried previously and selected the
 unchanged 5% candidate on every task; do not repeat it.
 
-## Attempt 1: One global function-risk budget (registered, pending)
+## Attempt 1: One global function-risk budget (implementation verified; GPU pending)
 
 Keep the frozen input basis P, trained task-local B and scale, classifier,
 prototype transport and Fisher/activation calibration unchanged. Only change
@@ -65,4 +65,18 @@ three matched runs finish.
 
 ### Results
 
-Pending implementation and training.
+2026-09-25 implementation: added `sa_g_budget_scope=global` and a single
+FP64 dual solve over all Q/V branches. The actual FP32 deployed matrices are
+rechecked against the aggregate 5% budget. The `uniform` setting uses unit
+sensitivities in the global solve; `fisher_diag` uses calibrated sensitivities.
+The v8 state records `budget_scope=global` and rejects loading as branch mode.
+The original branch scope remains the default with v6/v7 artifacts unchanged.
+Six isolated configs were added for Task 0/1 smoke and T=10 formal runs.
+
+CPU evidence: 45 focused tests pass, including global KKT stationarity,
+risk reallocation, monotonicity, singular covariance, low-precision return,
+Task-0/1 state roundtrip, and strict scope mismatch. The pre-config full suite
+passed 483 tests; rerun after the final patch remains pending.
+
+Real-data DDP smoke and T=10 Final/AAA/Forgetting are pending. No accuracy
+benefit is claimed yet.

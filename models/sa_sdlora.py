@@ -153,6 +153,7 @@ def validate_sbgc_config(args):
         return None
     settings = {
         "g_risk_budget": float(args.get("sa_g_risk_budget", 0.05)),
+        "g_budget_scope": str(args.get("sa_g_budget_scope", "branch")),
         "g_sensitivity_metric": str(
             args.get("sa_g_sensitivity_metric", "fisher_diag")
         ),
@@ -189,6 +190,16 @@ def validate_sbgc_config(args):
         0.0 <= settings["g_risk_budget"] <= 1.0
     ):
         raise ValueError("sa_g_risk_budget must be finite and in [0, 1]")
+    if settings["g_budget_scope"] not in ("branch", "global"):
+        raise ValueError("sa_g_budget_scope must be branch or global")
+    if settings["g_budget_scope"] == "global" and settings["g_plasticity_guard"]:
+        raise ValueError("global SBGC budget is incompatible with plasticity guard")
+    if settings["g_budget_scope"] == "global" and settings["g_shadow_only"]:
+        raise ValueError("global SBGC budget requires deployed consolidation")
+    if settings["g_budget_scope"] == "global" and args.get(
+        "sa_g_boundary_attribution", False
+    ):
+        raise ValueError("global SBGC budget is incompatible with boundary attribution")
     if settings["g_sensitivity_metric"] not in ("uniform", "fisher_diag"):
         raise ValueError(
             "sa_g_sensitivity_metric must be uniform or fisher_diag"
@@ -3099,6 +3110,18 @@ class Learner(SDLoraLearner):
                         counts["count_scalars"],
                         counts["persistent_scalar_total"],
                     )
+                    global_result = backbone._last_sbgc_global_diagnostics
+                    if global_result is not None:
+                        logging.info(
+                            "[SBGC Global] task %d aggregate_risk=%.6e "
+                            "max_branch_risk=%.6e eta=%.6e "
+                            "current_distortion=%.6e",
+                            self._cur_task,
+                            global_result["deployed_aggregate_risk"],
+                            stats["max_achieved_risk"],
+                            global_result["eta"],
+                            global_result["current_distortion"],
+                        )
             if (
                 backbone.cumulative_state
                 and backbone.cumulative_merge == "live_a_aggregate_b"

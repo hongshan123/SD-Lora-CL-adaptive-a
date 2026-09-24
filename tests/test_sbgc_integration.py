@@ -14,6 +14,7 @@ from backbone.sa_lora import (
     SA_STATE_FILENAME,
     SA_STATE_VERSION_SBGC,
     SA_STATE_VERSION_SBGC_GUARD,
+    SA_STATE_VERSION_SBGC_GLOBAL,
     SharedALoRA_ViT_timm,
     _SensitivityBudgetedGQKV,
 )
@@ -89,7 +90,10 @@ class _RawNetwork(nn.Module):
         return output
 
 
-def _make_model(run, task, vit=None, metric="fisher_diag", shadow=False, guard=False):
+def _make_model(
+    run, task, vit=None, metric="fisher_diag", shadow=False, guard=False,
+    scope="branch",
+):
     return SharedALoRA_ViT_timm(
         copy.deepcopy(vit) if vit is not None else _TinyViT(),
         r=2,
@@ -100,6 +104,7 @@ def _make_model(run, task, vit=None, metric="fisher_diag", shadow=False, guard=F
         cumulative_merge="sensitivity_budgeted_g",
         cumulative_rank=2,
         g_risk_budget=0.05,
+        g_budget_scope=scope,
         g_sensitivity_metric=metric,
         g_sensitivity_floor=1e-4,
         g_solver_ridge=1e-6,
@@ -131,10 +136,13 @@ def _collect_and_finalize(model, inputs):
     return outputs.detach(), stats
 
 
-def _train_and_save_task_zero(run, vit, shadow=False, metric="fisher_diag", guard=False):
+def _train_and_save_task_zero(
+    run, vit, shadow=False, metric="fisher_diag", guard=False, scope="branch"
+):
     torch.manual_seed(701)
     model = _make_model(
-        run, task=0, vit=vit, shadow=shadow, metric=metric, guard=guard
+        run, task=0, vit=vit, shadow=shadow, metric=metric, guard=guard,
+        scope=scope,
     )
     with torch.no_grad():
         for module in model.w_As + model.w_Bs:
@@ -275,6 +283,46 @@ def test_task_one_keeps_p_fixed_and_meets_deployed_risk_budget(tmp_path):
         branch["deployed_historical_risk"] <= 0.05 + 1e-6
         for branch in model._last_sbgc_branch_diagnostics
     )
+
+
+@pytest.mark.parametrize("metric", ["fisher_diag", "uniform"])
+def test_global_budget_deploys_and_rebuilds_without_branch_risk_limit(
+    tmp_path, metric
+):
+    run = tmp_path / "run"
+    pristine = _TinyViT()
+    _train_and_save_task_zero(run, pristine, metric=metric, scope="global")
+    state = torch.load(run / SA_STATE_FILENAME, weights_only=True)
+    assert state["version"] == SA_STATE_VERSION_SBGC_GLOBAL
+    assert state["budget_scope"] == "global"
+    with pytest.raises(ValueError, match="budget_scope"):
+        _make_model(run, task=1, vit=pristine, metric=metric, scope="branch")
+
+    model = _make_model(run, task=1, vit=pristine, metric=metric, scope="global")
+    wrapper = model.lora_vit.blocks[0].attn.qkv
+    before_p = [wrapper.projection_q.clone(), wrapper.projection_v.clone()]
+    with torch.no_grad():
+        wrapper.b_q.weight.copy_(10.0 * wrapper.unified_up_q)
+        wrapper.b_v.weight.copy_(0.2 * wrapper.unified_up_v)
+    model.prepare_sbgc_calibration()
+    _, stats = _collect_and_finalize(model, torch.randn(6, 4, 6))
+    assert all(torch.equal(actual, old) for actual, old in zip(
+        (wrapper.projection_q, wrapper.projection_v), before_p
+    ))
+    assert stats["aggregate_achieved_risk"] <= 0.050001
+    assert model._last_sbgc_global_diagnostics["deployed_aggregate_risk"] <= 0.050001
+    assert len(model._last_sbgc_branch_diagnostics) == 2
+    model.save_lora_parameters(str(run), task_id=1)
+    inputs = torch.randn(3, 4, 6)
+    with torch.no_grad():
+        expected = model(inputs)
+        rebuilt = _make_model(run, task=2, vit=pristine, metric=metric, scope="global")
+        actual = rebuilt(inputs)
+    assert torch.allclose(actual, expected, atol=2e-6, rtol=2e-6)
+    saved = torch.load(run / SA_STATE_FILENAME, weights_only=True)
+    assert saved["version"] == SA_STATE_VERSION_SBGC_GLOBAL
+    assert len(saved["projection_down"]) == 2
+    assert len(saved["unified_up"]) == 2
 
 
 def test_uniform_metric_validates_deployment_with_uniform_risk(tmp_path):
@@ -585,6 +633,7 @@ def test_sbgc_accepts_isolated_fixed_projection_configuration():
     settings = validate_sbgc_config(config)
     assert settings == {
         "g_risk_budget": 0.05,
+        "g_budget_scope": "branch",
         "g_sensitivity_metric": "fisher_diag",
         "g_sensitivity_floor": 1e-4,
         "g_solver_ridge": 1e-6,

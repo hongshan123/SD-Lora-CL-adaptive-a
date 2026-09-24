@@ -10,6 +10,7 @@ from backbone.sbgc import (
     historical_response_risk,
     normalize_sensitivity,
     sbgc_state_scalar_counts,
+    solve_global_sensitivity_budgeted_g,
     solve_lagrangian_candidate,
     solve_sensitivity_budgeted_g,
     update_running_moment,
@@ -111,6 +112,85 @@ def test_target_inside_budget_is_returned_without_modification():
     assert torch.equal(candidate, problem[1])
     assert diagnostics["eta"] == 0.0
     assert not diagnostics["constraint_active"]
+
+
+def test_global_budget_reallocates_risk_and_satisfies_shared_kkt():
+    old, target, c_old, c_cur, f_old, f_cur = _problem()
+    problems = [
+        (old, target, c_old, 30.0 * c_cur, f_old, f_cur),
+        (old, target, c_old, c_cur, f_old, f_cur),
+    ]
+    candidates, result = solve_global_sensitivity_budgeted_g(
+        problems, risk_budget=0.05
+    )
+    assert result["constraint_active"]
+    assert result["achieved_risk"] <= 0.05 + 1e-8
+    assert result["branch_achieved_risks"][0] > 0.05
+    assert result["branch_achieved_risks"][1] < 0.05
+    for candidate, (_, goal, old_cov, new_cov, old_f, new_f) in zip(
+        candidates, problems
+    ):
+        residual = (
+            new_f[:, None] * ((candidate - goal) @ new_cov)
+            + result["eta"] * old_f[:, None] * ((candidate - old) @ old_cov)
+        )
+        assert float(torch.linalg.norm(residual)) / float(torch.linalg.norm(goal)) < 2e-5
+
+
+def test_global_one_branch_agrees_with_existing_solver_and_zero_update():
+    problem = _problem()
+    global_candidates, global_result = solve_global_sensitivity_budgeted_g(
+        [problem], risk_budget=0.05
+    )
+    branch_candidate, branch_result = solve_sensitivity_budgeted_g(
+        *problem, risk_budget=0.05
+    )
+    assert torch.allclose(global_candidates[0], branch_candidate, atol=1e-5)
+    assert abs(global_result["achieved_risk"] - branch_result["achieved_risk"]) < 1e-8
+    zero_problem = (problem[0], problem[0], *problem[2:])
+    unchanged, result = solve_global_sensitivity_budgeted_g([zero_problem])
+    assert torch.equal(unchanged[0], problem[0])
+    assert result["eta"] == 0
+
+
+def test_global_risk_is_monotone_and_singular_covariances_are_finite():
+    problem = list(_problem())
+    problem[2] = torch.diag(torch.tensor([2.0, 0.0, 0.0]))
+    problem[3] = torch.diag(torch.tensor([0.0, 3.0, 0.0]))
+    problems = [tuple(problem), tuple(_problem())]
+    risks = []
+    for eta in (0.0, 0.1, 1.0, 10.0, 100.0):
+        candidates = [
+            solve_lagrangian_candidate(*branch, eta=eta)
+            for branch in problems
+        ]
+        numerator = sum(
+            weighted_response_energy(candidate.double() - branch[0].double(),
+                                     branch[2], branch[4])
+            for candidate, branch in zip(candidates, problems)
+        )
+        denominator = sum(
+            weighted_response_energy(branch[0], branch[2], branch[4])
+            for branch in problems
+        )
+        risks.append(float(numerator / denominator))
+    assert all(left + 1e-9 >= right for left, right in zip(risks, risks[1:]))
+    candidates, result = solve_global_sensitivity_budgeted_g(
+        problems, risk_budget=0.02
+    )
+    assert all(torch.isfinite(candidate).all() for candidate in candidates)
+    assert result["achieved_risk"] <= 0.02 + 1e-7
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
+def test_global_solver_returns_finite_deployed_dtype_under_budget(dtype):
+    problem = _problem(dtype=dtype)
+    candidates, result = solve_global_sensitivity_budgeted_g(
+        [problem, problem], risk_budget=0.05
+    )
+    assert result["achieved_risk"] <= 0.05 + 5e-3
+    assert all(candidate.dtype == dtype and torch.isfinite(candidate).all()
+               for candidate in candidates)
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])

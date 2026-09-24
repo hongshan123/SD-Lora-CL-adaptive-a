@@ -307,6 +307,106 @@ def solve_sensitivity_budgeted_g(
     }
 
 
+def solve_global_sensitivity_budgeted_g(
+    problems: list[tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]],
+    risk_budget: float = 0.05,
+    ridge: float = 1e-6,
+    bisection_steps: int = 40,
+    eps: float = 1e-12,
+    max_bracket_steps: int = 80,
+) -> tuple[list[Tensor], dict]:
+    """Allocate one historical-response risk budget across all Q/V branches."""
+    if not problems:
+        raise ValueError("global SBGC requires at least one branch")
+    if not math.isfinite(float(risk_budget)) or not 0 <= risk_budget <= 1:
+        raise ValueError("risk_budget must be finite and in [0, 1]")
+    if bisection_steps <= 0 or max_bracket_steps <= 0:
+        raise ValueError("global SBGC iteration counts must be positive")
+    if not math.isfinite(float(eps)) or eps <= 0:
+        raise ValueError("eps must be positive and finite")
+    for problem in problems:
+        _validate_problem(*problem)
+
+    old_energies = [
+        weighted_response_energy(old, c_old, f_old)
+        for old, _, c_old, _, f_old, _ in problems
+    ]
+    baseline = sum(old_energies)
+    target_numerator = sum(
+        weighted_response_energy(target.double() - old.double(), c_old, f_old)
+        for old, target, c_old, _, f_old, _ in problems
+    )
+    target_risk = float(target_numerator / (baseline + eps))
+    current_update_energy = sum(
+        weighted_response_energy(target.double() - old.double(), c_cur, f_cur)
+        for old, target, _, c_cur, _, f_cur in problems
+    )
+
+    def evaluate(eta):
+        candidates = [
+            solve_lagrangian_candidate(*problem, eta=eta, ridge=ridge)
+            for problem in problems
+        ]
+        numerator = sum(
+            weighted_response_energy(candidate.double() - problem[0].double(),
+                                     problem[2], problem[4])
+            for candidate, problem in zip(candidates, problems)
+        )
+        return candidates, float(numerator / (baseline + eps))
+
+    active = target_risk > risk_budget
+    eta = 0.0
+    bracket_steps = 0
+    if not active:
+        candidates = [problem[1].detach().clone() for problem in problems]
+        achieved = target_risk
+    else:
+        lower, upper = 0.0, 1.0
+        for bracket_steps in range(1, max_bracket_steps + 1):
+            candidates, achieved = evaluate(upper)
+            if achieved <= risk_budget:
+                break
+            lower, upper = upper, upper * 2.0
+        else:
+            raise RuntimeError("failed to bracket global SBGC multiplier")
+        for _ in range(bisection_steps):
+            midpoint = 0.5 * (lower + upper)
+            trial, trial_risk = evaluate(midpoint)
+            if trial_risk <= risk_budget:
+                upper, candidates, achieved = midpoint, trial, trial_risk
+            else:
+                lower = midpoint
+        eta = upper
+
+    branch_risks = [
+        float(historical_response_risk(candidate, problem[0], problem[2], problem[4]))
+        for candidate, problem in zip(candidates, problems)
+    ]
+    branch_distortions = [
+        float(
+            weighted_response_energy(candidate.double() - target.double(), c_cur, f_cur)
+            / (weighted_response_energy(target.double() - old.double(), c_cur, f_cur) + eps)
+        )
+        for candidate, (old, target, _, c_cur, _, f_cur) in zip(candidates, problems)
+    ]
+    current_distortion = sum(
+        weighted_response_energy(candidate.double() - problem[1].double(),
+                                 problem[3], problem[5])
+        for candidate, problem in zip(candidates, problems)
+    ) / (current_update_energy + eps)
+    return candidates, {
+        "eta": eta,
+        "target_risk": target_risk,
+        "achieved_risk": achieved,
+        "current_distortion": float(current_distortion),
+        "constraint_active": active,
+        "bracket_steps": bracket_steps,
+        "bisection_steps": bisection_steps if active else 0,
+        "branch_achieved_risks": branch_risks,
+        "branch_current_distortions": branch_distortions,
+    }
+
+
 def update_running_moment(
     historical: Tensor,
     historical_count: float,

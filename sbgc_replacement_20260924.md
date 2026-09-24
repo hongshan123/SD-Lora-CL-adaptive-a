@@ -42,7 +42,12 @@ Do not attribute a Fisher-vs-Frozen-P difference solely to Fisher weighting.
   support was added and CUB Task 0/1 was repeated with snapshots enabled.
   Both snapshots passed checksum audit; task-wise accuracy matched the
   no-snapshot smoke to logged precision.
-- Full T=10 Fisher then additive queues are the next step.
+- Full T=10 Fisher then additive queues started 2026-09-24 21:35 local time
+  at code commit `2e61a0f`. Each dataset runs its arms serially on one GPU
+  pair. Queue logs: `sbgc_replace_{c100,inr,cub}_queue_20260924_r2.log`;
+  training logs: `sbgc_replace_{c100,inr,cub}_{fisher,additive}_20260924.log`.
+  The initial queue logs without `_r2` record only a Bash argument-parsing
+  failure; they contain no training result. Full accuracy is pending.
 
 ## Checks
 

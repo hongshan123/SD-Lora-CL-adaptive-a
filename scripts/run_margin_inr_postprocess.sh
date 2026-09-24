@@ -21,6 +21,16 @@ for task in {0..9}; do
     fi
 done
 
+python scripts/counterfactual_g_head_swap.py \
+    --run-dir "$run_dir" --anchor-task 0 --target-task 9 \
+    --device cuda:0 --batch-size 64 \
+    --output FROZEN_BRANCH_COUNTERFACTUAL_20260924/inr_t0_to_t9.json
+
+python scripts/counterfactual_g_head_swap.py \
+    --run-dir "$run_dir" --anchor-task 8 --target-task 9 \
+    --device cuda:0 --batch-size 64 \
+    --output FROZEN_BRANCH_COUNTERFACTUAL_20260924/inr_t8_to_t9.json
+
 python scripts/evaluate_margin_calibration.py \
     --run-dir "$run_dir" --target-task 9 --device cuda:0 --batch-size 64 \
     --output MARGIN_CALIBRATION_20260924/inr_t10.json

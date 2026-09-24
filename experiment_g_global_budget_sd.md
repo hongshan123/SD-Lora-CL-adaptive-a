@@ -106,3 +106,15 @@ per GPU, `CUBLAS_WORKSPACE_CONFIG=:4096:8`, and `nohup`/`setsid`:
 | CUB | 6,7 | `exps/sbgc_global_cub_full_20260925.json` | `sbgc_global_cub_full_20260925.log` |
 
 The runs are in progress; do not treat partial task curves as Final.
+
+### CUB formal result (2026-09-25)
+
+CUB seed 1 completed Task 0-9 with ten verified snapshots, finite statistics,
+no traceback, and nine logged aggregate transition risks at 0.050000. The
+Final/AAA/Forgetting are **84.17 / 89.389 / 7.911**. Final Top-1 curve:
+`[96.87, 92.92, 91.54, 89.76, 89.46, 88.75, 87.53, 87.13, 85.76, 84.17]`.
+Against complete Frozen-P: Final **-0.23**, AAA **-0.207**, Forgetting
+**-0.375** (better). Against per-branch Fisher: Final **+0.13**, AAA
+**-0.020**. Against QR additive: Final **-0.28**, AAA **-0.213**.
+This is a negative CUB result for the required >0.20 Final gain. C100 and INR
+are still running; no cross-dataset success claim is justified.

@@ -75,8 +75,22 @@ Six isolated configs were added for Task 0/1 smoke and T=10 formal runs.
 
 CPU evidence: 45 focused tests pass, including global KKT stationarity,
 risk reallocation, monotonicity, singular covariance, low-precision return,
-Task-0/1 state roundtrip, and strict scope mismatch. The pre-config full suite
-passed 483 tests; rerun after the final patch remains pending.
+Task-0/1 state roundtrip, and strict scope mismatch. The full suite passed
+487 tests after the final implementation/config patch. Code commit: `6fa7888`.
 
-Real-data DDP smoke and T=10 Final/AAA/Forgetting are pending. No accuracy
-benefit is claimed yet.
+Three two-GPU Task 0/1 real-data smokes completed without traceback on
+2026-09-25, using GPU pairs 0,1 / 4,5 / 6,7 and batch 64 per GPU. Each has
+two verified task snapshots, passing calibration tensor/RNG hashes, rebuilt
+deployment state, and prototype transport. Task-0 canonicalization operator
+errors were 1.25e-7 (C100), 1.23e-7 (INR), and 1.25e-7 (CUB). Task-1 risk:
+
+| Dataset | Aggregate risk | Max branch risk | Current distortion | Eta |
+| --- | ---: | ---: | ---: | ---: |
+| C100 | 0.050000 | 0.186029 | 0.458036 | 2.579047 |
+| INR | 0.050000 | 0.094485 | 0.584564 | 3.550698 |
+| CUB | 0.050000 | 0.111883 | 0.593997 | 3.707582 |
+
+The branch maxima above 5% verify that this is one global budget, not the
+old per-branch rule. This smoke used 2 epochs/task and is not an accuracy
+comparison. T=10 Final/AAA/Forgetting remain pending. No accuracy benefit is
+claimed yet.

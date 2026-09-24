@@ -30,8 +30,15 @@ Do not attribute a Fisher-vs-Frozen-P difference solely to Fisher weighting.
 - Code and config tests: 64 passed on 2026-09-24.
 - First smoke launch invalid: deterministic CuBLAS requested without
   `CUBLAS_WORKSPACE_CONFIG`; no model result. Retained as a failed run.
-- Task 0/1 smoke relaunch: `*_r2` configs, in progress.
-- Full T=10 runs start only after all three smoke runs pass.
+- Task 0/1 smoke relaunch: all three `*_r2` runs passed. Task-0 QR
+  operator relative error was 1.23e-7 to 1.25e-7. Task 1 activated the
+  constraint in all 24 branches, with max risk 0.05. Rebuild, prototype
+  transport, evaluation tensor hash, and RNG checks passed.
+- Task-1 mean current-target distortion in the short smoke was 0.444 C100,
+  0.566 INR, and 0.583 CUB. This is a pre-registered plasticity warning,
+  not evidence of an accuracy benefit. Two-epoch accuracy is not comparable
+  to the 20-epoch reference.
+- Full T=10 Fisher then additive queues are the next step.
 
 ## Checks
 

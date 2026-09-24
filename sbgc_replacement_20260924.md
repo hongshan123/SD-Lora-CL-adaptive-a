@@ -55,3 +55,44 @@ For each dataset record Task-0 canonicalization error, nine transport gate
 decisions, transition-wise Fisher risk (<=0.050001), target distortion,
 Final/AAA/Forgetting and Top-1 curve. Verify artifacts after every task,
 including a rebuilt fixed-P backbone. Report calibration time separately.
+
+## Completed T=10 Results (2026-09-25)
+
+Each row is one seed; Final and AAA are percentages, F is the trainer's
+Forgetting (lower is better). The complete Frozen-P reference retains NormCap;
+the other two rows use QR-canonicalized P and no NormCap.
+
+| Dataset | Method | Final | AAA | F |
+| --- | --- | ---: | ---: | ---: |
+| C100 | complete Frozen-P | 88.17 | 92.385 | 5.811 |
+| C100 | QR additive + transport | 87.96 | 92.506 | 7.456 |
+| C100 | Fisher-SBGC + transport | 88.50 | 92.887 | 5.367 |
+| INR | complete Frozen-P | 78.75 | 81.941 | 5.946 |
+| INR | QR additive + transport | 79.03 | 82.619 | 6.701 |
+| INR | Fisher-SBGC + transport | 78.93 | 82.525 | 6.196 |
+| CUB | complete Frozen-P | 84.40 | 89.596 | 8.286 |
+| CUB | QR additive + transport | 84.45 | 89.602 | 8.248 |
+| CUB | Fisher-SBGC + transport | 84.04 | 89.409 | 8.122 |
+
+Fisher minus QR additive (Final/AAA): C100 +0.54/+0.381, INR -0.10/-0.094,
+CUB -0.41/-0.193. Fisher minus complete Frozen-P: C100 +0.33/+0.502,
+INR +0.18/+0.584, CUB -0.36/-0.187. Fisher does **not** establish a
+three-dataset accuracy benefit; it fails the earlier 0.30 Final non-inferiority
+threshold on CUB even against Frozen-P, and fails to beat its closest additive
+control on INR and CUB. Do not advance it as the default main method on this
+single-seed evidence.
+
+The Fisher constraint was active in 16-24 of 24 branches per transition and
+all logged Fisher transition risks were <=0.05. All six runs completed ten
+tasks, ten verified task snapshots, and prototype transport; no exception was
+found in the training logs. The deployed persistent SBGC state is 389,520
+scalars versus 368,640 LoRA A/G scalars (+5.66%); these statistics must be
+counted as method overhead.
+
+Task-0 Final differed between QR additive/Fisher and complete Frozen-P:
+C100 98.50 vs 96.90, INR 90.60 vs 87.68, CUB 96.87 vs 96.87. Thus even the
+Frozen-P comparison is a system-level comparison, not an isolated Fisher
+ablation. At final task, Fisher versus QR additive new-class accuracy was
+C100 89.7 vs 91.2, INR 84.43 vs 85.50, CUB 80.23 vs 81.91. This is
+consistent with an overly restrictive 5% G budget hurting plasticity, but
+the branch-response risk is not itself a causal forgetting bound.

@@ -51,13 +51,14 @@ accuracy drop. Bias-only fails the pre-screen. A joint `G`+head method has
 not been accepted or evaluated, so the bias-only failure is not a proof that
 every joint intervention fails.
 
-The matched ImageNet-R seed 1995 Frozen-P snapshot run is active as
-`frozen-margin-inr-t10-20260924-r3.service`. The first two failed launches
-are retained as failure artifacts. `margin-inr-postprocess-20260924-r2.service`
-waits for training to stop, requires all ten complete snapshots, then runs
-the read-only INR Task 0 -> 9 and Task 8 -> 9 state swaps, calibration, and
-three G-proxy transitions. Do not interpret the incomplete run as a
-three-dataset result.
+The matched ImageNet-R seed 1995 Frozen-A snapshot run completed all ten
+tasks with Final 78.75%, AAA 81.941%, and Forgetting 5.946%. The first two
+failed launches are retained as failure artifacts. The initial postprocess
+service failed because its systemd environment lacked `python` on `PATH`;
+training and its snapshots were unaffected. After setting an explicit PATH,
+`margin-inr-postprocess-20260924-r3.service` is running the read-only INR
+Task 0 -> 9 and Task 8 -> 9 state swaps, calibration, and three G-proxy
+transitions. The full three-dataset margin gate is pending that service.
 
 ## P2: G candidate surrogate, shadow only
 

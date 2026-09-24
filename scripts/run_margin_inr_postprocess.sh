@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 run_dir=FROZEN_MARGIN_INR_T10_SEED1995_20260924_R3
 unit=frozen-margin-inr-t10-20260924-r3.service
+export PATH=/home/hongzhijun/miniconda3/bin:/usr/local/bin:/usr/bin:/bin
 export CUDA_VISIBLE_DEVICES=4
 export OMP_NUM_THREADS=4
 export MKL_NUM_THREADS=4

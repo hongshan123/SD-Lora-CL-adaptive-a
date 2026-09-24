@@ -94,3 +94,15 @@ The branch maxima above 5% verify that this is one global budget, not the
 old per-branch rule. This smoke used 2 epochs/task and is not an accuracy
 comparison. T=10 Final/AAA/Forgetting remain pending. No accuracy benefit is
 claimed yet.
+
+Formal T=10 runs were launched after all three smokes passed, at code commit
+`6fa7888` plus documentation commit `1a5af18`. Each uses two GPUs, batch 64
+per GPU, `CUBLAS_WORKSPACE_CONFIG=:4096:8`, and `nohup`/`setsid`:
+
+| Dataset | GPU pair | Config | Log |
+| --- | --- | --- | --- |
+| C100 | 0,1 | `exps/sbgc_global_c100_full_20260925.json` | `sbgc_global_c100_full_20260925.log` |
+| INR | 4,5 | `exps/sbgc_global_inr_full_20260925.json` | `sbgc_global_inr_full_20260925.log` |
+| CUB | 6,7 | `exps/sbgc_global_cub_full_20260925.json` | `sbgc_global_cub_full_20260925.log` |
+
+The runs are in progress; do not treat partial task curves as Final.

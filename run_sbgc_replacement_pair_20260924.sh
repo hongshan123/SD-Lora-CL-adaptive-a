@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-dataset="${1:?usage: $0 {c100|inr|cub} GPU_IDS}"
-gpu_ids="${2:?usage: $0 {c100|inr|cub} GPU_IDS}"
+dataset="${1:?dataset required}"
+gpu_ids="${2:?GPU_IDS required}"
 case "$dataset" in
   c100|inr|cub) ;;
   *) echo "unknown dataset: $dataset" >&2; exit 2 ;;

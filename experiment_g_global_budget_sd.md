@@ -118,3 +118,9 @@ Against complete Frozen-P: Final **-0.23**, AAA **-0.207**, Forgetting
 **-0.020**. Against QR additive: Final **-0.28**, AAA **-0.213**.
 This is a negative CUB result for the required >0.20 Final gain. C100 and INR
 are still running; no cross-dataset success claim is justified.
+All ten CUB task logs report the same 389,520-scalar persistent state. At Task
+9 the global model has old/new accuracy 84.61/80.40, versus complete Frozen-P
+84.74/81.41. The larger new-class deficit (1.01 point) is consistent with
+current-target distortion limiting plasticity, while the old-class result is
+near the baseline. This is an observation, not a causal proof; the 5% risk
+surrogate did not translate into a CUB Final gain.

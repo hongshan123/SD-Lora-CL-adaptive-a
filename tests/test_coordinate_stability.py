@@ -285,6 +285,14 @@ def test_coordinate_transport_config_allows_transport_without_alignment():
         transport_rank=10,
     )
 
+    args["sa_cumulative_merge"] = "sensitivity_budgeted_g"
+    validate_coordinate_transport_config(
+        args,
+        use_prototypes=True,
+        lrpt_enabled=False,
+        transport_rank=10,
+    )
+
     args["sa_cumulative_merge"] = "gauge"
     with pytest.raises(ValueError, match="live_a_aggregate_b"):
         validate_coordinate_transport_config(

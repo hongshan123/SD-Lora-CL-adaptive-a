@@ -551,7 +551,7 @@ def test_guard_candidates_select_and_persist_deployed_g(tmp_path):
         ({"sa_g_sensitivity_floor": 0.0}, "sensitivity_floor"),
         ({"sa_g_solver_ridge": 0.0}, "solver_ridge"),
         ({"sa_g_bisection_steps": 0}, "bisection_steps"),
-        ({"sa_coordinate_stable_transport": True}, "coordinate transport"),
+        ({"sa_live_a_coordinate_align": True}, "coordinate alignment"),
         ({"sa_hbd_enabled": True}, "HBD"),
         ({"sa_adaptive_a_enabled": True}, "Adaptive-A"),
         ({"sa_dual_head": True}, "Dual-B"),
@@ -594,6 +594,28 @@ def test_sbgc_accepts_isolated_fixed_projection_configuration():
         "g_holdout_fraction": 0.0,
         "g_guard_ce_tolerance": 0.01,
     }
+
+
+def test_sbgc_allows_prototype_transport_but_rejects_normcap():
+    config = {
+        "sa_cumulative_merge": "sensitivity_budgeted_g",
+        "sa_cumulative_state": True,
+        "sa_train_a_all_tasks": False,
+        "sa_cumulative_rank": 3,
+        "lora_rank": 3,
+        "sa_use_prototype_classifier": True,
+        "sa_coordinate_stable_transport": True,
+        "sa_live_a_absorb_mode": "operator_preserving_absorb",
+    }
+    validate_sbgc_config(config)
+    from models.sa_sdlora import validate_coordinate_transport_config
+
+    validate_coordinate_transport_config(
+        config, use_prototypes=True, lrpt_enabled=False, transport_rank=3
+    )
+    config["sa_live_a_absorb_mode"] = "bounded_norm_calibrated_absorb"
+    with pytest.raises(ValueError, match="NormCap"):
+        validate_sbgc_config(config)
 
 
 def test_initial_backbone_factory_forwards_all_sbgc_settings(

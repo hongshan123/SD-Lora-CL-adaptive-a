@@ -208,7 +208,6 @@ def validate_sbgc_config(args):
         raise ValueError("sa_g_bisection_steps must be a positive integer")
     settings["g_bisection_steps"] = int(steps)
     incompatible_flags = {
-        "sa_coordinate_stable_transport": "coordinate transport",
         "sa_live_a_coordinate_align": "coordinate alignment",
         "lrpt_enabled": "prototype transport",
         "sa_hbd_enabled": "HBD",
@@ -241,10 +240,12 @@ def validate_coordinate_transport_config(
             "sa_coordinate_stable_transport requires "
             "sa_use_prototype_classifier=true"
         )
-    if args.get("sa_cumulative_merge") != "live_a_aggregate_b":
+    if args.get("sa_cumulative_merge") not in (
+        "live_a_aggregate_b", "sensitivity_budgeted_g"
+    ):
         raise ValueError(
             "sa_coordinate_stable_transport requires "
-            "sa_cumulative_merge=live_a_aggregate_b"
+            "sa_cumulative_merge=live_a_aggregate_b or sensitivity_budgeted_g"
         )
     if lrpt_enabled:
         raise ValueError(

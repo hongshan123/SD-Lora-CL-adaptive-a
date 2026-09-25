@@ -143,3 +143,11 @@ CPU tests cover successful restore and protocol-mismatch rejection; the full
 suite passes **489 tests**. First validate on CUB by restoring Task 8 and
 replaying Task 9 under the original 20-epoch protocol. Only if its Final, AAA,
 Forgetting and full curve match the completed CUB run will C100/INR resume.
+
+CUB replay validation **passed**: restoring `task_008` and training Task 9
+again yielded exactly the original Final **84.17**, AAA **89.389**, Forgetting
+**7.911**, all ten Top-1 values, Task-9 aggregate risk 0.050000, eta
+1.065696, and identical post-evaluation tensor/RNG hashes. Its Task-9
+snapshot checksum audit also passed. This is evidence that the boundary resume
+is trajectory-equivalent for the tested CUB case, not a proof for every task.
+Recovery code/config/tests commit: `f101a97`.

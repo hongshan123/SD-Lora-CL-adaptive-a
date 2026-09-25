@@ -379,3 +379,33 @@ CPU suite passed 493 tests with one pre-existing skip. Local GPU smoke is
 unavailable while cuda7's CUDA driver fails initialization, so the
 real-data smoke will use cuda6's healthy GPUs. Formal accuracy remains
 unmeasured; no improvement is claimed here.
+
+### Three-dataset real-data Task 0/1 smoke (cuda6)
+
+Commit `cc405a9` was deployed in a separate checkout at
+`/home/zhaoyang/SD-Lora-CL-sbgc-trainproj-20260925`. The remote focused
+suite passed 50/50. All three runs used two RTX 3090s (GPU 0,1), batch
+64 per GPU, rank 10, two epochs per task, and their pre-registered
+dataset/seed protocol. Each run completed Task 0 and Task 1, passed
+calibration parameter/RNG checks, rank prototype synchronization, eval
+tensor/RNG hash checks, and both immutable task-snapshot audits.
+
+| Dataset (seed) | Task 1 Top-1 (smoke only) | Max Task 1 risk | Mean alpha | Projection active fraction | Max absorption error |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| C100 (1993) | 95.50 | 0.049995 | 0.692284 | 0.760937 | 2.853555e-8 |
+| INR (1995) | 77.32 | 0.049995 | 0.654206 | 0.762897 | 2.994958e-8 |
+| CUB (1) | 92.66 | 0.049995 | 0.715517 | 0.620833 | 2.959602e-8 |
+
+The Task-0 QR operator relative errors were 1.247822e-7, 1.212892e-7,
+and 1.252387e-7 respectively. Each task artifact reported exactly 389,520
+persistent adaptation scalars. At Task 1 the boundary solver was inactive
+(`active=0`, `mean_distortion=0`) because the training-time projected update
+was already feasible. These are **engineering smoke results**, not a matched
+20-epoch accuracy comparison or evidence of a Final improvement.
+
+Formal T=10 configs are `exps/sbgc_trainproj_{c100,inr,cub}_t10_20260925.json`.
+They retain the corresponding prior Fisher-SBGC protocol and set only the
+new training-time projection plus a new output name/path. The next required
+evidence is ten complete snapshots and matched Final/AAA/Forgetting for
+all three datasets, compared to complete Frozen-P under the objective's
+strict >0.20 Final-point criterion on at least two datasets.

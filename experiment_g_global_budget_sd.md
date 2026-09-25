@@ -193,3 +193,27 @@ promote global SBGC as the main method on this evidence. Next inspect the
 transition-wise additive/Fisher/global tradeoff and design a training-only,
 dataset-independent consolidation decision; do not select a policy using
 test-set Final values.
+
+## Attempt 2: Uniform 10% global budget (registered, pending)
+
+Mechanistic observation from Attempt 1: at the final task the constrained
+model's new-class accuracy is lower than complete Frozen-P by 0.30 on INR and
+1.01 on CUB, while its old-class accuracy differs by only -0.02 and -0.13.
+C100 gains +0.78 old-class points over its QR additive control but loses 1.10
+new-class points. The final-task global current-target distortions are 0.151
+(C100), 0.058 (INR), and 0.241 (CUB), all nonzero. These are associations,
+not proof of causality, but motivate a less restrictive budget.
+
+Change exactly one global hyperparameter, `sa_g_risk_budget: 0.05 -> 0.10`,
+for all three datasets. Keep the code, frozen P, Fisher calibration, rank 10,
+20 epochs, batch 64/GPU, seed, transport and classifier unchanged. Use new
+output directories and complete T=10 runs from Task 0. This is a uniform
+budget-sensitivity experiment, not dataset-specific model selection; because
+the same seeds informed it, any apparent win remains exploratory and needs
+independent-seed confirmation. Pre-registered checks: aggregate risk <=
+0.100001 every transition; 10 snapshots/dataset; compare Final against
+complete Frozen-P thresholds C100 >88.37, INR >78.95, CUB >84.60. Two of
+three must exceed their threshold. If not, stop budget-only tuning and move
+to a different training-only consolidation signal.
+
+Results pending.

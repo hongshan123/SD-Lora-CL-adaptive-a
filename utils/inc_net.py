@@ -70,6 +70,7 @@ def get_backbone(args, pretrained=False):
                 g_solver_ridge=args.get("sa_g_solver_ridge", 1e-6),
                 g_bisection_steps=args.get("sa_g_bisection_steps", 40),
                 g_shadow_only=args.get("sa_g_shadow_only", False),
+                g_train_projected=args.get("sa_g_train_projected", False),
                 g_plasticity_guard=args.get("sa_g_plasticity_guard", False),
                 g_holdout_fraction=args.get(
                     "sa_g_holdout_fraction",

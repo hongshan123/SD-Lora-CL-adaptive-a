@@ -77,6 +77,14 @@ def capture_pre_merge(backbone, fc, old_prototypes, task_id, known_classes, tota
                 branch["historical_up"] = _cpu(
                     getattr(wrapper, "unified_up_" + suffix)
                 )
+                if getattr(wrapper, "train_projected", False):
+                    with torch.no_grad():
+                        effective_up, alpha, raw_risk = wrapper.projected_current_up(
+                            suffix
+                        )
+                    branch["current_effective_up"] = _cpu(effective_up)
+                    branch["training_projection_alpha"] = _cpu(alpha)
+                    branch["raw_historical_risk"] = _cpu(raw_risk)
             else:
                 branch["historical_up"] = _cpu(
                     getattr(wrapper, "aggregate_" + suffix)

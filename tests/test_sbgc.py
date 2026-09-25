@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from backbone.sbgc import (
     historical_response_risk,
     normalize_sensitivity,
+    project_current_response_update,
     sbgc_state_scalar_counts,
     solve_global_sensitivity_budgeted_g,
     solve_lagrangian_candidate,
@@ -16,6 +17,43 @@ from backbone.sbgc import (
     update_running_moment,
     weighted_response_energy,
 )
+
+
+def test_train_projected_update_is_feasible_and_differentiable():
+    old, target, covariance, _, sensitivity, _ = _problem()
+    update = (target - old).detach().requires_grad_()
+    old_energy = weighted_response_energy(old, covariance, sensitivity)
+    projected, alpha, raw_risk = project_current_response_update(
+        update, covariance, sensitivity, old_energy, 0.05
+    )
+    assert 0 < float(alpha.detach()) < 1
+    assert float(raw_risk.detach()) > 0.05
+    deployed_risk = historical_response_risk(
+        old + projected, old, covariance, sensitivity
+    )
+    assert float(deployed_risk.detach()) <= 0.05 + 1e-7
+    projected.square().sum().backward()
+    assert update.grad is not None
+    assert torch.isfinite(update.grad).all()
+    assert float(update.grad.norm()) > 0
+
+
+def test_train_projected_update_preserves_zero_and_feasible_updates():
+    old, target, covariance, _, sensitivity, _ = _problem()
+    old_energy = weighted_response_energy(old, covariance, sensitivity)
+    zero = torch.zeros_like(old, requires_grad=True)
+    projected, alpha, risk = project_current_response_update(
+        zero, covariance, sensitivity, old_energy, 0.05
+    )
+    assert torch.equal(projected, zero)
+    assert float(alpha.detach()) == 1.0
+    assert float(risk.detach()) == 0.0
+    small = 0.01 * (target - old)
+    projected, alpha, _ = project_current_response_update(
+        small, covariance, sensitivity, old_energy, 0.05
+    )
+    assert torch.equal(projected, small)
+    assert float(alpha) == 1.0
 
 
 def _problem(dtype=torch.float32):

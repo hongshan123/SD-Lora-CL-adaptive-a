@@ -163,6 +163,7 @@ def validate_sbgc_config(args):
         "g_solver_ridge": float(args.get("sa_g_solver_ridge", 1e-6)),
         "g_bisection_steps": args.get("sa_g_bisection_steps", 40),
         "g_shadow_only": bool(args.get("sa_g_shadow_only", False)),
+        "g_train_projected": bool(args.get("sa_g_train_projected", False)),
         "g_plasticity_guard": bool(args.get("sa_g_plasticity_guard", False)),
         "g_holdout_fraction": float(args.get(
             "sa_g_holdout_fraction",
@@ -196,6 +197,16 @@ def validate_sbgc_config(args):
         raise ValueError("global SBGC budget is incompatible with plasticity guard")
     if settings["g_budget_scope"] == "global" and settings["g_shadow_only"]:
         raise ValueError("global SBGC budget requires deployed consolidation")
+    if settings["g_train_projected"] and (
+        settings["g_budget_scope"] != "branch"
+        or settings["g_sensitivity_metric"] != "fisher_diag"
+        or settings["g_shadow_only"]
+        or settings["g_plasticity_guard"]
+    ):
+        raise ValueError(
+            "sa_g_train_projected requires branch Fisher deployment "
+            "without shadow or guard"
+        )
     if settings["g_budget_scope"] == "global" and args.get(
         "sa_g_boundary_attribution", False
     ):
@@ -3110,6 +3121,17 @@ class Learner(SDLoraLearner):
                         counts["count_scalars"],
                         counts["persistent_scalar_total"],
                     )
+                    if backbone.g_train_projected:
+                        logging.info(
+                            "[SBGC TrainProjected] task %d mean_alpha=%.6f "
+                            "min_alpha=%.6f active_fraction=%.6f "
+                            "max_absorption_error=%.6e",
+                            self._cur_task,
+                            stats["mean_training_alpha"],
+                            stats["min_training_alpha"],
+                            stats["mean_active_projection_fraction"],
+                            stats["max_absorption_relative_error"],
+                        )
                     global_result = backbone._last_sbgc_global_diagnostics
                     if global_result is not None:
                         logging.info(

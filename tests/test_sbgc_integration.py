@@ -15,6 +15,7 @@ from backbone.sa_lora import (
     SA_STATE_VERSION_SBGC,
     SA_STATE_VERSION_SBGC_GUARD,
     SA_STATE_VERSION_SBGC_GLOBAL,
+    SA_STATE_VERSION_SBGC_TRAIN_PROJECTED,
     SharedALoRA_ViT_timm,
     _SensitivityBudgetedGQKV,
 )
@@ -22,6 +23,7 @@ from models.sa_sdlora import summarize_boundary_logits, validate_sbgc_config
 from models.sa_sdlora import Learner as SharedALearner
 from utils.inc_net import get_backbone
 from utils.rng_utils import rng_state_hash
+from utils.sa_task_snapshots import capture_pre_merge
 
 
 class _TinyAttention(nn.Module):
@@ -92,7 +94,7 @@ class _RawNetwork(nn.Module):
 
 def _make_model(
     run, task, vit=None, metric="fisher_diag", shadow=False, guard=False,
-    scope="branch",
+    scope="branch", projected=False,
 ):
     return SharedALoRA_ViT_timm(
         copy.deepcopy(vit) if vit is not None else _TinyViT(),
@@ -110,6 +112,7 @@ def _make_model(
         g_solver_ridge=1e-6,
         g_bisection_steps=40,
         g_shadow_only=shadow,
+        g_train_projected=projected,
         g_plasticity_guard=guard,
         g_holdout_fraction=0.1 if guard else 0.0,
         g_guard_ce_tolerance=0.01,
@@ -137,12 +140,13 @@ def _collect_and_finalize(model, inputs):
 
 
 def _train_and_save_task_zero(
-    run, vit, shadow=False, metric="fisher_diag", guard=False, scope="branch"
+    run, vit, shadow=False, metric="fisher_diag", guard=False, scope="branch",
+    projected=False,
 ):
     torch.manual_seed(701)
     model = _make_model(
         run, task=0, vit=vit, shadow=shadow, metric=metric, guard=guard,
-        scope=scope,
+        scope=scope, projected=projected,
     )
     with torch.no_grad():
         for module in model.w_As + model.w_Bs:
@@ -283,6 +287,48 @@ def test_task_one_keeps_p_fixed_and_meets_deployed_risk_budget(tmp_path):
         branch["deployed_historical_risk"] <= 0.05 + 1e-6
         for branch in model._last_sbgc_branch_diagnostics
     )
+
+
+def test_train_projected_current_branch_absorbs_without_operator_jump(tmp_path):
+    run = tmp_path / "run"
+    pristine = _TinyViT()
+    _train_and_save_task_zero(run, pristine, projected=True)
+    saved = torch.load(run / SA_STATE_FILENAME, weights_only=True)
+    assert saved["version"] == SA_STATE_VERSION_SBGC_TRAIN_PROJECTED
+    assert saved["train_projected"] is True
+    with pytest.raises(ValueError, match="train-projected mode"):
+        _make_model(run, task=1, vit=pristine)
+
+    model = _make_model(run, task=1, vit=pristine, projected=True)
+    wrapper = model._sbgc_wrappers()[0]
+    with torch.no_grad():
+        wrapper.b_q.weight.copy_(8.0 * wrapper.unified_up_q)
+        wrapper.b_v.weight.copy_(8.0 * wrapper.unified_up_v)
+    model.train()
+    inputs = torch.randn(4, 3, 6)
+    model(inputs).square().mean().backward()
+    assert torch.isfinite(wrapper.b_q.weight.grad).all()
+    assert torch.isfinite(wrapper.b_v.weight.grad).all()
+    assert float(wrapper.projection_training_stats("q")["mean_alpha"]) < 1
+    model.eval()
+    with torch.no_grad():
+        before = model(inputs)
+    snapshot = capture_pre_merge(model, nn.Linear(18, 2), {}, 1, 2, 4)
+    assert all("current_effective_up" in branch for branch in snapshot["branches"])
+    assert all(float(branch["training_projection_alpha"]) < 1 for branch in snapshot["branches"])
+    model.prepare_sbgc_calibration()
+    _, stats = _collect_and_finalize(model, torch.randn(5, 4, 6))
+    with torch.no_grad():
+        after = model(inputs)
+    assert torch.allclose(after, before, atol=2e-6, rtol=2e-6)
+    assert stats["active_constraints"] == 0
+    assert stats["max_absorption_relative_error"] < 1e-6
+    assert stats["mean_active_projection_fraction"] > 0
+    assert stats["max_achieved_risk"] <= 0.050001
+    model.save_lora_parameters(str(run), task_id=1)
+    rebuilt = _make_model(run, task=2, vit=pristine, projected=True)
+    with torch.no_grad():
+        assert torch.allclose(rebuilt(inputs), before, atol=2e-6, rtol=2e-6)
 
 
 @pytest.mark.parametrize("metric", ["fisher_diag", "uniform"])
@@ -639,10 +685,31 @@ def test_sbgc_accepts_isolated_fixed_projection_configuration():
         "g_solver_ridge": 1e-6,
         "g_bisection_steps": 40,
         "g_shadow_only": False,
+        "g_train_projected": False,
         "g_plasticity_guard": False,
         "g_holdout_fraction": 0.0,
         "g_guard_ce_tolerance": 0.01,
     }
+
+
+def test_train_projected_mode_rejects_incompatible_sbgc_settings():
+    base = {
+        "sa_cumulative_merge": "sensitivity_budgeted_g",
+        "sa_cumulative_state": True,
+        "sa_train_a_all_tasks": False,
+        "lora_rank": 3,
+        "sa_cumulative_rank": 3,
+        "sa_g_train_projected": True,
+    }
+    assert validate_sbgc_config(base)["g_train_projected"] is True
+    for change in (
+        {"sa_g_budget_scope": "global"},
+        {"sa_g_sensitivity_metric": "uniform"},
+        {"sa_g_shadow_only": True},
+        {"sa_g_plasticity_guard": True},
+    ):
+        with pytest.raises(ValueError, match="sa_g_train_projected"):
+            validate_sbgc_config({**base, **change})
 
 
 def test_sbgc_allows_prototype_transport_but_rejects_normcap():

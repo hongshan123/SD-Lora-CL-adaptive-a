@@ -83,6 +83,36 @@ def historical_response_risk(
     return numerator / (denominator + float(eps))
 
 
+def project_current_response_update(
+    update: Tensor,
+    covariance: Tensor,
+    sensitivity: Tensor,
+    historical_energy: Tensor,
+    risk_budget: float,
+    eps: float = 1e-12,
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Project an effective current G update onto a historical response ball."""
+    if not math.isfinite(float(risk_budget)) or not 0 < risk_budget <= 1:
+        raise ValueError("risk_budget must be finite and in (0, 1]")
+    if not math.isfinite(float(eps)) or eps <= 0:
+        raise ValueError("eps must be positive and finite")
+    if update.ndim != 2 or covariance.shape != (update.shape[1], update.shape[1]):
+        raise ValueError("update and covariance shapes are incompatible")
+    if sensitivity.shape != (update.shape[0],) or historical_energy.numel() != 1:
+        raise ValueError("sensitivity or historical_energy shape is invalid")
+    work = update.to(torch.float64)
+    cov = covariance.to(device=work.device, dtype=work.dtype)
+    sens = sensitivity.to(device=work.device, dtype=work.dtype)
+    denominator = historical_energy.to(device=work.device, dtype=work.dtype)
+    energy = (((work @ cov) * work).sum(dim=1) * sens).sum().clamp_min(0.0)
+    risk = energy / (denominator + eps)
+    alpha = torch.minimum(
+        torch.ones_like(risk),
+        torch.sqrt((float(risk_budget) * (1.0 - 1e-4)) / (risk + eps)),
+    )
+    return update * alpha.to(update.dtype), alpha, risk
+
+
 def _validate_problem(
     historical: Tensor,
     target: Tensor,

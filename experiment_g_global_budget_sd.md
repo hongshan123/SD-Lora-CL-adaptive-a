@@ -312,3 +312,70 @@ claim an improvement from the partial AAA gains. The next proposal must
 change the training/selection signal, establish it with a separate diagnostic
 that does not use test labels to choose deployment, and then run a new
 uniform three-dataset protocol.
+
+## Attempt 3: Train-time projected current branch (pre-registered)
+
+The previous SBGC variants train the temporary `sB` branch unconstrained,
+then replace its operator at the task boundary. This creates a measurable
+train/deployment mismatch: in the 5% runs, current-target distortion can
+be large at early transitions. Attempt 3 changes **when** the constraint
+enters optimization, not its fixed per-branch 5% budget. Task 0 and its
+QR-canonicalization remain unchanged. For each Task `t>0` Q/V branch, let
+`P` be the frozen row-orthonormal basis, `G` the historical up matrix,
+`C_h` the saved projected-activation covariance, and `f_h` the saved
+output-gradient diagonal sensitivity. Set `D=sB` and
+
+`E_h(X)=sum_j f_h[j] X[j,:] C_h X[j,:]^T`,
+`R_h(D)=E_h(D)/(E_h(G)+1e-12)`,
+`alpha(D)=min(1, sqrt(0.05/(R_h(D)+1e-12)))`.
+
+For FP32 accumulation, the executable projection uses `0.05*(1-1e-4)`
+inside the square root. This fixed numerical margin leaves the declared
+5% upper bound unchanged and prevents a roundoff-only second projection
+at deployment.
+
+During every Task `t>0` forward, use `G P x + alpha(D) D P x`. The scalar
+`alpha` remains in the autograd graph; it is not a detached post-hoc cap.
+At task end, absorb exactly `alpha(D_end) D_end` into `G`. The existing
+per-branch SBGC solver is retained as a numerical feasibility check; its
+unconstrained target must already be within the 5% historical risk ball,
+so it should return the target unchanged (eta 0, near-zero distortion).
+Calibration and prototype transport remain otherwise unchanged. This
+eliminates train/deployment mismatch in the LoRA branch while allowing
+SGD to optimize the direction of its feasible current update. It does
+**not** claim the response surrogate bounds classification forgetting.
+
+Implementation is opt-in via `sa_g_train_projected=true`, valid only for
+per-branch Fisher SBGC with shadow/holdout guard disabled. The default
+remains the audited legacy behavior. No new persistent tensor or per-task
+LoRA archive is allowed; the 389,520-scalar adaptation state is unchanged.
+Record per-task min/mean `alpha`, fraction of active branch projections,
+pre-save/post-absorb operator error, risk, Final/AAA/Forgetting and curves.
+
+First pass CPU tests: zero `B`, exact risk-ball projection, finite gradients,
+disabled-path identity, and pre-save/post-absorb operator equivalence.
+Then run real-data Task 0/1, two-GPU, batch64/GPU smokes on C100/INR/CUB.
+If these pass, run the exact matched T=10, rank10, 20-epoch single-seed
+protocol (C100 1993, INR 1995, CUB 1) with one uniform 5% budget and no
+dataset-specific thresholds. Compare with complete Frozen-P, QR additive,
+and the already completed post-hoc per-branch Fisher 5% runs. Acceptance
+for the user objective remains **strictly more than +0.20 Final points
+over complete Frozen-P on at least two datasets**, with all ten task
+snapshots and budget checks. A positive single-seed result is exploratory
+and would require independent-seed confirmation for publication.
+
+### Implementation and CPU verification
+
+Added a differentiable historical-response-ball projection for the
+effective current update `D=sB`. The Q/V wrapper applies its scalar in
+every Task 1+ current-branch forward and records alpha/active statistics;
+the task boundary uses the same projected `D` as the absorption target.
+Pre-merge snapshots record the effective current up matrix and alpha.
+Projected-mode artifacts are v9 and reject loading under the legacy mode
+or vice versa. No new persistent tensors were added. Three Task0/1 smoke
+configs use the same seeds, rank10, batch64/GPU, 2 epochs and independent
+output directories. The focused SBGC/config tests passed 50/50; the full
+CPU suite passed 493 tests with one pre-existing skip. Local GPU smoke is
+unavailable while cuda7's CUDA driver fails initialization, so the
+real-data smoke will use cuda6's healthy GPUs. Formal accuracy remains
+unmeasured; no improvement is claimed here.

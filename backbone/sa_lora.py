@@ -57,6 +57,7 @@ from backbone.sa_operator_stability import (
 from backbone.sbgc import (
     historical_response_risk,
     normalize_sensitivity,
+    project_current_response_update,
     solve_global_sensitivity_budgeted_g,
     solve_sensitivity_budgeted_g,
     update_running_moment,
@@ -72,6 +73,7 @@ SA_STATE_VERSION_CUO = 5
 SA_STATE_VERSION_SBGC = 6
 SA_STATE_VERSION_SBGC_GUARD = 7
 SA_STATE_VERSION_SBGC_GLOBAL = 8
+SA_STATE_VERSION_SBGC_TRAIN_PROJECTED = 9
 SA_MERGE_MODE_GAUGE = "gauge"
 SA_MERGE_MODE_UNION_SVD = "union_svd"
 SA_MERGE_MODE_LIVE_A_AGGREGATE_B = "live_a_aggregate_b"
@@ -1512,6 +1514,8 @@ class _SensitivityBudgetedGQKV(nn.Module):
         covariance_count_v=0.0,
         sensitivity_count_q=0.0,
         sensitivity_count_v=0.0,
+        train_projected=False,
+        risk_budget=0.05,
     ):
         super().__init__()
         self.qkv = qkv
@@ -1552,6 +1556,8 @@ class _SensitivityBudgetedGQKV(nn.Module):
         self.covariance_count_v = float(covariance_count_v)
         self.sensitivity_count_q = float(sensitivity_count_q)
         self.sensitivity_count_v = float(sensitivity_count_v)
+        self.train_projected = bool(train_projected)
+        self.risk_budget = float(risk_budget)
         for name in (
             "covariance_count_q",
             "covariance_count_v",
@@ -1561,6 +1567,43 @@ class _SensitivityBudgetedGQKV(nn.Module):
             value = getattr(self, name)
             if not math.isfinite(value) or value < 0:
                 raise ValueError("{} must be finite and non-negative".format(name))
+        if self.train_projected:
+            if min(
+                self.covariance_count_q,
+                self.covariance_count_v,
+                self.sensitivity_count_q,
+                self.sensitivity_count_v,
+            ) <= 0:
+                raise ValueError("train-projected SBGC requires historical statistics")
+            if not 0 < self.risk_budget <= 1:
+                raise ValueError("train-projected SBGC requires a positive budget")
+        for suffix in ("q", "v"):
+            historical_energy = weighted_response_energy(
+                getattr(self, "unified_up_" + suffix),
+                getattr(self, "projected_covariance_" + suffix),
+                getattr(self, "sensitivity_" + suffix),
+            )
+            self.register_buffer(
+                "_historical_energy_" + suffix,
+                historical_energy.detach(),
+                persistent=False,
+            )
+            self.register_buffer(
+                "_projection_alpha_sum_" + suffix,
+                torch.zeros((), dtype=torch.float64),
+                persistent=False,
+            )
+            self.register_buffer(
+                "_projection_alpha_min_" + suffix,
+                torch.ones((), dtype=torch.float64),
+                persistent=False,
+            )
+            self.register_buffer(
+                "_projection_active_count_" + suffix,
+                torch.zeros((), dtype=torch.float64),
+                persistent=False,
+            )
+            setattr(self, "_projection_call_count_" + suffix, 0)
 
         self.register_buffer(
             "_sbgc_covariance_sum_q",
@@ -1595,11 +1638,59 @@ class _SensitivityBudgetedGQKV(nn.Module):
             F.linear(F.linear(x, self.projection_v), self.unified_up_v),
         )
 
-    def current_output(self, x):
-        return (
-            self.scaling_cur[0](self.b_q(self.a_q(x))),
-            self.scaling_cur[0](self.b_v(self.a_v(x))),
+    def projected_current_up(self, suffix):
+        if suffix not in ("q", "v"):
+            raise ValueError("branch must be q or v")
+        raw_update = self.scaling_cur[0].param.reshape(()) * getattr(
+            self, "b_" + suffix
+        ).weight
+        if not self.train_projected:
+            return raw_update, raw_update.new_ones(()), raw_update.new_zeros(())
+        return project_current_response_update(
+            raw_update,
+            getattr(self, "projected_covariance_" + suffix),
+            getattr(self, "sensitivity_" + suffix),
+            getattr(self, "_historical_energy_" + suffix),
+            self.risk_budget,
         )
+
+    def projection_training_stats(self, suffix):
+        count = getattr(self, "_projection_call_count_" + suffix)
+        if not count:
+            return {"mean_alpha": 1.0, "min_alpha": 1.0, "active_fraction": 0.0}
+        return {
+            "mean_alpha": float(getattr(self, "_projection_alpha_sum_" + suffix) / count),
+            "min_alpha": float(getattr(self, "_projection_alpha_min_" + suffix)),
+            "active_fraction": float(getattr(self, "_projection_active_count_" + suffix) / count),
+        }
+
+    def current_output(self, x):
+        if not self.train_projected:
+            return (
+                self.scaling_cur[0](self.b_q(self.a_q(x))),
+                self.scaling_cur[0](self.b_v(self.a_v(x))),
+            )
+        outputs = []
+        for suffix in ("q", "v"):
+            _, alpha, _ = self.projected_current_up(suffix)
+            if self.training and not self._sbgc_collecting:
+                with torch.no_grad():
+                    detached = alpha.detach().to(torch.float64)
+                    getattr(self, "_projection_alpha_sum_" + suffix).add_(detached)
+                    minimum = getattr(self, "_projection_alpha_min_" + suffix)
+                    minimum.copy_(torch.minimum(minimum, detached))
+                    getattr(self, "_projection_active_count_" + suffix).add_(
+                        (detached < 1.0 - 1e-7).to(torch.float64)
+                    )
+                    setattr(
+                        self,
+                        "_projection_call_count_" + suffix,
+                        getattr(self, "_projection_call_count_" + suffix) + 1,
+                    )
+            outputs.append(alpha.to(x.dtype) * self.scaling_cur[0](
+                getattr(self, "b_" + suffix)(getattr(self, "a_" + suffix)(x))
+            ))
+        return tuple(outputs)
 
     def begin_sbgc_calibration(self):
         self.clear_sbgc_calibration()
@@ -1997,6 +2088,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         g_solver_ridge=1e-6,
         g_bisection_steps=40,
         g_shadow_only=False,
+        g_train_projected=False,
         g_plasticity_guard=False,
         g_holdout_fraction=0.0,
         g_guard_ce_tolerance=0.01,
@@ -2088,6 +2180,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.g_solver_ridge = float(g_solver_ridge)
         self.g_bisection_steps = int(g_bisection_steps)
         self.g_shadow_only = bool(g_shadow_only)
+        self.g_train_projected = bool(g_train_projected)
         self.g_plasticity_guard = bool(g_plasticity_guard)
         self.g_holdout_fraction = float(g_holdout_fraction)
         self.g_guard_ce_tolerance = float(g_guard_ce_tolerance)
@@ -2119,6 +2212,16 @@ class SharedALoRA_ViT_timm(nn.Module):
                 raise ValueError("global SBGC budget is incompatible with plasticity guard")
             if self.g_budget_scope == "global" and self.g_shadow_only:
                 raise ValueError("global SBGC budget requires deployed consolidation")
+            if self.g_train_projected and (
+                self.g_budget_scope != "branch"
+                or self.g_sensitivity_metric != "fisher_diag"
+                or self.g_shadow_only
+                or self.g_plasticity_guard
+            ):
+                raise ValueError(
+                    "train-projected SBGC requires branch Fisher deployment "
+                    "without shadow or guard"
+                )
             if self.g_sensitivity_metric not in ("uniform", "fisher_diag"):
                 raise ValueError(
                     "sa_g_sensitivity_metric must be uniform or fisher_diag"
@@ -2453,6 +2556,7 @@ class SharedALoRA_ViT_timm(nn.Module):
             SA_STATE_VERSION_SBGC,
             SA_STATE_VERSION_SBGC_GUARD,
             SA_STATE_VERSION_SBGC_GLOBAL,
+            SA_STATE_VERSION_SBGC_TRAIN_PROJECTED,
         ):
             if self.cumulative_merge != SA_MERGE_MODE_SBGC:
                 raise ValueError(
@@ -2491,6 +2595,8 @@ class SharedALoRA_ViT_timm(nn.Module):
                 })
             if state_version == SA_STATE_VERSION_SBGC_GLOBAL:
                 required_sbgc_keys.add("budget_scope")
+            if state_version == SA_STATE_VERSION_SBGC_TRAIN_PROJECTED:
+                required_sbgc_keys.add("train_projected")
             if set(state) != required_sbgc_keys:
                 raise ValueError(
                     "sensitivity_budgeted_g state must contain only the v{} "
@@ -2502,6 +2608,12 @@ class SharedALoRA_ViT_timm(nn.Module):
             )
             if saved_scope != self.g_budget_scope:
                 raise ValueError("SBGC budget_scope differs from saved state")
+            if self.g_train_projected != (
+                state_version == SA_STATE_VERSION_SBGC_TRAIN_PROJECTED
+            ):
+                raise ValueError("SBGC train-projected mode differs from saved state")
+            if self.g_train_projected and state["train_projected"] is not True:
+                raise ValueError("SBGC train-projected artifact is not enabled")
             if self.g_plasticity_guard != (
                 state_version == SA_STATE_VERSION_SBGC_GUARD
             ):
@@ -3030,6 +3142,10 @@ class SharedALoRA_ViT_timm(nn.Module):
                         covariance_count_v=covariance_count_v,
                         sensitivity_count_q=sensitivity_count_q,
                         sensitivity_count_v=sensitivity_count_v,
+                        train_projected=(
+                            self.g_train_projected and self.task_id > 0
+                        ),
+                        risk_budget=self.g_risk_budget,
                     )
                 elif self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
                     if offset < len(self.cuo_projection_down):
@@ -5065,6 +5181,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 SA_STATE_VERSION_SBGC,
                 SA_STATE_VERSION_SBGC_GUARD,
                 SA_STATE_VERSION_SBGC_GLOBAL,
+                SA_STATE_VERSION_SBGC_TRAIN_PROJECTED,
             ):
                 raise ValueError("unsupported shared-A state version")
             return state
@@ -5282,9 +5399,19 @@ class SharedALoRA_ViT_timm(nn.Module):
                         floor=self.g_sensitivity_floor,
                     )
                     old = unified_up.detach().to(torch.float64)
-                    target = old + scale.to(torch.float64) * current_b.detach().to(
-                        torch.float64
-                    )
+                    if self.g_train_projected and self.task_id > 0:
+                        with torch.no_grad():
+                            effective_up, final_alpha, raw_train_risk = (
+                                wrapper.projected_current_up(branch_name)
+                            )
+                        effective_up = effective_up.detach().to(torch.float64)
+                    else:
+                        effective_up = scale.to(torch.float64) * current_b.detach().to(
+                            torch.float64
+                        )
+                        final_alpha = effective_up.new_ones(())
+                        raw_train_risk = effective_up.new_zeros(())
+                    target = old + effective_up
                     fisher_diagnostics = {
                         "eta": 0.0,
                         "target_risk": 0.0,
@@ -5388,6 +5515,19 @@ class SharedALoRA_ViT_timm(nn.Module):
                                 candidate.detach().cpu().float().clone()
                             )
                     deployed = selected.to(unified_up)
+                    before_operator = target @ projection.detach().to(torch.float64)
+                    after_operator = deployed.to(torch.float64) @ projection.detach().to(
+                        torch.float64
+                    )
+                    absorption_error = float(
+                        torch.linalg.matrix_norm(after_operator - before_operator)
+                        / torch.linalg.matrix_norm(before_operator).clamp_min(1e-12)
+                    )
+                    if self.g_train_projected and self.task_id > 0 and absorption_error > 1e-6:
+                        raise RuntimeError(
+                            "train-projected SBGC changed the task-boundary operator: "
+                            "{:.3e}".format(absorption_error)
+                        )
                     deployed_risk = 0.0
                     deployed_fisher_risk = 0.0
                     deployed_uniform_risk = 0.0
@@ -5472,6 +5612,12 @@ class SharedALoRA_ViT_timm(nn.Module):
                             "deployed_update_norm": float(
                                 torch.linalg.matrix_norm(selected - old)
                             ),
+                            "training_projection": {
+                                **wrapper.projection_training_stats(branch_name),
+                                "final_alpha": float(final_alpha),
+                                "raw_final_risk": float(raw_train_risk),
+                                "absorption_relative_error": absorption_error,
+                            } if self.g_train_projected else None,
                         }
                     )
                     counts = (
@@ -5637,6 +5783,25 @@ class SharedALoRA_ViT_timm(nn.Module):
                     if self._last_sbgc_global_diagnostics is not None else None
                 ),
             }
+            if self.g_train_projected:
+                projections = [
+                    item["training_projection"] for item in branch_diagnostics
+                ]
+                self._last_sbgc_calibration_stats.update({
+                    "mean_training_alpha": sum(
+                        item["mean_alpha"] for item in projections
+                    ) / max(len(projections), 1),
+                    "min_training_alpha": min(
+                        (item["min_alpha"] for item in projections), default=1.0
+                    ),
+                    "mean_active_projection_fraction": sum(
+                        item["active_fraction"] for item in projections
+                    ) / max(len(projections), 1),
+                    "max_absorption_relative_error": max(
+                        (item["absorption_relative_error"] for item in projections),
+                        default=0.0,
+                    ),
+                })
         else:
             self._last_sbgc_calibration_stats = None
         return self._last_sbgc_calibration_stats
@@ -5910,6 +6075,7 @@ class SharedALoRA_ViT_timm(nn.Module):
             "version": (
                 SA_STATE_VERSION_SBGC_GLOBAL if self.g_budget_scope == "global"
                 else SA_STATE_VERSION_SBGC_GUARD if self.g_plasticity_guard
+                else SA_STATE_VERSION_SBGC_TRAIN_PROJECTED if self.g_train_projected
                 else SA_STATE_VERSION_SBGC
             ),
             "task_id": self.task_id,
@@ -5930,6 +6096,8 @@ class SharedALoRA_ViT_timm(nn.Module):
         }
         if self.g_budget_scope == "global":
             state["budget_scope"] = "global"
+        if self.g_train_projected:
+            state["train_projected"] = True
         if self.g_plasticity_guard:
             selection = self._sbgc_guard_selection or {
                 "name": None,
@@ -6392,6 +6560,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                     "version": (
                         SA_STATE_VERSION_SBGC_GLOBAL if self.g_budget_scope == "global"
                         else SA_STATE_VERSION_SBGC_GUARD if self.g_plasticity_guard
+                        else SA_STATE_VERSION_SBGC_TRAIN_PROJECTED if self.g_train_projected
                         else SA_STATE_VERSION_SBGC
                     ),
                     "task_id": (

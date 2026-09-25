@@ -256,3 +256,20 @@ Resume from the completed Task-0 snapshot on healthy GPUs 6,7 using
 directory, and the same per-GPU batch 64 and all algorithm settings. The
 resume config differs only in prefix, filepath, and `sa_resume_snapshot`.
 Do not count the interrupted Task-1 run as a result.
+
+The first local resume attempt on GPUs 6,7 failed before model loading:
+even a separate minimal `CUDA_VISIBLE_DEVICES=6,7` PyTorch process could
+not initialize the CUDA driver after GPU 4's failure. The already-running
+C100 process was left intact. A fresh checkout of committed HEAD `a3ee5c0`
+was deployed on cuda6 (`192.168.10.206`) at
+`/home/zhaoyang/SD-Lora-CL-sbgc-b10-20260925`. The remote sdlora
+environment reports PyTorch 2.4.1+cu121/timm 1.0.9 and initializes two
+GPUs; the ImageNet-R dataset has 200 train-class directories. The exact
+Task-0 snapshot and source accuracy log were copied to that checkout, and
+the remote SHA256 snapshot audit passed (8/8 files). On cuda6 GPUs 0,1,
+the two-rank, batch-64/GPU resume launched with deterministic cuBLAS;
+the log confirms `[SnapshotResume] restored through task 0; next task 1;
+previous top1=[90.6]`. Remote log:
+`/home/zhaoyang/SD-Lora-CL-sbgc-b10-20260925/sbgc_global_inr_b10_resume_t0_20260925.log`.
+The resumed result is pending and will only count after ten completed
+snapshots, risk audit, and final metric verification.

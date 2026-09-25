@@ -573,3 +573,35 @@ more informative than repeating a weak-direction A-opening experiment
 on CUB. No existing result yet proves the two-dataset objective, and no
 test-labelled candidate selection is licensed by this retrospective
 inspection.
+
+## Attempt 4: Full-protocol C100 Live-A paired control (pre-registered)
+
+This is a **baseline and route-selection experiment**, not a claim that
+Live-A is a new algorithm. The existing INR final-policy Live/Frozen pair
+uses the same commit `db039a1`, differs only in
+`sa_train_a_all_tasks`, and reports `79.52/78.75` Final. Its favorable
+INR contrast motivates checking whether the same A/B training path can
+also clear the complete Frozen-A C100 reference under the *actual*
+constant-LR protocol. The older C100 final-policy pair used cosine/
+0.008, whereas complete Frozen-A C100 used constant/0.01, so it cannot
+answer that question.
+
+Two new C100 seed1993 configs copy
+`exps/frozen_branch_intrusion_c100_t10_seed1993.json` exactly except
+for unique prefix/output paths and `sa_train_a_all_tasks` (`true` for
+Live-A, `false` for its same-commit Frozen-A control). Both use T=10,
+rank10, 20 epochs/task, constant learning rate 0.01, SGD, effective
+batch128 (two GPUs, 64/GPU), NormCap, prototype transport, no Dual-B,
+and task snapshots. They write separate logs and artifacts. No code
+or dataset-specific hyperparameter is changed.
+
+Pre-registered decision: Live-A C100 must exceed the complete
+Frozen-A Final `88.17` by **strictly** >0.20 points (`>88.37`) *and*
+exceed its same-commit paired Frozen-A Final by >0.20. If both hold,
+reproduce the INR Live/Frozen pair and evaluate CUB under the same
+code/protocol before claiming a three-dataset, two-win result. If
+C100 fails, do not combine the earlier INR result with mismatched C100
+or select a dataset-specific A policy; return to a pre-registered
+algorithmic intervention. Record all ten task curves, Final, AAA,
+Forgetting, artifact integrity, and any runtime failure. No partial
+task result counts as a completed experiment.

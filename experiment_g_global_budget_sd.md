@@ -442,3 +442,31 @@ After C100 completes, audit its ten snapshots manually and terminate the
 stopped controller before it can dispatch another dataset. This change
 only affects scheduling; it does not alter model code, configuration, or
 the already-running C100 training process.
+
+### Attempt 3 formal results: INR and CUB complete
+
+The local INR and CUB two-GPU runs both completed all 10 tasks on the
+pre-registered configs. All 10 task snapshots per run passed checksum
+audit, all nine noninitial boundary risks were <= 0.04999501, the boundary
+solver reported `active=0` and `mean_distortion=0` on every task, and every
+task reported 389,520 persistent adaptation scalars. No traceback or
+nonfinite failure was found in either log.
+
+| Dataset | Full Frozen-A Final / AAA / F | Post-hoc Fisher Final / AAA / F | Train-projected Final / AAA / F | Final delta vs full Frozen-A |
+| --- | --- | --- | --- | ---: |
+| INR | 78.75 / 81.941 / 5.946 | 78.93 / 82.525 / 6.196 | 78.78 / 82.653 / 6.357 | +0.03 |
+| CUB | 84.40 / 89.596 / 8.286 | 84.04 / 89.409 / 8.122 | 84.02 / 89.413 / 8.130 | -0.38 |
+
+INR Top-1 curve:
+`[90.60, 87.05, 85.56, 83.14, 81.80, 81.35, 79.89, 79.46, 78.90, 78.78]`.
+CUB Top-1 curve:
+`[96.87, 92.83, 91.60, 89.84, 89.66, 88.72, 87.68, 87.21, 85.70, 84.02]`.
+These are **negative or inconclusive Final results** under the stated
+criterion: neither exceeds its full Frozen-A reference by >0.20 points.
+Train-time projection improved INR AAA relative to post-hoc Fisher but
+reduced its Final by 0.15, while CUB was essentially unchanged. Its
+operator-preserving absorption and zero boundary distortion were verified,
+so train/deploy mismatch alone does not explain the CUB deficit. This is
+an inference from paired single-seed runs, not a causal proof or a
+general claim about all risk budgets. C100 remains in progress and no
+Attempt-3 success decision is made from partial results.

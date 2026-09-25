@@ -409,3 +409,15 @@ new training-time projection plus a new output name/path. The next required
 evidence is ten complete snapshots and matched Final/AAA/Forgetting for
 all three datasets, compared to complete Frozen-P under the objective's
 strict >0.20 Final-point criterion on at least two datasets.
+
+### Formal T=10 queue launched
+
+The three formal configs and audited dual-GPU runner were committed as
+`523e0b8` and `c3fa1f8`. The cuda6 checkout is at `c3fa1f8`.
+`run_sbgc_trainproj_t10_queue.sh` launched at 2026-09-25 14:20:10 UTC
+on GPU 0,1, using 64 samples/GPU, in the fixed order C100 -> INR -> CUB.
+Queue log: `sbgc_trainproj_t10_queue_20260925.log` in the remote checkout.
+Each experiment writes its own same-named `.log`, a separate result directory,
+and a ten-task snapshot audit JSON before the next experiment starts. The
+first C100 run entered Task 0 and GPU utilization was nonzero; no full
+result exists at this point. Do not infer success from smoke or early epochs.

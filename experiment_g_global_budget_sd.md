@@ -544,3 +544,32 @@ probe must use the *learned current operator* as current-task demand and
 separately test pre-merge current-branch intrusion and rank-10 compression.
 No per-task Live-A pre-merge `A_t/B_t` pair was found in the existing
 artifacts, so this cannot be measured from completed runs alone.
+
+## Matched-protocol route audit (2026-09-26; no new training)
+
+The >+0.20 Final objective requires two datasets, not necessarily CUB.
+Existing `final_a_policy_live_a_inr_t10_seed1995_bs64_2gpu_20260919_104122_final_a_policy.log`
+reports INR Final `79.52` versus the complete Frozen-A `78.75` (+0.77).
+Both logs report the same seed 1995, T=10, rank 10, constant schedule,
+learning rate 0.01, 20 epochs/task, two GPUs with batch 64/GPU, NormCap,
+prototype transport, and no Dual-B. This makes INR a plausible positive
+Live-A endpoint, subject to a final code/protocol reproduction audit.
+
+The analogous C100 Live-A log reports Final `88.19` versus `87.99` for
+its *own* matched Frozen-A run, both with cosine scheduling and learning
+rate 0.008. The complete Frozen-A reference used by this objective is
+`88.17`, but its C100 config uses constant scheduling and learning rate
+0.01. Therefore `88.19 - 88.17 = +0.02` is only a cross-config numerical
+contrast, **not** a controlled A-policy effect, and the +0.20 contrast
+against the cosine Frozen-A control does not satisfy the strict >+0.20
+criterion against complete Frozen-A. A new C100 Live-A run matched to the
+complete Frozen-A protocol would be required before combining C100 and
+INR as evidence. The current C100 SBGC +0.30 result also begins at
+Task-0 Top-1 `98.50` versus `96.90` for complete Frozen-A, so it must
+not be attributed solely to its later G constraint.
+
+This audit changes experiment priority: matched C100 Live-A is potentially
+more informative than repeating a weak-direction A-opening experiment
+on CUB. No existing result yet proves the two-dataset objective, and no
+test-labelled candidate selection is licensed by this retrospective
+inspection.

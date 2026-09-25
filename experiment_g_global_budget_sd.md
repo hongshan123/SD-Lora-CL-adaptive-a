@@ -217,3 +217,10 @@ three must exceed their threshold. If not, stop budget-only tuning and move
 to a different training-only consolidation signal.
 
 Results pending.
+
+The three Attempt-2 runs were launched from fresh Task 0 after config commit
+`cb8cb5c`, with `nohup`/`setsid`, batch 64 per GPU, and deterministic CuBLAS.
+C100 uses GPUs 0,1 and `sbgc_global_c100_b10_20260925.log`; INR uses 4,5
+and `sbgc_global_inr_b10_20260925.log`; CUB uses 6,7 and
+`sbgc_global_cub_b10_20260925.log`. All three reached Task 0 without startup
+error. They remain in progress.

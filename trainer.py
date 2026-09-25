@@ -87,11 +87,26 @@ def _train(args):
     args["nb_classes"] = data_manager.nb_classes # update args
     args["nb_tasks"] = data_manager.nb_tasks
     model = factory.get_model(args["model_name"], args)
+    from utils.sa_snapshot_resume import restore_sbgc_snapshot
+
+    start_task, restored_metrics = restore_sbgc_snapshot(args, model, data_manager)
+    if restored_metrics is not None and _is_main_process(args):
+        logging.info(
+            "[SnapshotResume] restored through task %d; next task %d; "
+            "previous top1=%s",
+            start_task - 1, start_task, restored_metrics["top1"],
+        )
 
     cnn_curve, nme_curve = {"top1": [], "top5": []}, {"top1": [], "top5": []}
     cnn_matrix, nme_matrix = [], []
+    if restored_metrics is not None:
+        cnn_curve = {
+            "top1": list(restored_metrics["top1"]),
+            "top5": list(restored_metrics["top5"]),
+        }
+        cnn_matrix = [list(row) for row in restored_metrics["matrix"]]
 
-    for task in range(task_count_to_run(args, data_manager.nb_tasks)):
+    for task in range(start_task, task_count_to_run(args, data_manager.nb_tasks)):
         # task = 9
         if _is_main_process(args):
             print('task',task)

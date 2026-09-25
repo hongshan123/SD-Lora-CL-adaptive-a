@@ -124,3 +124,22 @@ All ten CUB task logs report the same 389,520-scalar persistent state. At Task
 current-target distortion limiting plasticity, while the old-class result is
 near the baseline. This is an observation, not a causal proof; the 5% risk
 surrogate did not translate into a CUB Final gain.
+
+### Interrupted C100/INR runs and exact-boundary recovery
+
+The host rebooted at **2026-09-25 03:16** (`who -b`). The C100 process ended
+mid Task 8 epoch 9/20 and INR ended during Task 5 prototype transport. Neither
+log contains a model traceback. C100 Task 7 is the last fully evaluated
+boundary; INR Task 4 is the last fully evaluated boundary. Both completed
+snapshots pass checksum audit. The incomplete INR Task 5 snapshot fails audit
+and is explicitly excluded from recovery. These partial runs are not Final.
+
+Added a fresh-directory snapshot resume path, restricted to global SBGC v8.
+It verifies the snapshot checksum, protocol keys, state version, classifier
+shape, prototype coverage and prior log metrics; restores P/G/C/f, FC and
+prototypes; and continues from the next task with the previous accuracy curve
+and matrix. No old run directory or incomplete artifact is modified. Two new
+CPU tests cover successful restore and protocol-mismatch rejection; the full
+suite passes **489 tests**. First validate on CUB by restoring Task 8 and
+replaying Task 9 under the original 20-epoch protocol. Only if its Final, AAA,
+Forgetting and full curve match the completed CUB run will C100/INR resume.

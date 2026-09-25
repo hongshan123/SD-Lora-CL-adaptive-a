@@ -421,3 +421,17 @@ Each experiment writes its own same-named `.log`, a separate result directory,
 and a ten-task snapshot audit JSON before the next experiment starts. The
 first C100 run entered Task 0 and GPU utilization was nonzero; no full
 result exists at this point. Do not infer success from smoke or early epochs.
+
+After cuda7 recovered and local PyTorch confirmed all eight CUDA devices,
+the same committed INR and CUB formal configs were additionally launched
+there on GPU 0,1 and 4,5 respectively (two processes, 64 samples/GPU).
+Their local logs are `sbgc_trainproj_inr_t10_20260925.log` and
+`sbgc_trainproj_cub_t10_20260925.log`; they write independent local
+result directories, not the cuda6 checkout. To prevent redundant remote
+INR/CUB runs, the cuda6 queue controller PID 1513245 was SIGSTOPed while
+its C100 torchrun child PID 1513248 continued training. The C100 child was
+observed advancing from Task-0 epoch 13 to 14 after this intervention.
+After C100 completes, audit its ten snapshots manually and terminate the
+stopped controller before it can dispatch another dataset. This change
+only affects scheduling; it does not alter model code, configuration, or
+the already-running C100 training process.

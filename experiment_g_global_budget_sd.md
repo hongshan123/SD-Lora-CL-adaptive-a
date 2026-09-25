@@ -151,3 +151,12 @@ again yielded exactly the original Final **84.17**, AAA **89.389**, Forgetting
 snapshot checksum audit also passed. This is evidence that the boundary resume
 is trajectory-equivalent for the tested CUB case, not a proof for every task.
 Recovery code/config/tests commit: `f101a97`.
+
+C100 and INR recovery jobs were launched after the CUB replay check, with
+`nohup`/`setsid`, the original two-GPU batch-64 protocol, and new artifact
+directories. C100 resumes from Task 7 on GPUs 0,1 using
+`exps/sbgc_global_c100_resume_20260925.json` and writes
+`sbgc_global_c100_resume_20260925.log`. INR resumes from Task 4 on GPUs 4,5
+using `exps/sbgc_global_inr_resume_20260925.json` and writes
+`sbgc_global_inr_resume_20260925.log`. Startup confirmed `[SnapshotResume]`
+next tasks 8 and 5 respectively. Both remain in progress.

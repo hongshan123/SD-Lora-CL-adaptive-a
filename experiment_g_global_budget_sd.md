@@ -159,4 +159,17 @@ directories. C100 resumes from Task 7 on GPUs 0,1 using
 `sbgc_global_c100_resume_20260925.log`. INR resumes from Task 4 on GPUs 4,5
 using `exps/sbgc_global_inr_resume_20260925.json` and writes
 `sbgc_global_inr_resume_20260925.log`. Startup confirmed `[SnapshotResume]`
-next tasks 8 and 5 respectively. Both remain in progress.
+next tasks 8 and 5 respectively. INR remains in progress.
+
+### C100 formal result (completed via verified resume)
+
+C100 seed 1993 completed Tasks 0-7 in the original directory and Tasks 8-9
+from the audited Task-7 snapshot in the fresh resume directory. All ten task
+boundaries are represented by verified snapshots; the resumed Task-9 eval
+tensor/RNG hashes pass. Final/AAA/Forgetting are **88.55 / 92.876 / 5.467**.
+Final Top-1 curve:
+`[98.50, 96.40, 95.43, 94.45, 93.12, 92.15, 91.57, 89.71, 88.88, 88.55]`.
+Against complete Frozen-P: Final **+0.38**, AAA **+0.491**, Forgetting
+**-0.344** (better). Against per-branch Fisher: Final **+0.05**, AAA
+**-0.011**. Against QR additive: Final **+0.59**, AAA **+0.370**.
+C100 passes the >0.20 Final gate; INR must also pass because CUB did not.

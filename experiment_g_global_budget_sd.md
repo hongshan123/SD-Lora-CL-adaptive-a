@@ -173,3 +173,23 @@ Against complete Frozen-P: Final **+0.38**, AAA **+0.491**, Forgetting
 **-0.344** (better). Against per-branch Fisher: Final **+0.05**, AAA
 **-0.011**. Against QR additive: Final **+0.59**, AAA **+0.370**.
 C100 passes the >0.20 Final gate; INR must also pass because CUB did not.
+
+### INR formal result and Attempt-1 decision
+
+INR seed 1995 completed Tasks 0-4 in the original directory and Tasks 5-9
+from the audited Task-4 snapshot in the fresh resume directory. All five new
+snapshots pass checksum audit; every recorded transition has aggregate risk
+0.050000 and Task-9 eval tensor/RNG hashes pass. Final/AAA/Forgetting are
+**78.70 / 82.538 / 6.440**. Final Top-1 curve:
+`[90.60, 86.52, 85.20, 82.95, 81.76, 81.46, 79.91, 79.50, 78.78, 78.70]`.
+Against complete Frozen-P: Final **-0.05**, AAA **+0.597**, Forgetting
+**+0.494** (worse). Against per-branch Fisher: Final **-0.23**, AAA
+**+0.013**. Against QR additive: Final **-0.33**, AAA **-0.081**.
+
+**Attempt 1 fails the requested gate**: only C100 exceeds Frozen-P Final by
+more than 0.20; INR and CUB do not. A uniform 5% aggregate branch-response
+risk surrogate is not sufficient to predict final classifier accuracy. Do not
+promote global SBGC as the main method on this evidence. Next inspect the
+transition-wise additive/Fisher/global tradeoff and design a training-only,
+dataset-independent consolidation decision; do not select a policy using
+test-set Final values.

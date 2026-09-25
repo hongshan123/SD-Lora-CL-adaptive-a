@@ -223,4 +223,36 @@ The three Attempt-2 runs were launched from fresh Task 0 after config commit
 C100 uses GPUs 0,1 and `sbgc_global_c100_b10_20260925.log`; INR uses 4,5
 and `sbgc_global_inr_b10_20260925.log`; CUB uses 6,7 and
 `sbgc_global_cub_b10_20260925.log`. All three reached Task 0 without startup
-error. They remain in progress.
+error.
+
+### CUB 10% formal result
+
+The CUB seed-1 T=10 run completed all tasks. `audit_sa_task_snapshots.py`
+verified all ten finalized snapshots; all nine aggregate-risk records are
+0.100000, and the Task-9 RNG/evaluation tensor hashes pass. Final/AAA/
+Forgetting are **84.33 / 89.524 / 7.927**. Final Top-1 curve:
+`[96.87, 93.01, 91.60, 89.97, 89.63, 88.95, 87.70, 87.23, 85.95, 84.33]`.
+Versus complete Frozen-P this is Final **-0.07**, AAA **-0.072**, and
+Forgetting **-0.359** (better). Versus global 5% it is Final **+0.16**
+and AAA **+0.135**. It does **not** meet the strict CUB Final threshold
+`>84.60`. At Task 9 the global current-target distortion is 0.00137,
+so loosening the budget has nearly recovered the additive target at that
+boundary, but has not produced the required Final gain. C100/INR remain
+necessary for the two-dataset goal.
+
+### INR GPU-4 failure and recovery boundary
+
+The initial INR 10% job completed and verified Task 0, then trained Task 1
+for all 20 epochs and recorded a 0.100000 aggregate merge risk. Before its
+Task-1 prototype synchronization, GPU 4 became unreadable to `nvidia-smi`
+(`Unknown Error`); rank 1 timed out on a four-element NCCL broadcast. The
+subsequent absurd tensor size was observed *after* the NCCL failure and is
+not evidence of an SBGC numerical failure. The Task-1 snapshot contains
+only `config.json` and `pre_merge.pt`, so it is invalid as a resume point.
+The Task-0 snapshot has all eight files and passes the SHA256 audit.
+Only the failed INR process group was terminated; C100/CUB were not touched.
+Resume from the completed Task-0 snapshot on healthy GPUs 6,7 using
+`exps/sbgc_global_inr_b10_resume_t0_20260925.json`, a fresh output
+directory, and the same per-GPU batch 64 and all algorithm settings. The
+resume config differs only in prefix, filepath, and `sa_resume_snapshot`.
+Do not count the interrupted Task-1 run as a result.

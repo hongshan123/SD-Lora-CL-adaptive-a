@@ -605,3 +605,26 @@ or select a dataset-specific A policy; return to a pre-registered
 algorithmic intervention. Record all ten task curves, Final, AAA,
 Forgetting, artifact integrity, and any runtime failure. No partial
 task result counts as a completed experiment.
+
+### Launch and deterministic-environment recovery
+
+Configs and pre-registration were committed as `3330029`. Both first
+`nohup` commands were issued from a short-lived command shell; this
+environment cleaned their ordinary background processes on shell exit,
+leaving empty logs. A 60-second `nohup sleep` reproduced the launcher
+behavior. A user-systemd test unit stayed active, so both training jobs
+were placed under separate user-systemd services while retaining `nohup`
+and separate file logs.
+
+The first systemd attempt reached Task 0 but both ranks then failed
+before any completed task with PyTorch deterministic CuBLAS requiring
+`CUBLAS_WORKSPACE_CONFIG`. Their logs and manifest-only output directories
+were preserved with `_failed_cublas` / `_FAILED_CUBLAS` suffixes; they are
+not experiment results. The retried units add only
+`CUBLAS_WORKSPACE_CONFIG=:4096:8` to the launch environment. Frozen-A
+uses GPUs 0,1 under `codex-c100-frozen-pair-20260926-r2.service`, Live-A
+uses GPUs 4,5 under `codex-c100-live-pair-20260926-r2.service`. Both have
+been observed entering Task 0. Current logs are
+`c100_frozen_pair_full_frozen_protocol_20260926.log` and
+`c100_live_pair_full_frozen_protocol_20260926.log`. Final metrics and
+snapshot audits are pending; do not count launch status as success.

@@ -271,5 +271,44 @@ the two-rank, batch-64/GPU resume launched with deterministic cuBLAS;
 the log confirms `[SnapshotResume] restored through task 0; next task 1;
 previous top1=[90.6]`. Remote log:
 `/home/zhaoyang/SD-Lora-CL-sbgc-b10-20260925/sbgc_global_inr_b10_resume_t0_20260925.log`.
-The resumed result is pending and will only count after ten completed
-snapshots, risk audit, and final metric verification.
+At launch the resumed result was held pending until ten completed snapshots,
+risk audit, and final metric verification.
+
+### Complete 10% results and decision
+
+All three T=10 runs completed. C100 and CUB each have ten locally audited
+finalized snapshots. INR has the audited original Task-0 snapshot plus nine
+audited Task-1–9 snapshots from cuda6; the latter were synced back to
+`SBGC_GLOBAL_INR_B10_RESUME_T0_20260925/` and re-audited locally. Each of
+the nine aggregate-risk records per dataset is <=0.100000. Task-9 RNG and
+evaluation tensor hashes pass in all three logs. INR's Task-9 additive
+target already satisfies the budget (risk 0.0690544, eta 0); this is not a
+missing constraint application.
+
+| Dataset | Frozen-P Final / AAA / F | Global 5% Final / AAA / F | Global 10% Final / AAA / F | 10% Final delta vs Frozen |
+| --- | --- | --- | --- | ---: |
+| C100 | 88.17 / 92.385 / 5.811 | 88.55 / 92.876 / 5.467 | 88.07 / 92.676 / 6.900 | -0.10 |
+| INR | 78.75 / 81.941 / 5.946 | 78.70 / 82.538 / 6.440 | 78.63 / 83.257 / 4.844 | -0.12 |
+| CUB | 84.40 / 89.596 / 8.286 | 84.17 / 89.389 / 7.911 | 84.33 / 89.524 / 7.927 | -0.07 |
+
+C100 10% Top-1 curve:
+`[98.50, 96.40, 95.50, 94.58, 93.08, 92.03, 91.20, 89.08, 88.32, 88.07]`.
+INR 10% Top-1 curve (audited Task-0 source + resumed Tasks 1–9):
+`[90.60, 88.58, 86.52, 83.67, 82.29, 82.56, 80.83, 80.05, 78.84, 78.63]`.
+CUB curve is recorded above. INR remote training log is mirrored locally at
+`sbgc_global_inr_b10_resume_t0_20260925_remote.log`.
+
+**Attempt 2 fails the objective**: zero of three 10% Final results exceed
+the matched complete Frozen-P reference, let alone the strict >0.20 point
+criterion on two datasets. The increased INR AAA and lower INR forgetting
+do not satisfy a Final-based goal. Uniformly relaxing the risk cap also
+removes the C100 Final benefit seen at 5%; the C100 10% Final is 0.48
+points below C100 5%. These are single-seed system-level comparisons; the
+Frozen-P recipe retains NormCap and a different Task-0 parameterization.
+
+Per the pre-registered decision, **stop budget-only tuning** of this G
+response-risk surrogate. Do not select 5% for C100 and 10% for CUB/INR or
+claim an improvement from the partial AAA gains. The next proposal must
+change the training/selection signal, establish it with a separate diagnostic
+that does not use test labels to choose deployment, and then run a new
+uniform three-dataset protocol.

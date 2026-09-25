@@ -501,3 +501,46 @@ select a method using test labels. A separate fixed-rank joint A/B
 compression question was raised; it requires its own pre-registered
 diagnostic because changing P creates historical recoverability loss that
 the present projected-covariance state cannot measure.
+
+## Pre-A/B offline feasibility audit (2026-09-26; no training change)
+
+Question: can a task-local joint `A_t/B_t` update introduce new input
+directions while returning to one persistent rank-10 `(P,G)` state? This is
+an offline capacity diagnostic, not a CIL accuracy result or an approved
+new training mode.
+
+The complete Frozen-A Task-0 artifacts save 24 Q/V pairs as `shared_a=A`
+and `aggregate_up=G`; their deployed historical operator is
+`M=G A/(||A||_F+1e-8)`. For `A^T=QR`, setting `P=Q^T` and
+`G_can=G R^T/(||A||_F+1e-8)` preserves `M=G_can P` exactly. Across the
+three Task-0 artifacts, the maximum FP64 relative operator error was
+`2.97e-16`; maximum `cond(A)` was C100 `1.049`, INR `1.109`, CUB `1.006`.
+Thus canonicalization is a compatible starting representation, but
+conditioning of Task-0 A is not the apparent bottleneck. The existing
+snapshot-resume utility accepts only global-SBGC v8, not these Frozen-A
+v4 artifacts, so a matched new-mode probe cannot use it unchanged.
+
+For each saved Frozen-A operator, the singular values of the historical
+rank-10 operator were computed through the equivalent `768x10` factor
+`G R^T/(||A||_F+1e-8)`. At both Task 0 and Task 9, all 24 branches in
+each dataset had weakest-direction energy <=5% of their own operator
+Frobenius energy. The number `k` of weakest singular directions whose
+*combined* energy is <=5% had median C100/INR/CUB values of `2/1/2`
+at Task 0 and `2/2/2` at Task 9. This suggests approximately 1-2
+rank slots per branch may be exchangeable under an **operator-energy**
+criterion. It does not bound branch responses, old-class predictions,
+or forgetting.
+
+Existing `CAUSAL_CUB_INTERVENTION_20260923/counterfactual/t2_raw.json`
+is a warning against equating low operator reprojection risk with old-class
+function safety: CUB Task 2 old-class global prototype Top-1 was `39.55`
+with the trained current branch enabled versus `93.09` with exact history
+alone, although the reported historical row-space risk was `0.02435`.
+That diagnostic used a temporary prototype setup and is not the formal
+Final metric. Earlier HOEP-A already opened low-historical-energy A
+directions and failed its three-dataset improvement gate; merely freeing
+weak directions would repeat that idea. A genuinely distinct joint A/B
+probe must use the *learned current operator* as current-task demand and
+separately test pre-merge current-branch intrusion and rank-10 compression.
+No per-task Live-A pre-merge `A_t/B_t` pair was found in the existing
+artifacts, so this cannot be measured from completed runs alone.

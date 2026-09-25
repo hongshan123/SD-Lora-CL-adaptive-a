@@ -12,6 +12,13 @@ budget separately. Record every modification and its results below.
 
 Complete Frozen-A references (Final/AAA/F): C100 88.17/92.385/5.811,
 INR 78.75/81.941/5.946, CUB 84.40/89.596/8.286.
+Directly verified 10-task baseline logs:
+`frozen_branch_intrusion_c100_t10_seed1993_20260923.log`,
+`frozen_margin_inr_t10_seed1995_20260924_r3.log`, and
+`frozen_branch_intrusion_cub_t10_seed1_20260923.log`. Their configs use
+`live_a_aggregate_b`, `bounded_norm_calibrated_absorb` (NormCap), and
+`sa_coordinate_stable_transport=true`. These are the complete Frozen-A
+references for the strict two-dataset Final criterion, not QR-additive.
 
 ## Attempt 0: Per-branch Fisher SBGC with prototype transport (completed)
 

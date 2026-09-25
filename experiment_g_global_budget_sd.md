@@ -470,3 +470,34 @@ so train/deploy mismatch alone does not explain the CUB deficit. This is
 an inference from paired single-seed runs, not a causal proof or a
 general claim about all risk budgets. C100 remains in progress and no
 Attempt-3 success decision is made from partial results.
+
+### Attempt 3 complete three-dataset decision (2026-09-26)
+
+C100 completed Task 0-9 on cuda6. Ten task snapshots passed checksum audit;
+all ten `[SBGC]` records have 24 Q/V branches, fixed 389,520-scalar
+persistent state, boundary solver `active=0`, and zero target distortion.
+The maximum reported risk was 0.04999501; the task-9 absorption error was
+2.667357e-8. All ten evaluation tensor-hash checks passed, with no
+traceback. After C100 finished, the stopped cuda6 queue controller was
+terminated before it could dispatch duplicate INR/CUB experiments. The
+complete remote C100 log was copied locally as
+`sbgc_trainproj_c100_t10_20260925_remote.log`.
+
+| Dataset (seed) | Complete Frozen-A Final / AAA / F | Train-projected Final / AAA / F | Final delta | >+0.20? |
+| --- | --- | --- | ---: | --- |
+| C100 (1993) | 88.17 / 92.385 / 5.811 | 88.47 / 92.846 / 5.633 | +0.30 | yes |
+| INR (1995) | 78.75 / 81.941 / 5.946 | 78.78 / 82.653 / 6.357 | +0.03 | no |
+| CUB (1) | 84.40 / 89.596 / 8.286 | 84.02 / 89.413 / 8.130 | -0.38 | no |
+
+C100 Top-1 curve:
+`[98.50, 96.35, 95.53, 94.35, 93.10, 92.12, 91.47, 89.69, 88.88, 88.47]`.
+The user objective is **not met**: only one of the three datasets exceeds
+the complete NormCap-plus-prototype-transport Frozen-A Final by strictly
+more than 0.20 points. C100 is 0.03 below the earlier post-hoc Fisher
+SBGC Final (88.50); INR is 0.15 below it; CUB is 0.02 below it. Thus the
+train-time projection is technically valid, but does not establish a
+cross-dataset Final improvement. Do not tune risk budgets per dataset or
+select a method using test labels. A separate fixed-rank joint A/B
+compression question was raised; it requires its own pre-registered
+diagnostic because changing P creates historical recoverability loss that
+the present projected-covariance state cannot measure.

@@ -843,3 +843,45 @@ snapshots pass `audit_sa_task_snapshots.py`, and Task 1 logs
 Frozen-A `96.87, 93.18` at the same two stages. This is only a partial
 curve, not a Final result or the two-dataset goal. Continue auditing
 all tasks and record Final/AAA/F only for complete, valid runs.
+
+### Attempt 6 first full-run audit: one data copy is not comparable
+
+All three cuda6 services terminated with status 0. Each produced Task
+0-9 snapshots and all **30/30** snapshots passed checksum audit. Each
+Task-9 state has `boundary_merge=joint_svd`, 24 A/G branches, exactly
+368,640 LoRA scalars and the same shared A in `sa_state.pt` and the
+merged artifact. The run manifests identify commit `f005e47` and the
+respective committed configs. No task output was inferred from an
+unfinished snapshot.
+
+| Dataset | Joint-A/B Final | AAA | Forgetting | Frozen-A Final | Apparent Final delta | Validity |
+|---|---:|---:|---:|---:|---:|---|
+| C100 seed1993 | 88.24 | 92.390 | 5.767 | 88.17 | +0.07 | Comparable |
+| CUB seed1 | 84.21 | 89.524 | 8.993 | 84.40 | -0.19 | Comparable |
+| INR seed1995 | 79.01 | 82.319 | 3.894 | 78.75 | +0.26 | **Not comparable: different image split** |
+
+C100 Top-1 curve: `96.90,95.80,95.03,94.02,92.74,92.10,91.24,89.24,88.59,88.24`.
+CUB Top-1 curve: `96.87,93.44,91.89,90.19,89.21,88.61,87.66,87.15,86.01,84.21`.
+INR on the original cuda6 copy: `87.52,85.08,84.38,82.83,82.03,82.37,81.02,79.79,79.16,79.01`.
+Only the first two curves can be compared to the recorded local
+Frozen-A references. Neither exceeds the strict `+0.20` Final gate.
+
+The data audit found exact C100 `train`/`test` archive SHA-256 matches
+and identical CUB file-path/size manifest hashes across the two
+servers. However the existing cuda6 `data/imagenet-r/train` and
+`test` use different image filenames and their manifest hashes differ
+from the local Frozen-A data. The Task-0 accuracy difference (`87.52`
+versus `87.68`) was an early warning; it cannot be explained as a
+controlled method effect. The apparent INR `+0.26` is therefore **not
+evidence for the user's objective**. The preceding provisional
+comparison is superseded by this data audit.
+
+For a valid matched pair, the local `data/imagenet-r/train` and `test`
+were copied into the isolated cuda6 directory
+`SD-Lora-CL-joint-ab-20260926/data_matched/imagenet-r` (30,000 images,
+2.168 GB transferred). Both train/test path-and-size SHA-256 manifests
+now match the local data exactly. A second independent clone
+`SD-Lora-CL-joint-ab-matched-inr-20260926` points its `data` link to
+this copy. It will run both the committed Joint-A/B config and the
+committed Frozen-A INR config on separate GPU pairs and compare those
+two complete runs. No existing remote data directory was changed.

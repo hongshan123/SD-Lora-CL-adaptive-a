@@ -1039,3 +1039,24 @@ does not make the joint method meet the Frozen-A goal (84.21 < 84.40).
 Any deployable A/B boundary selector needs a validated old-class
 function surrogate available without retaining old samples; current
 task margin alone is ruled out by this Task-9 check.
+
+### Fixed current-write attenuation at the same boundary
+
+One read-only Task-9 CUB counterfactual scaled the **already
+NormCap-absorbed** current contribution to `0.75 * sBA` before the
+same rank-10 joint SVD. The earlier tasks and Task-9 classifier were
+held fixed. This factor was fixed before evaluating any labels and is
+only a mechanism probe, not a new trained method.
+
+| Current-write factor | Old test Top-1 | New test Top-1 | Full test Top-1 | Current-train Top-1 |
+|---:|---:|---:|---:|---:|
+| 1.00 (saved joint) | 84.299 | 83.417 | 84.208 | 86.288 |
+| 0.75 (counterfactual) | 84.376 | 82.747 | 84.208 | 85.953 |
+
+The gain in old classes is offset by a larger loss in new classes;
+uniformly shrinking the current write does not improve this complete
+Task-9 Final. This does not exclude a direction-aware or training-time
+constraint, but provides no reason to sweep scalar weights using test
+labels. The matched-data INR pair was still live through Task 5 when
+this was recorded; no Final comparison is inferred from its partial
+curve.

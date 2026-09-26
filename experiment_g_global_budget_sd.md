@@ -1013,3 +1013,29 @@ The next cheap falsification is the Task 9 Final boundary: compare
 aligned and joint with the same head and current-train margin before
 implementing an online gate. The matched-data INR paired T=10 runs
 remain in progress; their Task 0-2 curves are partial, not Final.
+
+### Task 9 falsifies a current-margin-only A/B gate
+
+The Task 8/9 CUB snapshots were evaluated locally with the same saved
+Task-9 prototype head and all 5,794 Task-9 test samples. The
+`joint_svd` recomputation is 84.2078% and reproduces its logged Final
+84.21%; the counterfactual `aligned` deployment is 83.5865%. Thus a
+gate that chose the candidate with better current-task margin would
+make the final boundary worse on this run.
+
+| CUB Task 9 candidate | Current-train Top-1 | Current-train prototype margin | Current-train FC margin | Old test Top-1 (n=5197) | New test Top-1 (n=597) | Full test Top-1 |
+|---|---:|---:|---:|---:|---:|---:|
+| Aligned | 87.458 | 0.103751 | 2.329680 | 83.510 | 84.255 | 83.587 |
+| Joint-SVD | 86.288 | 0.096851 | 2.186024 | 84.299 | 83.417 | 84.208 |
+
+Both current-train margin measures correctly signal the new-class
+test drop, but neither captures the larger old-class aggregate gain.
+The task's old/new test split is approximately 90/10, so old and new
+class effects cannot be balanced by a current-only margin heuristic.
+This is a one-boundary causal comparison with a **fixed joint-trained
+prototype head**, not a complete aligned-training counterfactual.
+It does not justify selecting candidates using test labels, and it
+does not make the joint method meet the Frozen-A goal (84.21 < 84.40).
+Any deployable A/B boundary selector needs a validated old-class
+function surrogate available without retaining old samples; current
+task margin alone is ruled out by this Task-9 check.

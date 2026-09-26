@@ -935,3 +935,29 @@ possible causes. The next algorithmic hypothesis must target one of
 these functions directly instead of further reducing an already small
 Frobenius residual. The matched-data INR pair remains running and is
 not included in this conclusion.
+
+### Read-only A/B output-space diagnosis (Attempt 6)
+
+Using the saved Task 0-9 states and each subsequent `pre_merge.pt`, the
+current task's `current_up` was projected onto the column space of the
+previous aggregate `G`. For every transition, the reported ratio is
+`sum ||Q_G^T B||_F^2 / sum ||B||_F^2` across all 24 Q/V branches;
+the second number is the cosine between the historical effective
+operator `G A_old / ||A_old||_F` and the unabsorbed current operator
+`s B A_current`. These diagnostics do not use labels and do not alter
+the completed runs.
+
+| Dataset | Mean B-in-G energy | Mean old/current operator cosine | Task 1 B-in-G | Task 9 B-in-G |
+|---|---:|---:|---:|---:|
+| C100 seed1993 | 0.0672 | +0.1122 | 0.1171 | 0.0463 |
+| CUB seed1 | 0.0796 | +0.1117 | 0.1542 | 0.0776 |
+
+There is no evidence here that most of the current `B` simply overwrites
+the existing output column space. Orthogonality to `G` is **not**
+orthogonality to old-class classifier margins, however: a small or
+orthogonal branch response can still change decisions after later ViT
+blocks. Consequently, a plain `B -> (I-P_G)B` rule is not justified by
+these data. Before changing both A and B, test their separate and joint
+effects on old/new class margins using identical saved checkpoints and
+evaluation tensors. Keep the matched-data INR control pending until
+both services complete.

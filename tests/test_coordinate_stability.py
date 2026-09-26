@@ -539,3 +539,26 @@ def test_backbone_factory_preserves_coordinate_alignment_flag(
     )
     assert state["coordinate_aligned"] is True
     assert state["absorb_mode"] == "operator_preserving_absorb"
+
+
+def test_backbone_factory_preserves_joint_boundary_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "utils.inc_net.timm.create_model",
+        lambda *args, **kwargs: _TinyViT(8),
+    )
+    backbone = get_backbone(
+        {
+            "backbone_type": "vit_base_patch16_224",
+            "model_name": "sa_sdlora",
+            "lora_rank": 3,
+            "increment": 10,
+            "filepath": str(tmp_path / "factory-joint"),
+            "sa_train_a_all_tasks": True,
+            "sa_cumulative_state": True,
+            "sa_cumulative_merge": "live_a_aggregate_b",
+            "sa_live_a_coordinate_align": True,
+            "sa_live_a_boundary_merge": "joint_svd",
+        },
+        pretrained=True,
+    )
+    assert backbone.live_a_boundary_merge == "joint_svd"

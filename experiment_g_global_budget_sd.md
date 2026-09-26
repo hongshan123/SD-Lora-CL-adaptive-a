@@ -1089,3 +1089,48 @@ improve Final. Thus a plain 5% Frobenius cap on A/B jointly is rejected
 as a main experiment. Operator energy is not a proven classifier-risk
 surrogate; any next budget should first validate a *function-space*
 old-class signal rather than simply retune the scalar threshold.
+
+## Attempt 7 P0: function-sensitive Live-A/G consolidation kernel
+
+The existing C100 benefit from SBGC and the historical INR benefit
+from Live-A motivate a **single** prospective method that updates both
+the shared input basis A and the cumulative B/G coefficient, rather
+than selecting unrelated methods per dataset. This is a new hypothesis,
+not a claim that either endpoint will transfer or that the desired
+two-dataset Final criterion has been met.
+
+For old effective operator `M = G_old A_old / ||A_old||`, trained
+`A_new`, and an already absorbed current `current_up`, let
+`a=A_new/||A_new||`. Historical input moments use a fixed-size diagonal
+approximation `V_h=diag(v_h)` and historical output sensitivity uses
+`F_h=diag(f_h)`. The historical risk of a candidate G is
+
+`R(G)=tr[F_h (G a - M) V_h (G a - M)^T]`.
+
+Its weighted LS center is
+
+`G0 = M V_h a^T (a V_h a^T)^(-1)`.
+
+The irrecoverable residual `R_min = R(G0)` is paid **before** G can
+write anything. If `R_min/E_h > epsilon`, with
+`E_h=tr(F_h M V_h M^T)`, the trained row space is infeasible and the
+kernel explicitly rejects it. Otherwise a current-response weighted
+convex solve finds G nearest `G0 + current_up` subject to
+`R(G) <= epsilon E_h`. The existing row-wise SBGC solver is reused on
+the remaining budget; the FP32 deployed operator is rechecked in
+FP64. This is a per-transition diagonal-response surrogate, not a
+full-network or forgetting bound. No old images or feature samples
+are stored; a later training integration would maintain only the
+streaming per-block input second moment and per-branch output
+sensitivity, approximately `12*768 + 24*768 = 27,648` FP32 values
+besides the fixed 368,640-scalar A/G state (about +7.5%).
+
+Code added in `backbone/live_a_functional.py`; six focused tests cover
+weighted risk, irrecoverable loss, feasible additive behavior,
+infeasibility, A-scale gauge invariance, and zero/rank-deficient A.
+The full repository suite is `507 passed`. This is **P0 only**: the
+historical activation/sensitivity calibration, DDP synchronization,
+checkpoint version, real-data smoke, and T=10 comparisons are not yet
+implemented. The next gate is to validate a task-boundary calibration
+that preserves RNG/model tensors and to measure actual current-target
+distortion under this function-space risk before running full jobs.

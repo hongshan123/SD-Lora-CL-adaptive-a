@@ -961,3 +961,55 @@ these data. Before changing both A and B, test their separate and joint
 effects on old/new class margins using identical saved checkpoints and
 evaluation tensors. Keep the matched-data INR control pending until
 both services complete.
+
+### A/B boundary causal diagnostic on complete CUB run
+
+Added `scripts/diagnose_joint_ab_boundary.py` to compare four states on
+the **same** evaluation images and fixed, actually deployed prototype
+head: training-state pre-merge; pre-merge with the task's NormCap gain;
+the original LS-aligned merge counterfactual; and saved joint-SVD merge.
+The script audits both task snapshots, uses no training updates and
+stores paired logits. The joint-SVD weighted old/new accuracy reproduces
+the logged Task 2 and Task 6 Top-1 to the logging precision. This is
+an attribution analysis with a fixed head, not a newly trained method.
+
+| CUB task | State | Old Top-1 | New Top-1 | Old mean true margin | New mean true margin |
+|---|---|---:|---:|---:|---:|
+| 2 | pre-merge/capped | 91.105 | 93.412 | 0.179887 | 0.152193 |
+| 2 | aligned | 91.105 | 93.412 | 0.179841 | 0.152088 |
+| 2 | joint-SVD | 91.537 | 92.568 | 0.179135 | 0.149056 |
+| 6 | pre-merge/capped | 87.626 | 87.478 | 0.117972 | 0.113103 |
+| 6 | aligned | 87.655 | 87.478 | 0.117952 | 0.112875 |
+| 6 | joint-SVD | 87.742 | 87.120 | 0.117413 | 0.109017 |
+
+Both tasks have NormCap gain exactly one on all 24 branches, so the
+differences above arise from boundary representation, not attenuation.
+Aligned-to-joint prediction changes are small: at Task 2, five old
+examples become correct while five new examples become wrong (7 and 5
+predictions changed in total); at Task 6, old net +3 correct and new
+net -2 (23 and 5 predictions changed). A direct FP64 decomposition of
+the saved joint operator into projected old operator plus residual
+current operator gives current-relative L2 residuals 2.09% (Task 2)
+and 2.76% (Task 6), despite the much smaller full-operator relative
+errors. These are not proof that every future-task loss is caused by
+truncation, but show why whole-operator Frobenius error can hide
+current-class decision changes.
+
+On *current-task training data only*, with deterministic test
+preprocessing, the deployed prototype head's aligned/joint new-class
+Top-1 and mean true margin are Task 2: `94.482/0.162431` versus
+`94.147/0.159222`, and Task 6: `93.823/0.129435` versus
+`93.656/0.125155`. The pre-merge training FC head also sees lower
+joint mean margin at both tasks (Task 2 `4.7467 -> 4.5860`, Task 6
+`3.9277 -> 3.7961`), though its Task 6 Top-1 rises slightly. Thus
+current-data margin is a plausible *candidate* for rejecting harmful
+joint merges, but it has not yet been used for training or validated
+at Final. The fixed deployed prototype head was calibrated using the
+joint representation, so these comparisons isolate the backbone but
+do not prove what an aligned-trained prototype head would do.
+
+Code-only tests: four new focused tests and the full suite `501 passed`.
+The next cheap falsification is the Task 9 Final boundary: compare
+aligned and joint with the same head and current-train margin before
+implementing an online gate. The matched-data INR paired T=10 runs
+remain in progress; their Task 0-2 curves are partial, not Final.

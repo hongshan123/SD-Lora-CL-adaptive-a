@@ -809,3 +809,37 @@ remaining. No GPU restart/reset was attempted on this shared server.
 Rerun all three experiments from new output paths only after a fresh
 PyTorch CUDA probe succeeds; do not infer any Final/AAA from these
 interrupted artifacts.
+
+### Isolated cuda6 continuation (2026-09-26; running)
+
+The local CUDA probe remained false, so the committed `f005e47` branch
+was transferred as a Git bundle and cloned into the new, isolated
+`/home/zhaoyang/SD-Lora-CL-joint-ab-20260926` on cuda6. No existing
+remote research tree was changed. Its `data` link points to the existing
+cuda6 CIFAR-100, ImageNet-R and CUB-200 data. cuda6 has four idle
+3090 GPUs and `/home/zhaoyang/miniconda3/envs/sdlora` reports CUDA
+available with four devices. Remote focused tests passed (`26 passed`).
+
+Three full-config runs use commit `f005e47`, not the invalid first
+launch's `50502e1`:
+
+| Dataset | Physical GPUs | user-systemd service | Current state |
+|---|---|---|---|
+| CUB seed1 | 0,1 | `codex-joint-ab-cub-20260926-r2.service` | Running |
+| C100 seed1993 | 2,3 | `codex-joint-ab-c100-20260926-r2.service` | Running |
+| INR seed1995 | 0,1 after CUB terminal | `codex-joint-ab-inr-queue-20260926.service` | Waiting; no INR process yet |
+
+Each uses a separate `nohup`-wrapped two-rank torchrun inside its user
+service, batch64 per rank, deterministic CuBLAS, and distinct artifacts.
+The queue polls the **live** CUB service and waits another 15 seconds
+after it terminates before using its pair of GPUs. Logs are under the
+isolated cuda6 directory as `joint_ab_boundary_{cub,c100,inr}_...log`.
+
+The first genuine CUB Task 0/1 smoke succeeded: task-0 state saves
+`boundary_merge=joint_svd` with 24 A/G branches, both post-merge
+snapshots pass `audit_sa_task_snapshots.py`, and Task 1 logs
+`[JointAB] branches=24 mean_relative_truncation=5.877022e-03`
+(`max=1.873270e-02`). Post-task Top-1 is `96.87, 93.44`, compared with
+Frozen-A `96.87, 93.18` at the same two stages. This is only a partial
+curve, not a Final result or the two-dataset goal. Continue auditing
+all tasks and record Final/AAA/F only for complete, valid runs.

@@ -1016,6 +1016,32 @@ def union_svd_factors(
     return canonical_down, cumulative_up, s.float(), relative_error
 
 
+def joint_live_a_boundary_factors(old_a, old_g, current_a, current_up, eps=1e-8):
+    """Represent the capped historical-plus-current operator at fixed rank."""
+    rank, dim = current_a.shape
+    if old_a.shape != (rank, dim) or old_g.shape != (dim, rank):
+        raise ValueError("old A/G shapes must match the current branch")
+    if current_up.shape != (dim, rank):
+        raise ValueError("current up shape must match the current A")
+    if not all(torch.isfinite(t).all() for t in (old_a, old_g, current_a, current_up)):
+        raise ValueError("joint boundary factors must be finite")
+    old_norm = torch.linalg.vector_norm(old_a.double())
+    current_norm = torch.linalg.vector_norm(current_a.double())
+    if old_norm <= eps or current_norm <= eps:
+        raise ValueError("old and current A must have nonzero norm")
+    canonical_down, canonical_up, _, relative_error = union_svd_factors(
+        [old_g.double() / old_norm, current_up.double() / current_norm],
+        [old_a.double().t(), current_a.double().t()],
+        rank,
+    )
+    root_rank = math.sqrt(rank)
+    shared_a = canonical_down * (current_norm.float() / root_rank)
+    merged_g = canonical_up * root_rank
+    return shared_a, merged_g, {
+        "relative_truncation_error": relative_error,
+    }
+
+
 def migrate_sa_state_v1_to_v2(filepath: str, force: bool = False) -> dict:
     """Explicitly migrate a legacy v1 artifact to the v2 cumulative state.
 
@@ -2097,6 +2123,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         live_a_history_groups=1,
         live_a_coordinate_align=False,
         live_a_absorb_mode=SA_ABSORB_MODE_OPERATOR_PRESERVING,
+        live_a_boundary_merge="aligned",
         adaptive_a_enabled=False,
         adaptive_a_stability_weight=1.0,
         adaptive_a_gate_floor=0.05,
@@ -2252,6 +2279,20 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "bounded_norm_calibrated_absorb"
             )
         self.live_a_absorb_mode = live_a_absorb_mode
+        if live_a_boundary_merge not in ("aligned", "joint_svd"):
+            raise ValueError("sa_live_a_boundary_merge must be aligned or joint_svd")
+        if live_a_boundary_merge == "joint_svd" and (
+            cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+            or not train_a_all_tasks
+            or not live_a_coordinate_align
+            or normalize_current_branch
+            or adaptive_a_enabled
+        ):
+            raise ValueError(
+                "joint_svd requires Live-A aggregate, trainable A, coordinate "
+                "alignment, unnormalized current branch, and no Adaptive-A"
+            )
+        self.live_a_boundary_merge = live_a_boundary_merge
         self.adaptive_a_enabled = bool(adaptive_a_enabled)
         self.adaptive_a_stability_weight = float(adaptive_a_stability_weight)
         self.adaptive_a_gate_floor = float(adaptive_a_gate_floor)
@@ -2494,6 +2535,7 @@ class SharedALoRA_ViT_timm(nn.Module):
             state_absorb_mode = state.get(
                 "absorb_mode", SA_ABSORB_MODE_NORMALIZED
             )
+            state_boundary_merge = state.get("boundary_merge", "aligned")
             if (
                 self.task_id > 0
                 and state_coordinate_aligned != self.live_a_coordinate_align
@@ -2510,6 +2552,13 @@ class SharedALoRA_ViT_timm(nn.Module):
                     "live-a absorption mode differs from the saved state "
                     "(saved={}, requested={})".format(
                         state_absorb_mode, self.live_a_absorb_mode
+                    )
+                )
+            if self.task_id > 0 and state_boundary_merge != self.live_a_boundary_merge:
+                raise ValueError(
+                    "live-a boundary merge differs from the saved state "
+                    "(saved={}, requested={})".format(
+                        state_boundary_merge, self.live_a_boundary_merge
                     )
                 )
             self.cumulative_state = True
@@ -2923,6 +2972,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         )
         self._last_live_a_coordinate_diagnostics = None
         self._last_saved_live_a_aggregate = None
+        self._last_saved_live_a_shared_a = None
         self._operator_reference_down = []
         self._operator_reference_up = []
         self._operator_reference_task_count = 0
@@ -6316,6 +6366,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         if not os.path.exists(filename):
             os.makedirs(filename)
         aggregate_up = []
+        shared_a = []
         g_sum = 0.0
         a_sum = 0.0
         b_sum = 0.0
@@ -6327,6 +6378,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         consolidation_gain_max = 0.0
         absorption_error = 0.0
         coordinate_diagnostics = []
+        joint_truncation_errors = []
         recoverability_online_aligned = (
             self.adaptive_a_strategy == "recoverability"
             and self.recoverability_stage
@@ -6361,47 +6413,62 @@ class SharedALoRA_ViT_timm(nn.Module):
                     if idx < len(self.aggregate_up)
                     else torch.zeros_like(b)
                 )
-            g_history = g_old
-            if (
-                not recoverability_online_aligned
-                and self.live_a_coordinate_align
-                and idx < len(self._live_a_previous_shared_a)
-            ):
-                g_history, diagnostics = align_live_a_aggregate(
-                    g_old,
-                    self._live_a_previous_shared_a[idx],
-                    current_a,
-                )
-                if self.adaptive_a_strategy == "operator_energy_partition":
-                    old_down = self._live_a_previous_shared_a[idx].double()
-                    old_down = old_down / (
-                        torch.linalg.vector_norm(old_down)
-                        + self.adaptive_a_eps
-                    )
-                    new_down = current_a.double()
-                    new_down = new_down / (
-                        torch.linalg.vector_norm(new_down)
-                        + self.adaptive_a_eps
-                    )
-                    old_operator = g_old.double() @ old_down
-                    aligned_operator = g_history.double() @ new_down
-                    diagnostics["old_operator_energy"] = float(
-                        old_operator.square().sum()
-                    )
-                    diagnostics["residual_energy"] = float(
-                        (aligned_operator - old_operator).square().sum()
-                    )
-                coordinate_diagnostics.append(diagnostics)
             current_up, absorption = absorb_live_a_current_projection(
                 current_a,
                 b,
                 s,
                 mode=self.live_a_absorb_mode,
             )
-            g_new = g_history + current_up
+            selected_a = current_a
+            if self.live_a_boundary_merge == "joint_svd" and task_id > 0:
+                if idx >= len(self._live_a_previous_shared_a):
+                    raise RuntimeError("joint_svd requires the previous shared A")
+                selected_a, g_new, diagnostics = joint_live_a_boundary_factors(
+                    self._live_a_previous_shared_a[idx],
+                    g_old,
+                    current_a,
+                    current_up,
+                )
+                joint_truncation_errors.append(
+                    diagnostics["relative_truncation_error"]
+                )
+            else:
+                g_history = g_old
+                if (
+                    not recoverability_online_aligned
+                    and self.live_a_coordinate_align
+                    and idx < len(self._live_a_previous_shared_a)
+                ):
+                    g_history, diagnostics = align_live_a_aggregate(
+                        g_old,
+                        self._live_a_previous_shared_a[idx],
+                        current_a,
+                    )
+                    if self.adaptive_a_strategy == "operator_energy_partition":
+                        old_down = self._live_a_previous_shared_a[idx].double()
+                        old_down = old_down / (
+                            torch.linalg.vector_norm(old_down)
+                            + self.adaptive_a_eps
+                        )
+                        new_down = current_a.double()
+                        new_down = new_down / (
+                            torch.linalg.vector_norm(new_down)
+                            + self.adaptive_a_eps
+                        )
+                        old_operator = g_old.double() @ old_down
+                        aligned_operator = g_history.double() @ new_down
+                        diagnostics["old_operator_energy"] = float(
+                            old_operator.square().sum()
+                        )
+                        diagnostics["residual_energy"] = float(
+                            (aligned_operator - old_operator).square().sum()
+                        )
+                    coordinate_diagnostics.append(diagnostics)
+                g_new = g_history + current_up
             aggregate_up.append(g_new)
+            shared_a.append(selected_a)
             g_sum = g_sum + g_new.square().sum().item()
-            a_sum = a_sum + w_a.weight.detach().square().sum().item()
+            a_sum = a_sum + selected_a.square().sum().item()
             b_sum = b_sum + b.square().sum().item()
             scale_value = float(s)
             gamma_sum += absorption["gamma"]
@@ -6487,9 +6554,17 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._last_saved_live_a_aggregate = [
             tensor.detach().clone() for tensor in aggregate_up
         ]
-        shared_a = [
-            w_a.weight.detach().cpu().float() for w_a in self.w_As
+        self._last_saved_live_a_shared_a = [
+            tensor.detach().clone() for tensor in shared_a
         ]
+        self._last_live_a_joint_svd_diagnostics = {
+            "branches": len(joint_truncation_errors),
+            "mean_relative_error": (
+                sum(joint_truncation_errors) / len(joint_truncation_errors)
+                if joint_truncation_errors else 0.0
+            ),
+            "max_relative_error": max(joint_truncation_errors, default=0.0),
+        }
         wrappers = [
             block.attn.qkv
             for block in self.lora_vit.blocks
@@ -6507,6 +6582,8 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "coordinate_aligned": self.live_a_coordinate_align,
                 "absorb_mode": self.live_a_absorb_mode,
             }
+        if self.live_a_boundary_merge == "joint_svd":
+            state["boundary_merge"] = "joint_svd"
         if self.adaptive_a_strategy in (
             "risk_budgeted",
             "pareto_knee",
@@ -6655,15 +6732,17 @@ class SharedALoRA_ViT_timm(nn.Module):
                         )
                         g_total = g_old + current_up
                         aggregate_total.append(g_total)
-                shared_a = [
-                    w.weight.detach().cpu().float() for w in self.w_As
-                ]
+                shared_a = (
+                    [tensor.detach().cpu().float().clone()
+                     for tensor in self._last_saved_live_a_shared_a]
+                    if self._last_saved_live_a_shared_a is not None
+                    else [w.weight.detach().cpu().float() for w in self.w_As]
+                )
                 merged_b = [
                     g / (torch.linalg.vector_norm(a) + 1e-8)
                     for g, a in zip(aggregate_total, shared_a)
                 ]
-                torch.save(
-                    {
+                merged_state = {
                         "version": SA_STATE_VERSION_LIVE_A,
                         "merge_mode": SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
                         "shared_a": shared_a,
@@ -6671,9 +6750,10 @@ class SharedALoRA_ViT_timm(nn.Module):
                         "aggregate_up": aggregate_total,
                         "task_id": current_task,
                         "absorb_mode": self.live_a_absorb_mode,
-                    },
-                    _join_path(filename, SA_MERGED_FILENAME),
-                )
+                    }
+                if self.live_a_boundary_merge == "joint_svd":
+                    merged_state["boundary_merge"] = "joint_svd"
+                torch.save(merged_state, _join_path(filename, SA_MERGED_FILENAME))
                 return
             torch.save(
                 {

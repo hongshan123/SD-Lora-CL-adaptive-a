@@ -1257,6 +1257,9 @@ class Learner(SDLoraLearner):
             live_a_absorb_mode=self.args.get(
                 "sa_live_a_absorb_mode", "operator_preserving_absorb"
             ),
+            live_a_boundary_merge=self.args.get(
+                "sa_live_a_boundary_merge", "aligned"
+            ),
             **adaptive_a_settings,
             resume=self.args.get("sa_resume", False),
         )
@@ -3183,7 +3186,23 @@ class Learner(SDLoraLearner):
                                 "_last_live_a_coordinate_diagnostics",
                                 None,
                             )
-                            if coordinate_stats is not None:
+                            if backbone.live_a_boundary_merge == "joint_svd":
+                                joint_stats = getattr(
+                                    backbone,
+                                    "_last_live_a_joint_svd_diagnostics",
+                                    None,
+                                )
+                                if joint_stats is not None:
+                                    logging.info(
+                                        "[JointAB] boundary task %d: branches=%d "
+                                        "mean_relative_truncation=%.6e "
+                                        "max_relative_truncation=%.6e",
+                                        self._cur_task,
+                                        joint_stats["branches"],
+                                        joint_stats["mean_relative_error"],
+                                        joint_stats["max_relative_error"],
+                                    )
+                            elif coordinate_stats is not None:
                                 logging.info(
                                     "[CoordinateStable] operator alignment "
                                     "task %d: branches=%d before=%.6e "

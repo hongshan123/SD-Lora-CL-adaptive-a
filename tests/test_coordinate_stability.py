@@ -23,6 +23,7 @@ from backbone.sa_lora import (
     SharedALoRA_ViT_timm,
     absorb_live_a_current_projection,
 )
+from backbone import sa_lora
 from models.sa_sdlora import validate_coordinate_transport_config
 
 
@@ -228,6 +229,126 @@ def test_operator_preserving_absorption_survives_backbone_rebuild(tmp_path):
             float(relative_error), float(max_abs_diff)
         )
     )
+
+
+def test_joint_live_a_boundary_factors_best_rank_for_capped_sum():
+    torch.manual_seed(31)
+    dim, rank = 8, 3
+    old_a = torch.randn(rank, dim)
+    old_g = torch.randn(dim, rank)
+    current_a = torch.randn(rank, dim)
+    current_b = 3.0 * torch.randn(dim, rank)
+    scale = torch.tensor(0.81)
+    current_up, absorb = absorb_live_a_current_projection(
+        current_a, current_b, scale,
+        mode="bounded_norm_calibrated_absorb",
+    )
+    target = (
+        old_g.double() @ old_a.double() / old_a.double().norm()
+        + current_up.double() @ current_a.double() / current_a.double().norm()
+    )
+    shared_a, merged_g, diagnostics = sa_lora.joint_live_a_boundary_factors(
+        old_a, old_g, current_a, current_up
+    )
+    deployed = merged_g.double() @ shared_a.double() / shared_a.double().norm()
+    optimal_tail = torch.linalg.svdvals(target)[rank:].square().sum()
+    actual_error = (deployed - target).square().sum()
+
+    assert shared_a.shape == old_a.shape
+    assert merged_g.shape == old_g.shape
+    assert shared_a.norm() == pytest.approx(current_a.norm(), rel=1e-6)
+    assert actual_error == pytest.approx(optimal_tail, rel=1e-4, abs=1e-6)
+    assert diagnostics["relative_truncation_error"] == pytest.approx(
+        float((optimal_tail / target.square().sum()).sqrt()), rel=1e-4
+    )
+    assert absorb["consolidation_gain"] < 1.0
+
+
+def test_joint_live_a_boundary_save_and_rebuild_uses_chosen_basis(tmp_path):
+    torch.manual_seed(32)
+    dim, rank = 8, 3
+    run = tmp_path / "joint-boundary"
+    pristine = _TinyViT(dim)
+    settings = {
+        "r": rank,
+        "filepath": str(run),
+        "train_a_all_tasks": True,
+        "cumulative_state": True,
+        "cumulative_merge": "live_a_aggregate_b",
+        "live_a_coordinate_align": True,
+        "live_a_absorb_mode": "bounded_norm_calibrated_absorb",
+        "live_a_boundary_merge": "joint_svd",
+    }
+    task0 = SharedALoRA_ViT_timm(
+        copy.deepcopy(pristine), cur_task_index=0, **settings
+    )
+    with torch.no_grad():
+        for w_b in task0.w_Bs:
+            w_b.weight.copy_(torch.randn_like(w_b.weight))
+    task0.save_lora_parameters(str(run), task_id=0)
+    old_state = torch.load(run / SA_STATE_FILENAME, map_location="cpu", weights_only=True)
+    assert old_state["boundary_merge"] == "joint_svd"
+
+    task1 = SharedALoRA_ViT_timm(
+        copy.deepcopy(pristine), cur_task_index=1, **settings
+    )
+    with torch.no_grad():
+        for w_a, w_b in zip(task1.w_As, task1.w_Bs):
+            w_a.weight.add_(0.2 * torch.randn_like(w_a.weight))
+            w_b.weight.copy_(2.0 * torch.randn_like(w_b.weight))
+    scale = task1.wrapped_param[0].param.detach().cpu().float().reshape(())
+    targets = []
+    for idx, (w_a, w_b) in enumerate(zip(task1.w_As, task1.w_Bs)):
+        a = w_a.weight.detach().cpu().float()
+        b = w_b.weight.detach().cpu().float()
+        current_up, _ = absorb_live_a_current_projection(
+            a, b, scale, mode="bounded_norm_calibrated_absorb"
+        )
+        old_a = old_state["shared_a"][idx]
+        old_g = old_state["aggregate_up"][idx]
+        targets.append(
+            old_g.double() @ old_a.double() / old_a.double().norm()
+            + current_up.double() @ a.double() / a.double().norm()
+        )
+    task1.save_lora_parameters(str(run), task_id=1)
+    state = torch.load(run / SA_STATE_FILENAME, map_location="cpu", weights_only=True)
+    merged = torch.load(run / SA_MERGED_FILENAME, map_location="cpu", weights_only=True)
+    assert state["boundary_merge"] == "joint_svd"
+    for idx, target in enumerate(targets):
+        a, g = state["shared_a"][idx], state["aggregate_up"][idx]
+        deployed = g.double() @ a.double() / a.double().norm()
+        optimal_tail = torch.linalg.svdvals(target)[rank:].square().sum()
+        assert (deployed - target).square().sum() == pytest.approx(
+            optimal_tail, rel=1e-4, abs=1e-6
+        )
+        assert torch.allclose(merged["shared_a"][idx], a)
+        assert torch.allclose(
+            merged["merged_b"][idx] @ a,
+            (g / a.norm()) @ a,
+            atol=1e-6,
+        )
+    reloaded = SharedALoRA_ViT_timm(
+        copy.deepcopy(pristine), cur_task_index=2, **settings
+    )
+    x = torch.randn(2, 4, dim)
+    wrapper = reloaded.lora_vit.blocks[0].attn.qkv
+    with torch.no_grad():
+        output = reloaded(x)
+        expected = wrapper.qkv(x)
+        expected[..., :dim] += x @ (
+            state["aggregate_up"][0] @ state["shared_a"][0]
+            / state["shared_a"][0].norm()
+        ).t()
+        expected[..., -dim:] += x @ (
+            state["aggregate_up"][1] @ state["shared_a"][1]
+            / state["shared_a"][1].norm()
+        ).t()
+    assert torch.allclose(output, expected, atol=2e-6)
+    with pytest.raises(ValueError, match="boundary merge differs"):
+        SharedALoRA_ViT_timm(
+            copy.deepcopy(pristine), cur_task_index=2,
+            **{**settings, "live_a_boundary_merge": "aligned"},
+        )
 
 
 def test_residual_transport_recovers_low_rank_rotation_and_unit_norms():

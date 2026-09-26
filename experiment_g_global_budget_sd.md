@@ -885,3 +885,16 @@ now match the local data exactly. A second independent clone
 this copy. It will run both the committed Joint-A/B config and the
 committed Frozen-A INR config on separate GPU pairs and compare those
 two complete runs. No existing remote data directory was changed.
+
+The matched pair was launched from Git commit `f005e47` with two-rank
+batch64 jobs, 20 epochs/task, T=10, deterministic CuBLAS:
+
+| Method | GPUs | Service | Log |
+|---|---|---|---|
+| Joint-A/B | 0,1 | `codex-joint-ab-inr-matched-20260926.service` | `joint_ab_boundary_inr_seed1995_t10_matched_20260926.log` |
+| Frozen-A | 2,3 | `codex-frozen-inr-matched-20260926.service` | `frozen_margin_inr_t10_seed1995_matched_20260926.log` |
+
+The logs/artifacts live in the second isolated cuda6 clone. Their
+Task-0 first four epoch loss/accuracy sequences match exactly. This
+launch is **not** yet a result; both complete curves and snapshots are
+required before any Final comparison.

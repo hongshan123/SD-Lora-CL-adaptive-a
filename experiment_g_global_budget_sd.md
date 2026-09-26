@@ -1134,3 +1134,28 @@ checkpoint version, real-data smoke, and T=10 comparisons are not yet
 implemented. The next gate is to validate a task-boundary calibration
 that preserves RNG/model tensors and to measure actual current-target
 distortion under this function-space risk before running full jobs.
+
+### P0 global-budget correction and real-snapshot feasibility
+
+Per-branch feasibility was checked from all nine transitions of the
+complete C100, CUB and unmatched-split INR joint runs. With unit input
+moments/sensitivities, just **1/216** C100 branches (Task 1, maximum
+irrecoverable ratio 0.0575) and **1/216** INR branches (Task 2, maximum
+0.0508) exceed a local 5% budget; CUB has **0/216** (maximum 0.0104).
+All three have substantially lower *global* irrecoverable ratios.
+Consequently the P0 kernel now has a global variant sharing a single
+5% risk allowance across branches, including branches that would be
+locally infeasible. A focused test covers exactly this case and another
+covers globally infeasible row-space rotation. The full suite is now
+`509 passed`.
+
+As a real-shape numerical check, the saved CUB Task-8/9 factors were
+passed through the global solver using **unit** input moments and
+sensitivities. Across 24 branches it returned irrecoverable risk
+`0.00268969`, deployed total risk `0.0499999998`, current-response
+distortion `0.08803`, and dual multiplier `0.42187`; the constraint
+was active. These unit-weight values are only a solver smoke test.
+The actual activation and output-sensitivity statistics are not yet
+calibrated, so neither function sensitivity nor CIL accuracy has been
+validated. The unmatched INR split remains excluded from any accuracy
+claim. No new T=10 method experiment has been launched from this P0.

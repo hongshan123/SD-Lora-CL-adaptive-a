@@ -1,7 +1,10 @@
 import pytest
 import torch
 
-from backbone.live_a_functional import solve_live_a_functional_merge
+from backbone.live_a_functional import (
+    solve_global_live_a_functional_merge,
+    solve_live_a_functional_merge,
+)
 
 
 def problem(new_a=None):
@@ -85,3 +88,26 @@ def test_live_a_merge_rejects_rank_deficient_new_basis():
     args = problem(new_a=torch.tensor([[0.0, 0.0]]))
     with pytest.raises(ValueError, match="nonzero norm"):
         solve_live_a_functional_merge(*args, risk_budget=0.05)
+
+
+def test_global_budget_can_cover_one_locally_irrecoverable_branch():
+    small_parts = problem(new_a=torch.tensor([[0.0, 1.0]]))
+    small = (*small_parts[:3], torch.zeros_like(small_parts[3]), *small_parts[4:])
+    old_a, old_g, new_a, current_up, v_old, v_new, f_old, f_new = problem()
+    large = (
+        old_a, 10 * old_g, old_a, 2 * current_up,
+        v_old, v_new, f_old, f_new,
+    )
+    merged, stats = solve_global_live_a_functional_merge(
+        [small, large], risk_budget=0.05
+    )
+    assert len(merged) == 2
+    assert stats["total_historical_risk"] <= 0.050001
+    assert 0 < stats["irrecoverable_risk"] < 0.05
+    assert torch.allclose(merged[1], large[1] + large[3], atol=1e-6)
+
+
+def test_global_budget_rejects_unrecoverable_total():
+    rotated = problem(new_a=torch.tensor([[0.0, 1.0]]))
+    with pytest.raises(ValueError, match="irrecoverable"):
+        solve_global_live_a_functional_merge([rotated, rotated], risk_budget=0.05)

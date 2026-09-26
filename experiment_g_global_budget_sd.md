@@ -6,9 +6,11 @@ Seek a rehearsal-free, nearly task-constant-state continual LoRA variant that
 beats complete Frozen-A Final by **more than 0.20 percentage points** on at
 least two of CIFAR-100 seed 1993, ImageNet-R seed 1995, and CUB-200 seed 1.
 Use T=10, rank 10, 20 epochs/task, two GPUs with batch 64 each, the same
-SGD/constant schedule, frozen Task-0 input basis, prototype transport, and
-no Dual-B/HBD. Do not select a method using test labels or change a dataset's
-budget separately. Record every modification and its results below.
+SGD/constant schedule, prototype transport, and no Dual-B/HBD. Frozen-P/G
+attempts keep the Task-0 input basis; explicitly labelled Live-A attempts
+may move it but must keep the same fixed-rank persistent state. Do not
+select a method using test labels or change a dataset's budget separately.
+Record every modification and its results below.
 
 Complete Frozen-A references (Final/AAA/F): C100 88.17/92.385/5.811,
 INR 78.75/81.941/5.946, CUB 84.40/89.596/8.286.
@@ -726,3 +728,49 @@ functional protection against the current branch, which addresses B-side
 intrusion. Test the first intervention without changing the classifier,
 prototype transport, NormCap, or task protocol; compare against the
 same-commit Frozen-A control before attributing any improvement.
+
+## Attempt 6: Fixed-rank joint A/B boundary consolidation (pre-registered)
+
+Code commit `faae111` adds opt-in
+`sa_live_a_boundary_merge="joint_svd"` to the existing Live-A aggregate
+mode. Default `aligned` artifacts remain byte-schema compatible; a
+`joint_svd` artifact carries its mode and cannot be silently loaded by
+an `aligned` run. Task 0 is unchanged. For each Task `t>0` Q/V branch,
+the historical effective operator is
+`M=G_old A_old/(||A_old||_F+eps)` and the *deployed* current operator is
+`D=c s_t B_t A_t`, where bounded NormCap chooses
+`c=min(1,1/((||A_t||_F+eps)(||B_t||_F+eps)))`. The new boundary state
+solves `min_{rank(X)<=r} ||X-(M+D)||_F^2` with a factorized 2r-by-2r
+QR/SVD core. Its right singular basis becomes the next shared A; the
+left factors become G. A is rescaled to retain `||A_t||_F`, while G is
+rescaled so `G A/||A||` remains the rank-r approximation. No per-task
+factor or calibration state is stored. Training, optimizer, NormCap,
+prototype transport, classifier, and evaluation remain unchanged.
+
+This intervention isolates boundary coordinate loss, **not** the
+training-time old-class intrusion observed in Attempt 5. The exact
+Frobenius optimum may still hurt accuracy, because network outputs and
+class margins are not Frobenius objectives. In particular, a good Final
+cannot be assumed from the small offline truncation tail.
+
+The focused math/rebuild tests and the full local suite passed
+(`496 passed`). Three T=10 single-seed configs were created:
+`exps/joint_ab_boundary_c100_seed1993_t10.json`,
+`exps/joint_ab_boundary_inr_seed1995_t10.json`, and
+`exps/joint_ab_boundary_cub_seed1_t10.json`. Each was structurally
+compared against its reference config after excluding only prefix,
+filepath, `sa_train_a_all_tasks`, and the new mode. Effective batch is
+128 (two GPUs, 64 per GPU). They write distinct logs/artifacts and
+retain task snapshots.
+
+Pre-registered evaluation: first require Task 0/1 DDP completion,
+24 finite branch diagnostics, valid snapshots, and saved/rebuilt state
+consistency. Then report all ten Top-1 points, Final, AAA, Forgetting,
+and the mean/max joint truncation error for each dataset. Success under
+the user's objective requires **strictly** `Final >88.37` on C100,
+`>78.95` on INR, or `>84.60` on CUB, in at least two datasets, versus
+the complete Frozen-A references. If only one or none passes, do not
+relabel the method successful or tune the SVD using test labels; analyze
+the remaining B-side functional intrusion as the next separate cause.
+
+Status: implementation and configs verified; GPU runs pending.

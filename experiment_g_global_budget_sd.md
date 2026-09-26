@@ -774,3 +774,38 @@ relabel the method successful or tune the SVD using test labels; analyze
 the remaining B-side functional intrusion as the next separate cause.
 
 Status: implementation and configs verified; GPU runs pending.
+
+### P0 launch failure and initial-factory fix (2026-09-26)
+
+The first three user-systemd, `nohup`-wrapped launches used physical GPU
+pairs 0/1 (C100), 4/5 (INR), and 6/7 (CUB), with local `device=[0,1]`,
+64 examples per rank, `CUBLAS_WORKSPACE_CONFIG=:4096:8`, and commit
+`50502e1`. All entered real Task 0 training. CUB completed its 20
+epochs, but failed during the Task-0 deployment rebuild: `sa_state.pt`
+had no `boundary_merge`, so loading a `joint_svd` model correctly
+rejected the artifact as saved `aligned`. The cause was not the SVD:
+initial Task-0 construction uses `utils/inc_net.py:get_backbone`, while
+the new argument had only been threaded through
+`models/sa_sdlora.py:update_network` (the later rebuild path). Thus
+Task 0 trained and saved with the default `aligned` mode. The CUB
+Task-0 snapshot was never finalized and is invalid. C100 was stopped
+mid Task-0 around epoch 9 and INR around epoch 1; neither is a result.
+Their three original logs and generated directories remain in place
+for audit, and none will be resumed or used as a partial result.
+
+Commit `6cfd20a` adds a failing-then-passing test for the initial
+factory's mode propagation and forwards `sa_live_a_boundary_merge`
+there. The focused factory/save/rebuild tests passed. Full local suite:
+`496 passed, 1 skipped`; the skip/warnings accompanied failed NVML/CUDA
+initialization, not an algorithm test failure.
+
+Before rerun, the server's GPU driver became unhealthy. `nvidia-smi -L`
+reports `Unable to determine the device handle for gpu 0000:21:00.0`
+(GPU 4), GPU 5 shows 8480 MiB without a listed process, and a fresh
+PyTorch process with `CUDA_VISIBLE_DEVICES=0,1,6,7` reports
+`torch.cuda.is_available() == False` and zero devices. All three joint
+experiment services are terminal, with no `torchrun`/`main.py` process
+remaining. No GPU restart/reset was attempted on this shared server.
+Rerun all three experiments from new output paths only after a fresh
+PyTorch CUDA probe succeeds; do not infer any Final/AAA from these
+interrupted artifacts.

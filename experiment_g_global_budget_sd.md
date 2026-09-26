@@ -898,3 +898,40 @@ The logs/artifacts live in the second isolated cuda6 clone. Their
 Task-0 first four epoch loss/accuracy sequences match exactly. This
 launch is **not** yet a result; both complete curves and snapshots are
 required before any Final comparison.
+
+### Post-hoc operator diagnosis of Attempt 6 (read-only)
+
+Using only saved pre-merge A/B/scale and adjacent post-merge A/G states,
+the same capped current contribution `D` was compared under two
+task-boundary representations on each Task 1-9 branch:
+
+- Existing aligned merge: `M P_{A_t} + D`.
+- Joint-SVD merge: saved `G_t A_t^{joint}/||A_t^{joint}||`.
+
+For each transition, squared errors were summed over all 24 Q/V
+branches and divided by `sum ||M+D||_F^2`; the table reports the mean
+of those nine transition ratios. Historical recoverability separately
+uses `sum ||M(I-P)||_F^2 / sum ||M||_F^2` per transition.
+
+| Dataset | Aligned target error | Joint target error | Trained-A old loss | Joint-A old loss | Final vs Frozen |
+|---|---:|---:|---:|---:|---:|
+| C100 | 0.007728 | 0.000471 | 0.009337 | 0.000294 | +0.07 |
+| CUB | 0.000941 | 0.000094 | 0.001214 | 0.000073 | -0.19 |
+
+For C100 Task 9 specifically, aligned target error was `0.008924`
+versus joint `0.000368`; old loss was `0.009762` versus `0.000080`.
+For CUB Task 9, aligned target error was `0.002315` versus joint
+`0.000164`; old loss was `0.002690` versus `0.000069`.
+The FP64 diagnostic used QR row-space projectors and directly reloaded
+the committed boundary tensors; it did not update any model or choose
+hyperparameters from test labels.
+
+This confirms that the proposed SVD successfully improves its stated
+*operator-space* objective while failing to deliver a corresponding
+Final improvement on C100/CUB. It does not prove which downstream
+mechanism is responsible: current-branch old-class intrusion, feature
+nonlinearity, prototype transport and classifier margins remain
+possible causes. The next algorithmic hypothesis must target one of
+these functions directly instead of further reducing an already small
+Frobenius residual. The matched-data INR pair remains running and is
+not included in this conclusion.

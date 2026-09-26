@@ -664,3 +664,65 @@ A motion alone is insufficient under the full protocol. It does not
 establish that A drift caused the loss; classifier/prototype changes
 remain possible confounders. Return to algorithmic intervention rather
 than repeat an identical full Live-A run.
+
+### Attempt 5: Joint A/B mechanism diagnosis before intervention
+
+This is a read-only diagnosis of the completed C100 Live-A run, not a
+new training result. The 24 Q/V branch tensors were read from each
+`task_snapshots/task_XXX/pre_merge.pt`; the preceding task's persistent
+`A,G` came from `sa_state.pt`. All ten Live-A snapshots passed the
+existing checksum audit. No parameter, checkpoint, or training config
+was changed.
+
+For each branch, use the actual bounded-NormCap merge gain
+`c=min(1,1/(||A_t||_F ||B_t||_F))`, historical operator
+`M=G_{t-1} A_{t-1}/(||A_{t-1}||_F+1e-8)`, and absorbed current operator
+`D=c s_t B_t A_t`. In FP64 compute current novelty
+`||D(I-P_{A_{t-1}})||_F^2`, historical loss
+`||M(I-P_{A_t})||_F^2`, and the exact best-rank-10 tail of `M+D`
+using a 20-by-20 QR/SVD core. Values below are sums across 24 branches,
+normalized by `sum ||M||_F^2` except for the last column, which is
+normalized by `sum ||M+D||_F^2`.
+
+| Task | Mean cap gain | New novelty / old energy | Old loss / old energy | New novelty / old loss | Best-rank-10 tail |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 0.773 | 0.00759 | 0.01342 | 0.566 | 0.001234 |
+| 2 | 0.846 | 0.00078 | 0.00533 | 0.146 | 0.000413 |
+| 3 | 0.817 | 0.00067 | 0.00666 | 0.101 | 0.000416 |
+| 4 | 0.821 | 0.00032 | 0.00512 | 0.063 | 0.000239 |
+| 5 | 0.790 | 0.00046 | 0.00587 | 0.079 | 0.000312 |
+| 6 | 0.833 | 0.00027 | 0.00394 | 0.067 | 0.000201 |
+| 7 | 0.799 | 0.00041 | 0.00539 | 0.076 | 0.000301 |
+| 8 | 0.802 | 0.00019 | 0.00500 | 0.038 | 0.000159 |
+| 9 | 0.787 | 0.00039 | 0.00584 | 0.067 | 0.000293 |
+
+Accounting for the *deployed* cap reverses the earlier raw-operator
+comparison: in Tasks 2-9 the new direction energy is only 3.8%-14.6%
+of the historical energy lost by accepting the trained new A. The
+rank-10 tail of their sum is small, so joint A/B refactorization has
+room to reduce alignment error without increasing persistent rank.
+These are operator-space measurements, not a bound on accuracy or
+proof that such refactorization improves it.
+
+The existing `scripts/diagnose_main_branch_intrusion.py` was then run
+on Live-A pre-merge Tasks 1 and 9, using fixed saved old prototypes and
+new prototypes constructed from new-task *training* data. Test examples
+were used only to evaluate the two counterfactual forwards (historical
+branch alone vs historical plus current branch), never to tune a
+candidate. Generated reports are in the corresponding snapshot folders
+as `branch_intrusion.json` and `.pt`.
+
+| C100 transition | Old Top-1 historical -> full | New Top-1 historical -> full | Old correct -> new-class error |
+|---|---:|---:|---:|
+| Task 1 | 96.50 -> 94.80 | 89.70 -> 97.30 | 2.30% of old test examples |
+| Task 9 | 88.43 -> 86.66 | 85.00 -> 93.00 | 1.42% of old test examples |
+
+The current `sBA` branch is useful for the new classes but also causes
+old-class intrusion before task-boundary absorption. Thus a scalar
+shrink of B is not a sufficient explanation or obvious remedy. The
+next intervention should separate (i) boundary rank-r refactorization
+of `M+D`, which addresses A-coordinate loss, from (ii) training-time
+functional protection against the current branch, which addresses B-side
+intrusion. Test the first intervention without changing the classifier,
+prototype transport, NormCap, or task protocol; compare against the
+same-commit Frozen-A control before attributing any improvement.

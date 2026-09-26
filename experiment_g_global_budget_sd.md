@@ -628,3 +628,39 @@ been observed entering Task 0. Current logs are
 `c100_frozen_pair_full_frozen_protocol_20260926.log` and
 `c100_live_pair_full_frozen_protocol_20260926.log`. Final metrics and
 snapshot audits are pending; do not count launch status as success.
+
+### Attempt 4 outcome: Live-A fails the C100 Final gate
+
+Both retried runs used commit `3330029` and the two pre-registered
+configs. Live-A completed Task 0-9 with no traceback. All ten of its
+task snapshots passed `audit_snapshot` checksum verification. Its
+Final/AAA/Forgetting were `88.23 / 92.411 / 6.289`, with Top-1 curve
+`[96.90, 96.30, 95.17, 94.08, 92.74, 91.65, 91.14, 89.22, 88.68, 88.23]`.
+Against the complete Frozen-A C100 reference `88.17`, its Final delta
+is only `+0.06`, short of the strict `>+0.20` goal. Thus Live-A alone
+does not supply a second winning dataset alongside the matched INR
+Live-A result, and no three-dataset success can be claimed.
+
+The same-commit Frozen-A control completed Tasks 0-8; all nine
+corresponding snapshots passed checksum verification and its Top-1
+curve through Task 8 exactly matched the earlier complete Frozen-A
+reference:
+`[96.90, 95.80, 95.10, 94.02, 92.80, 91.93, 91.29, 89.28, 88.56]`.
+Task 9 training and the `sa_state.pt` save began, but rank 1 then timed
+out on a four-element NCCL broadcast after 600 seconds. Rank 0's
+underlying stall/exit was not visible in the log; user-level journal
+recorded torchrun exit status 1, and kernel logs were inaccessible.
+Task-9 snapshot lacks the post-merge state/prototypes/classifier and
+**is invalid**. Do not infer a same-commit Frozen-A Final from its
+partial artifacts or count this as a completed paired comparison.
+The earlier independently completed Frozen-A `88.17` remains the
+reference for the user's threshold. No automatic restart or partial
+result reuse was performed.
+
+Interpretation limited to this single seed: Live-A improved early
+C100 stages relative to the complete Frozen-A curve (Task 1 `+0.50`),
+but the margin faded by the final task. This suggests that unrestricted
+A motion alone is insufficient under the full protocol. It does not
+establish that A drift caused the loss; classifier/prototype changes
+remain possible confounders. Return to algorithmic intervention rather
+than repeat an identical full Live-A run.

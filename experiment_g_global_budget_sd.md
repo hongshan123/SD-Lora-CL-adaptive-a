@@ -1060,3 +1060,32 @@ constraint, but provides no reason to sweep scalar weights using test
 labels. The matched-data INR pair was still live through Task 5 when
 this was recorded; no Final comparison is inferred from its partial
 curve.
+
+### Rejected P0: a joint 5% operator-space risk cap
+
+Before adding code, the complete joint A/B pre-merge snapshots were
+used to estimate the scalar current-write attenuation required if
+Live-A's final row space were kept and the **total historical operator
+drift** were bounded at 5% across all 24 branches. For each transition,
+`L = sum ||M_old(I-P_Anew)||_F^2` is the irrecoverable history loss,
+`U = sum ||D_current||_F^2` is the actual NormCap-absorbed current
+operator energy, and `E = sum ||M_old||_F^2`. Since the two terms are
+orthogonal in input row space, the largest feasible scalar is
+`alpha = min(1, sqrt(max(0, 0.05 E - L) / U))`. These numbers were
+computed from immutable snapshots in FP64; no training or selection
+used test labels. The old cuda6 INR split is marked unmatched and used
+only for this operator diagnostic, never a Frozen-A accuracy comparison.
+
+| Dataset | Mean L/E | Mean U/E | Alpha by Task 1-9 |
+|---|---:|---:|---|
+| C100 | 0.0093 | 0.1202 | 0.277, 0.569, 0.603, 0.809, 0.731, 0.807, 0.799, 1.000, 0.816 |
+| CUB | 0.0012 | 0.2439 | 0.229, 0.358, 0.493, 0.576, 0.583, 0.652, 0.726, 0.754, 0.703 |
+| INR (unmatched split) | 0.0104 | 0.1705 | 0.253, 0.401, 0.479, 0.733, 0.574, 0.652, 0.786, 0.651, 0.833 |
+
+The cap would often remove more than half of the current effective
+operator, including on the dataset where live A may be useful. At the
+fully measured CUB Task 9, even the milder fixed `alpha=0.75` did not
+improve Final. Thus a plain 5% Frobenius cap on A/B jointly is rejected
+as a main experiment. Operator energy is not a proven classifier-risk
+surrogate; any next budget should first validate a *function-space*
+old-class signal rather than simply retune the scalar threshold.

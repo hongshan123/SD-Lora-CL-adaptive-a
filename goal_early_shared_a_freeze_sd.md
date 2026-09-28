@@ -128,3 +128,15 @@ with these new single-seed trajectories.
   Do not edit a launch script while its queue is active in future stages.
 - INR frozen Task 3 is finishing evaluation. CUB Live suffix starts next.
   One-epoch smoke metrics are not formal performance evidence.
+
+### 2026-09-28 16:02 CST: CUB Smoke Accepted
+
+- CUB prefix and both one-epoch Task-3 suffixes finished successfully.
+  `early_a_cub_seed1_smoke_20260928_paired_audit.json` confirms identical
+  imported source fingerprints and identical three-task Top-1/Top-5 history.
+- All 24 Q/V branches are finite; frozen A is bit-identical to the anchor;
+  persistent adaptation state remains 368,640 scalars in both suffixes.
+- CUB formal queue starts on GPUs 4,5: 20-epoch common Live prefix, then
+  seven-task delayed-Frozen continuation, then seven-task Live continuation.
+- INR Live smoke is in its final evaluation; formal INR launch remains
+  contingent on its paired audit. No new algorithm or budget changes.

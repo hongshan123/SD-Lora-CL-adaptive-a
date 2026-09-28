@@ -1314,3 +1314,26 @@ Validation sequence:
 Configs are `exps/anchored_joint_ab_{c100,inr,cub}_seed*_t10_20260928.json`
 and corresponding `t2_e2_smoke` configs. All six preserve the reference
 per-task class counts; smoke changes only epochs/max_tasks and output.
+
+### Attempt 8 smoke launch and deterministic-runtime correction
+
+The initial three user-systemd/nohup smoke services exited with status 1
+at the first forward because their environment omitted
+`CUBLAS_WORKSPACE_CONFIG`. Both ranks report the explicit PyTorch
+deterministic-CuBLAS error, not an algorithm/optimizer or communication
+failure. All three terminal services have MainPID=0. Their logs and
+incomplete output directories were archived under
+`ANCHORED_JOINT_AB_INVALID_ENV_20260928/`; no partial accuracy is used.
+
+A minimal GPU forward/backward with deterministic algorithms and
+`CUBLAS_WORKSPACE_CONFIG=:4096:8` returns finite activations and input
+gradients. The existing task dispatcher uses the same setting. The
+three smoke jobs were restarted with fresh output directories and new
+service IDs `codex-anchored-joint-{c100,inr,cub}-smoke-r1-20260928`.
+Launch command: user-systemd with append log output, `/usr/bin/nohup
+/usr/bin/env`, explicit `CUDA_VISIBLE_DEVICES`, `HF_ENDPOINT`,
+`CUBLAS_WORKSPACE_CONFIG=:4096:8`, `OMP_NUM_THREADS=4`, then the sdlora
+Python `-u -m torch.distributed.run --standalone --nproc_per_node=2
+main.py --config=./exps/anchored_joint_ab_*_t2_e2_smoke_20260928.json`.
+Training code/config commit is `38604c8`. Formal T10 runs are still
+gated on completed real-data smoke audits, not launcher success.

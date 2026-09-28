@@ -184,3 +184,16 @@ def test_ddp_restore_synchronizes_before_and_after_rank_zero_copy(tmp_path, monk
     ))
     sa_snapshot_resume.restore_task_snapshot(args, _Learner(), _Manager())
     assert observed == [False, True]
+
+
+@pytest.mark.parametrize("curve", ["[90.0, np.float64(86.0)]", "[90.0, 86.0]"])
+def test_metric_history_parses_plain_and_numpy_scalars(tmp_path, monkeypatch, curve):
+    source, _, _, _, _ = _fixture(tmp_path, monkeypatch)
+    log = tmp_path / "logs/sa_sdlora/cub/0/20/source_1_vit_base_patch16_224.log"
+    log.write_text(log.read_text().replace(
+        "[np.float64(90.0), np.float64(86.0)]", curve
+    ))
+    metrics = sa_snapshot_resume._previous_metrics(
+        json.loads((source / "config.json").read_text()), 2
+    )
+    assert metrics["top1"] == [90.0, 86.0]

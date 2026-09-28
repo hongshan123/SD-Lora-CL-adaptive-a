@@ -1,5 +1,6 @@
 """Restore a completed deterministic task boundary into a fresh run."""
 
+import ast
 import json
 import re
 import shutil
@@ -18,6 +19,17 @@ _RUNTIME_KEYS = {
     "sa_resume_snapshot",
 }
 _NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+
+
+def _accuracy_curve(text):
+    literal = re.sub(rf"np\.float64\(({_NUMBER})\)", r"\1", text.strip())
+    values = ast.literal_eval(literal)
+    if not isinstance(values, list) or not all(
+        isinstance(value, (float, int)) and not isinstance(value, bool)
+        for value in values
+    ):
+        raise ValueError("accuracy curve is not a numeric list")
+    return [float(value) for value in values]
 
 
 def _previous_metrics(config, task_count):
@@ -41,13 +53,9 @@ def _previous_metrics(config, task_count):
     top1, top5, grouped = [], [], []
     for line in log_path.read_text(errors="replace").splitlines():
         if "CNN top1 curve:" in line:
-            top1.append([float(value) for value in re.findall(
-                rf"np\.float64\(({_NUMBER})\)", line.split("CNN top1 curve:", 1)[1]
-            )])
+            top1.append(_accuracy_curve(line.split("CNN top1 curve:", 1)[1]))
         elif "CNN top5 curve:" in line:
-            top5.append([float(value) for value in re.findall(
-                rf"np\.float64\(({_NUMBER})\)", line.split("CNN top5 curve:", 1)[1]
-            )])
+            top5.append(_accuracy_curve(line.split("CNN top5 curve:", 1)[1]))
         elif "=> CNN: {" in line:
             values = re.findall(rf"'(\d+-\d+)': np\.float64\(({_NUMBER})\)", line)
             grouped.append([float(value) for _, value in sorted(values)])

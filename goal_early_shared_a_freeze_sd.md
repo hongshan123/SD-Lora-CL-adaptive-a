@@ -110,3 +110,21 @@ with these new single-seed trajectories.
   prefix. Queue supports an explicit `freeze`/`live` starting item and still
   refuses to overwrite any child output.
 - INR smoke prefix is still running; no formal experiment has started.
+
+### 2026-09-28 15:57 CST: Completed Frozen Smoke and Metric Parser Fix
+
+- CUB frozen continuation completed Task 3. Its 24 A tensors are exactly
+  equal to the task-2 source; 368,640 persistent adaptation scalars remain.
+- The audit exposed mixed scalar formatting in resumed curves: old points
+  are Python floats, new points are `np.float64`. The old regex extracted
+  only the latter. Normalize the NumPy scalar wrapper and parse the entire
+  list with `ast.literal_eval`; do not change the logged training values.
+- Two regression tests observed RED for plain/mixed curves before the fix.
+  Focused GREEN: 24 passed. Complete CPU suite: 546 passed, 1 skipped.
+- Re-auditing the existing CUB frozen output succeeded without retraining it.
+- INR's original queue shell failed after its successful prefix because the
+  script was edited while that shell was reading it. Restarted only the
+  continuations with the new shell; the successful prefix is unchanged.
+  Do not edit a launch script while its queue is active in future stages.
+- INR frozen Task 3 is finishing evaluation. CUB Live suffix starts next.
+  One-epoch smoke metrics are not formal performance evidence.

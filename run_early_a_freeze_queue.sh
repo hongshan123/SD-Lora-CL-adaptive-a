@@ -44,11 +44,18 @@ run_one() {
 }
 
 BASE="early_a_${DATASET}_seed${SEED}"
-run_one "${BASE}_prefix_t3_${SUFFIX}"
+PREFIX="${BASE}_prefix_t3_${SUFFIX}"
+SOURCE="$ROOT/${PREFIX^^}/task_snapshots/task_002"
+run_one "$PREFIX"
 for arm in freeze live; do
   name="${BASE}_${arm}_t10_${SUFFIX}"
   run_one "$name"
-  python scripts/verify_early_a_fork.py "${name^^}" \
+  python scripts/verify_early_a_fork.py "${name^^}" --source "$SOURCE" --policy "$arm" \
     > "${name}_fork_audit.json"
   echo "$(date -Is) FORK_VERIFIED $name"
 done
+FREEZE="${BASE}_freeze_t10_${SUFFIX}"
+LIVE="${BASE}_live_t10_${SUFFIX}"
+python scripts/verify_early_a_fork.py "${LIVE^^}" --source "$SOURCE" --policy live \
+  --paired-run "${FREEZE^^}" > "${BASE}_${SUFFIX}_paired_audit.json"
+echo "$(date -Is) PAIR_VERIFIED dataset=$DATASET phase=$PHASE"

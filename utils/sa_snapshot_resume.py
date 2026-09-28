@@ -163,6 +163,11 @@ def _restore_completed_snapshot(args, learner, data_manager, live):
     if args.get("rank", 0) == 0:
         for name in names:
             shutil.copy2(snapshot / name, output_dir / name)
+        if live:
+            fingerprint = json.loads((snapshot / "complete.json").read_text())["sha256"]
+            (output_dir / "snapshot_resume.json").write_text(json.dumps({
+                "source_snapshot": str(snapshot), "sha256": fingerprint,
+            }, indent=2) + "\n")
     if dist.is_available() and dist.is_initialized():
         dist.barrier()
 

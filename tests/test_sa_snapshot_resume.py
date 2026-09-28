@@ -151,6 +151,9 @@ def test_live_snapshot_forks_a_completed_prefix_with_full_metric_history(tmp_pat
     assert torch.equal(learner.network.fc.bias, bias)
     assert metrics["top1"] == [90.0, 86.0]
     assert (destination / "sa_state.pt").read_bytes() == (source / "sa_state.pt").read_bytes()
+    lineage = json.loads((destination / "snapshot_resume.json").read_text())
+    assert lineage["source_snapshot"] == str(source.resolve())
+    assert lineage["sha256"] == json.loads((source / "complete.json").read_text())["sha256"]
 
 
 def test_live_snapshot_rejects_a_different_prefix_policy(tmp_path, monkeypatch):

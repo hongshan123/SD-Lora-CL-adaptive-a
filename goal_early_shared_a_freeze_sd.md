@@ -82,3 +82,15 @@ with these new single-seed trajectories.
   next item on any nonzero exit. Both suffixes audit their common prefix,
   full metric history, finite state, and the fixed 368,640-scalar budget.
 - Scoped Terra read-only review is pending; GPU smoke is not launched yet.
+
+### 2026-09-28 15:42 CST: Fork Audit Verified
+
+- The scoped read-only review found that an arm audit must prove its requested
+  policy and exact source identity, not infer both from the child's config.
+- Added import-time snapshot SHA256 provenance, explicit expected-source and
+  expected-policy checks, and a paired audit of source fingerprints and all
+  shared-prefix Top-1/Top-5 metrics. No model numerical path changed.
+- Regression RED: five expected failures before the provenance/guard fix.
+- Focused GREEN: 20 passed. Complete CPU suite: 542 passed, 1 skipped.
+- Queue syntax and diff whitespace checks passed; reviewer confirmed no
+  remaining blocking issue. Real-data smoke starts next on 4,5 and 6,7.

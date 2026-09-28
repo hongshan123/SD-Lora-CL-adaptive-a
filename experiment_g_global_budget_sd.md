@@ -1430,3 +1430,52 @@ already disables HBD, so the guard does not change its numerical path.
 Fresh full CPU suite: **524 passed, 1 skipped**; `git diff --check`
 passes. No smoke replay is needed for a guard that is inactive in all
 six preregistered configurations.
+
+### Attempt 8 formal T10 launch verification
+
+Launch: 2026-09-28 10:25 CST on local cuda7. All three fresh manifests
+record code commit `9fc1dad4c96a40d20deb1536e401ab8ff229ede2`, distinct
+run IDs and configuration hashes, with `resume=false`. Structured
+configuration comparison against Attempt 6 finds only the new
+`sa_live_a_history_forward="anchored"`, prefix and output directory
+differences. Dataset, seed, order, rank10, T10, 20 epochs, optimizer,
+learning rates, NormCap, prototype transport and classifier are intact.
+
+| Dataset | GPUs | Service | Launcher PID | Log |
+|---|---|---|---:|---|
+| C100 seed1993 | 0,1 | `codex-anchored-joint-c100-t10-20260928` | 849970 | `anchored_joint_ab_c100_seed1993_t10_20260928.log` |
+| INR seed1995 | 4,5 | `codex-anchored-joint-inr-t10-20260928` | 849975 | `anchored_joint_ab_inr_seed1995_t10_20260928.log` |
+| CUB seed1 | 6,7 | `codex-anchored-joint-cub-t10-20260928` | 849978 | `anchored_joint_ab_cub_seed1_t10_20260928.log` |
+
+The services use `/usr/bin/nohup /usr/bin/env`, explicit visible GPU
+pairs, `HF_ENDPOINT=https://hf-mirror.com`,
+`CUBLAS_WORKSPACE_CONFIG=:4096:8`, `OMP_NUM_THREADS=4`, and sdlora Python
+`-u -m torch.distributed.run --standalone --nproc_per_node=2 main.py`
+with the registered configurations. User-systemd retains terminal exit
+status using `Type=exec, RemainAfterExit=yes`. Do not infer a live process
+from `ActiveState` alone after completion; require nonzero MainPID and
+`SubState=running` when checking ongoing training.
+
+At 10:27 CST all three MainPIDs are live, all logs confirm world_size2
+and per-rank batch64, and real Task0 epochs have advanced. Six compute
+processes use about 8.47 GiB each; all six allowed GPUs show 100%
+utilization at that sample. GPUs2/3 remain unused. Logs contain no
+training traceback, runtime error or OOM. Epoch monitoring is not the
+formal deployment result; no T10 accuracy claim is made yet.
+
+Read-only operational monitoring runs every 30 minutes through
+`codex-anchored-joint-monitor-r1-20260928.timer`, logging service PIDs,
+GPU usage, log tails, exception matches and completed-snapshot counts
+to `anchored_joint_ab_monitor_r1_20260928.log`. It stops its own timer
+once all three training services are terminal and never restarts or
+changes a training job automatically. The first monitor invocation
+passes with exit0 and all three error-match reports empty. The initial
+monitor-only unit lacked the shell's private `rg` PATH and failed;
+its timer is stopped, its separate log retained, and r1 uses the
+explicit absolute `rg` binary. Training was not stopped or restarted
+for this operational correction.
+
+Next decision requires all ten task snapshots and paired Final/AAA/F
+against the complete Frozen-A references, plus joint-SVD truncation
+and branch-intrusion diagnostics. Attempt 8 remains **running**;
+the goal still has no verified second dataset improvement.

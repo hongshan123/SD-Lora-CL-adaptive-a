@@ -1248,3 +1248,69 @@ Before any such integration, calibration must be made pre-merge and
 the historical-function proxy validated against paired old-class
 prediction changes. The two-dataset Final improvement goal remains
 unmet; Attempt 6 still contributes only the matched-INR +0.38 result.
+
+## Attempt 8: Task-anchored history with joint A/B consolidation
+
+Pre-registration (2026-09-28), implementation commit `60cad65`.
+Use `sa_live_a_history_forward="anchored"` together with the existing
+`sa_live_a_boundary_merge="joint_svd"`. Default `shared` retains the
+existing Live-A behavior and artifact format. No baseline or old
+experiment configuration has been modified.
+
+At each task start, existing nonpersistent anchor buffers capture
+`A_old` and `G_old/(||A_old||+eps)`. Historical branch forward is now
+`M_old x`, where `M_old=G_old A_old/(||A_old||+eps)` stays fixed within
+the task. Current A and B are both trainable, initialized exactly as
+before, and the current branch remains `s B A x`. Historical output
+must remain differentiable with respect to x so earlier current LoRA
+branches can learn; only the historical factors are frozen.
+
+This isolates an actual coupling in Attempt 6: shared historical
+forward used `G_old A_current/||A_current||`, while joint consolidation
+targeted the task-start historical operator plus the current update.
+The new trial removes that **within-task history-factor mismatch**.
+It does not freeze the full old-model function: earlier current LoRA
+branches can still change inputs to later historical branches.
+
+Boundary processing remains unchanged. Existing NormCap produces the
+current committed operator `D_cap`; fixed-rank joint SVD consolidates
+`M_old + D_cap` into one A/G pair per branch. Prototype transport and
+the prototype classifier remain enabled; Dual-B and HBD stay disabled.
+The new mode requires joint SVD and rejects mismatched history modes
+when loading a saved state. Its artifact adds only a string marker,
+not any persistent tensor: 24 pairs still total **368,640 scalars**.
+Old-task anchor tensors overwrite existing buffers, never form a bank.
+
+Hypothesis: current A/B will learn the new task without exploiting
+artificial drift of the historical factorization, improving the
+quality of the subsequent joint merge. This is not a guarantee.
+In particular, B=0 again implies zero current A gradient at the first
+batch; shared history previously provided an extra A gradient, so the
+trial may also lose useful plasticity. Fixed-rank truncation and
+NormCap still cause train/deploy changes and can still harm accuracy.
+
+Validation sequence:
+
+1. TDD tests first failed for the missing history-forward API (three
+   failures, one Task-0 equivalence control already passed). New tests
+   then verified immutable historical output, no historical A gradient,
+   retained input/current-factor gradients, Task-0 shared equivalence,
+   same-size save/rebuild, mode guards and initial factory propagation.
+   Full repository CPU suite: **519 passed, 1 skipped**.
+2. Three real-data Task0/1 smoke runs: two epochs, rank10, two GPUs with
+   batch64 each. GPU pairs C100 `0,1`, INR `4,5`, CUB `6,7`; exclude 2/3.
+   Audit both task snapshots, 24 branch pairs, history marker, finite
+   factors, and exactly 368,640 persisted LoRA scalars before full runs.
+3. Only after smoke passes, run fresh T10/20-epoch configurations with
+   seeds C1001993/INR1995/CUB1, effective batch128 and unchanged SGD,
+   learning rates, class order, NormCap and prototype transport. Use
+   `nohup` under user-systemd; keep output and snapshots separate from
+   Attempt 6. No test-label selection or dataset-specific gate/budget.
+4. Compare complete Final against **88.17/78.75/84.40**, and against
+   Attempt 6 **88.24/79.13/84.21**. The active goal still requires the
+   same complete method to exceed Frozen-A by strictly >0.20 on at
+   least two datasets; smoke or one-boundary evidence is not success.
+
+Configs are `exps/anchored_joint_ab_{c100,inr,cub}_seed*_t10_20260928.json`
+and corresponding `t2_e2_smoke` configs. All six preserve the reference
+per-task class counts; smoke changes only epochs/max_tasks and output.

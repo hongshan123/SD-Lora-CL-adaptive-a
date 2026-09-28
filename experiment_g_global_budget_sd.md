@@ -1411,3 +1411,22 @@ training code is identical and the new capture/replay tests pass.
 Attempt 8 is ready for its registered three full T10 runs, not declared
 successful. Complete Frozen-A Final references remain C100 88.17,
 INR 78.75, CUB 84.40. Strict >+0.20 on two datasets is still unverified.
+
+### Attempt 8 independent review and unsupported-HBD guard
+
+A bounded read-only `gpt-5.6-terra` review completed before formal
+launch. It found one unsupported combination: anchored history with
+`sa_hbd_enabled=true` makes the old HBD diagnostic assume nonzero A
+gradient graphs that anchored history no longer supplies. The reviewer
+found no other executable-code defect in the reviewed forward,
+input-gradient, save/load marker, factory or fixed-size state paths.
+This is a scoped review, not proof of accuracy or full-network stability.
+
+The Learner now rejects this combination before constructing the
+network. A regression test first failed because invalid flags reached
+parent/model construction, then passes with the early guard. Existing
+shared-mode HBD remains supported and unchanged. Formal Attempt 8
+already disables HBD, so the guard does not change its numerical path.
+Fresh full CPU suite: **524 passed, 1 skipped**; `git diff --check`
+passes. No smoke replay is needed for a guard that is inactive in all
+six preregistered configurations.

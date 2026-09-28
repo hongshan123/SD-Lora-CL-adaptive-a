@@ -29,3 +29,36 @@ Untitled
 
 # external baseline repositories (kept out of this repo; see strong-baseline doc)
 external_baselines/
+
+# local experiment runs and checkpoints (keep summaries/configs, exclude outputs)
+/*_202609*/
+/*_SEED*/
+/*_T[0-9]*/
+/*_FULL*/
+/*_SMOKE*/
+/*_R[0-9]*/
+/*_COORDINATE_*/
+/*_FUNCTIONAL_*/
+/*_HISTORICAL_*/
+/*_LIVE_*/
+/*_FROZEN_*/
+/*_PARETO_*/
+/*_RISK_*/
+/*_CUO_*/
+/*_RGA_*/
+/*_SBGC_*/
+/*_EARLY_A_*/
+/*_ANCHORED_*/
+/*_JOINT_*/
+/*_CAUSAL_*/
+/*_MARGIN_*/
+/*_OFFLINE_*/
+/*_DIAG_*/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.lock
+*.pid
+nohup.out
+*.pre_fix

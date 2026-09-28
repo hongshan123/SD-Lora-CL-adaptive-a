@@ -1,0 +1,73 @@
+{
+  "paired_verified": true,
+  "freeze": {
+    "verified": true,
+    "source_snapshot": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/EARLY_A_INR_SEED1995_PREFIX_T3_SMOKE_20260928/task_snapshots/task_002",
+    "source_sha256": {
+      "sa_prototypes.pt": "c1309079442b41f075bbf35a4d2cb04825e416193f7a00bcdfae73a0823b302d",
+      "sa_state.pt": "2c7a91858dfdbfc9f5fa6294c1b0f7fd072872abf91cc413cab7afc2c93e853a",
+      "pre_merge.pt": "faf28fbc35700128de95325d08a61e0c47e308594e2da360225ec4896069c75b",
+      "run_manifest.json": "e788239137cdf6b3ef3dead7a9eb41d55322b1100e059bc39693260fcebfd769",
+      "CLs_bias2.pt": "628f2227b78c02da3a31962f88375892a1ba39b21689a0e5ca4e19335fd0f650",
+      "sa_merged_lora.pt": "f2afd69468997d348774c55e735c1218e91efc8109a6383cc8dd9090fc5b7143",
+      "CLs_weight2.pt": "64686175f112fb69736b8c753d8c1b11b1f5d8d41df50ebfbb8febaf81fb13a7",
+      "config.json": "128ccc6cd2662b09019591dc3107554b54f072c2880a8f424f6878019b439da5"
+    },
+    "policy": "freeze",
+    "suffix_tasks": [
+      3,
+      3
+    ],
+    "frozen_a_bit_identical": true,
+    "persistent_adaptation_numel": 368640,
+    "top1": [
+      82.17,
+      76.62,
+      74.8,
+      73.32
+    ],
+    "top5": [
+      94.65,
+      90.71,
+      89.59,
+      88.12
+    ],
+    "final": 73.32,
+    "aaa": 76.7275
+  },
+  "live": {
+    "verified": true,
+    "source_snapshot": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/EARLY_A_INR_SEED1995_PREFIX_T3_SMOKE_20260928/task_snapshots/task_002",
+    "source_sha256": {
+      "sa_prototypes.pt": "c1309079442b41f075bbf35a4d2cb04825e416193f7a00bcdfae73a0823b302d",
+      "sa_state.pt": "2c7a91858dfdbfc9f5fa6294c1b0f7fd072872abf91cc413cab7afc2c93e853a",
+      "pre_merge.pt": "faf28fbc35700128de95325d08a61e0c47e308594e2da360225ec4896069c75b",
+      "run_manifest.json": "e788239137cdf6b3ef3dead7a9eb41d55322b1100e059bc39693260fcebfd769",
+      "CLs_bias2.pt": "628f2227b78c02da3a31962f88375892a1ba39b21689a0e5ca4e19335fd0f650",
+      "sa_merged_lora.pt": "f2afd69468997d348774c55e735c1218e91efc8109a6383cc8dd9090fc5b7143",
+      "CLs_weight2.pt": "64686175f112fb69736b8c753d8c1b11b1f5d8d41df50ebfbb8febaf81fb13a7",
+      "config.json": "128ccc6cd2662b09019591dc3107554b54f072c2880a8f424f6878019b439da5"
+    },
+    "policy": "live",
+    "suffix_tasks": [
+      3,
+      3
+    ],
+    "frozen_a_bit_identical": null,
+    "persistent_adaptation_numel": 368640,
+    "top1": [
+      82.17,
+      76.62,
+      74.8,
+      74.84
+    ],
+    "top5": [
+      94.65,
+      90.71,
+      89.59,
+      89.46
+    ],
+    "final": 74.84,
+    "aaa": 77.10750000000002
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "verified": true,
+  "source_snapshot": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/EARLY_A_CUB_SEED1_PREFIX_T3_SMOKE_20260928/task_snapshots/task_002",
+  "source_sha256": {
+    "sa_prototypes.pt": "9d592d4fe506670c60a8f9b2c459ab02ca49ecfbd6d8fb8fb5fb11001528bee6",
+    "sa_state.pt": "908838cdc9ebdb8dbbca0a48d89a81b2f9c6b08a4ffac03269a99c620642eaba",
+    "pre_merge.pt": "99c31181445e31f38e4f377edfd4e8f061c7c7da55f32403fa64eddd47f224b6",
+    "run_manifest.json": "978963e10224aaf61dfdd10509494a0e9372ce0bbb3e73eab08161e37a3c92f6",
+    "CLs_bias2.pt": "8c87fad8df4da781afdee31ff79a2ad7dfcd259c8da8f4f7025df579fc6442f4",
+    "sa_merged_lora.pt": "385a26010795bf5d5356e43a88d07a2c4eed7466e02b541ecf0e174754925311",
+    "CLs_weight2.pt": "b80ad0aea66c660dcd5f6b3b2edf778c74cd06283abd70a57b74993a6c58ba08",
+    "config.json": "0af59568546dce969f7dc53d16e4cd069e6642af07944c31e8d02cffdb3ada27"
+  },
+  "policy": "live",
+  "suffix_tasks": [
+    3,
+    3
+  ],
+  "frozen_a_bit_identical": null,
+  "persistent_adaptation_numel": 368640,
+  "top1": [
+    96.87,
+    92.4,
+    90.69,
+    88.76
+  ],
+  "top5": [
+    100.0,
+    99.4,
+    98.91,
+    98.36
+  ],
+  "final": 88.76,
+  "aaa": 92.18
+}

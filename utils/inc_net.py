@@ -91,6 +91,9 @@ def get_backbone(args, pretrained=False):
                 live_a_boundary_merge=args.get(
                     "sa_live_a_boundary_merge", "aligned"
                 ),
+                live_a_history_forward=args.get(
+                    "sa_live_a_history_forward", "shared"
+                ),
                 adaptive_a_enabled=args.get("sa_adaptive_a_enabled", False),
                 adaptive_a_stability_weight=args.get(
                     "sa_adaptive_a_stability_weight", 1.0

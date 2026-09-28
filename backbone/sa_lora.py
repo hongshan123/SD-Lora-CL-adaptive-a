@@ -1803,12 +1803,10 @@ class _SensitivityBudgetedGQKV(nn.Module):
 class _LiveAAggregateQKV(nn.Module):
     """QKV wrapper for Live-A Aggregate-B.
 
-    The historical branch is ``G A x / ||A||`` with the *live* shared A (the
-    same differentiable A used by the current task), matching EXP-009's bank
-    gradient path when historical scales are folded and frozen.  The current
-    task branch keeps the legacy raw semantics ``scale * B(Ax)`` (no
-    normalization), so non-final evaluation after save still sees
-    ``old G + current raw B`` exactly like the v1 bank.
+    Shared history uses the differentiable current A. Anchored history uses
+    the fixed task-start A/G operator while preserving input gradients.
+    The current branch retains raw ``scale * B(Ax)`` semantics unless
+    current-branch normalization is explicitly enabled.
     """
 
     def __init__(
@@ -1829,6 +1827,7 @@ class _LiveAAggregateQKV(nn.Module):
         capture_effective_gradient=False,
         recoverability_sketch_rank=16,
         normalize_current_branch=False,
+        history_forward="shared",
     ):
         super().__init__()
         self.qkv = qkv
@@ -1843,6 +1842,9 @@ class _LiveAAggregateQKV(nn.Module):
         self.capture_input_sketch = bool(capture_input_sketch)
         self.capture_effective_gradient = bool(capture_effective_gradient)
         self.normalize_current_branch = bool(normalize_current_branch)
+        if history_forward not in ("shared", "anchored"):
+            raise ValueError("history_forward must be shared or anchored")
+        self.history_forward = history_forward
         self._effective_weight_gradient_q = None
         self._effective_weight_gradient_v = None
         sketch_rank = min(int(recoverability_sketch_rank), self.dim)
@@ -1946,8 +1948,7 @@ class _LiveAAggregateQKV(nn.Module):
                 flat = x.detach().float().reshape(-1, self.dim)
                 self.pending_input_square_sum.add_(flat.square().sum(dim=0))
                 self.pending_input_count += float(flat.shape[0])
-        new_q = self._norm_live_a(x, self.a_q.weight, self.aggregate_q)
-        new_v = self._norm_live_a(x, self.a_v.weight, self.aggregate_v)
+        new_q, new_v = self.historical_output(x)
         if self.current_branch_enabled:
             new_q = new_q + self.scaling_cur[0](
                 self._current_lora(x, self.a_q, self.b_q)
@@ -2075,6 +2076,17 @@ class _LiveAAggregateQKV(nn.Module):
         return rms, count
 
     def historical_output(self, x):
+        if self.history_forward == "anchored":
+            return (
+                F.linear(
+                    F.linear(x, self.recoverability_anchor_a_q),
+                    self.recoverability_anchor_up_q,
+                ),
+                F.linear(
+                    F.linear(x, self.recoverability_anchor_a_v),
+                    self.recoverability_anchor_up_v,
+                ),
+            )
         return (
             self._norm_live_a(x, self.a_q.weight, self.aggregate_q),
             self._norm_live_a(x, self.a_v.weight, self.aggregate_v),
@@ -2149,6 +2161,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         functional_min_normal_fraction=1e-4,
         functional_temperature=2.0,
         resume=False,
+        live_a_history_forward="shared",
     ):
         super().__init__()
         assert r > 0
@@ -2293,6 +2306,11 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "alignment, unnormalized current branch, and no Adaptive-A"
             )
         self.live_a_boundary_merge = live_a_boundary_merge
+        if live_a_history_forward not in ("shared", "anchored"):
+            raise ValueError("sa_live_a_history_forward must be shared or anchored")
+        if live_a_history_forward == "anchored" and live_a_boundary_merge != "joint_svd":
+            raise ValueError("anchored history requires joint_svd boundary merge")
+        self.live_a_history_forward = live_a_history_forward
         self.adaptive_a_enabled = bool(adaptive_a_enabled)
         self.adaptive_a_stability_weight = float(adaptive_a_stability_weight)
         self.adaptive_a_gate_floor = float(adaptive_a_gate_floor)
@@ -2536,6 +2554,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "absorb_mode", SA_ABSORB_MODE_NORMALIZED
             )
             state_boundary_merge = state.get("boundary_merge", "aligned")
+            state_history_forward = state.get("history_forward", "shared")
             if (
                 self.task_id > 0
                 and state_coordinate_aligned != self.live_a_coordinate_align
@@ -2559,6 +2578,13 @@ class SharedALoRA_ViT_timm(nn.Module):
                     "live-a boundary merge differs from the saved state "
                     "(saved={}, requested={})".format(
                         state_boundary_merge, self.live_a_boundary_merge
+                    )
+                )
+            if self.task_id > 0 and state_history_forward != self.live_a_history_forward:
+                raise ValueError(
+                    "live-a history forward differs from the saved state "
+                    "(saved={}, requested={})".format(
+                        state_history_forward, self.live_a_history_forward
                     )
                 )
             self.cumulative_state = True
@@ -3140,6 +3166,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                         ),
                         recoverability_sketch_rank=self.recoverability_sketch_rank,
                         normalize_current_branch=self.normalize_current_branch,
+                        history_forward=self.live_a_history_forward,
                     )
                 elif self.cumulative_merge == SA_MERGE_MODE_SBGC:
                     if offset < len(self.sbgc_projection_down):
@@ -6584,6 +6611,8 @@ class SharedALoRA_ViT_timm(nn.Module):
             }
         if self.live_a_boundary_merge == "joint_svd":
             state["boundary_merge"] = "joint_svd"
+        if self.live_a_history_forward == "anchored":
+            state["history_forward"] = "anchored"
         if self.adaptive_a_strategy in (
             "risk_budgeted",
             "pareto_knee",
@@ -6753,6 +6782,8 @@ class SharedALoRA_ViT_timm(nn.Module):
                     }
                 if self.live_a_boundary_merge == "joint_svd":
                     merged_state["boundary_merge"] = "joint_svd"
+                if self.live_a_history_forward == "anchored":
+                    merged_state["history_forward"] = "anchored"
                 torch.save(merged_state, _join_path(filename, SA_MERGED_FILENAME))
                 return
             torch.save(

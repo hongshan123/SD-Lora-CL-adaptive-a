@@ -1260,6 +1260,9 @@ class Learner(SDLoraLearner):
             live_a_boundary_merge=self.args.get(
                 "sa_live_a_boundary_merge", "aligned"
             ),
+            live_a_history_forward=self.args.get(
+                "sa_live_a_history_forward", "shared"
+            ),
             **adaptive_a_settings,
             resume=self.args.get("sa_resume", False),
         )

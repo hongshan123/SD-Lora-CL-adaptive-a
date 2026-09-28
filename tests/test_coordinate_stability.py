@@ -541,7 +541,8 @@ def test_backbone_factory_preserves_coordinate_alignment_flag(
     assert state["absorb_mode"] == "operator_preserving_absorb"
 
 
-def test_backbone_factory_preserves_joint_boundary_mode(tmp_path, monkeypatch):
+@pytest.mark.parametrize("history_forward", ["shared", "anchored"])
+def test_backbone_factory_preserves_joint_boundary_mode(tmp_path, monkeypatch, history_forward):
     monkeypatch.setattr(
         "utils.inc_net.timm.create_model",
         lambda *args, **kwargs: _TinyViT(8),
@@ -558,7 +559,10 @@ def test_backbone_factory_preserves_joint_boundary_mode(tmp_path, monkeypatch):
             "sa_cumulative_merge": "live_a_aggregate_b",
             "sa_live_a_coordinate_align": True,
             "sa_live_a_boundary_merge": "joint_svd",
+            "sa_live_a_history_forward": history_forward,
         },
         pretrained=True,
     )
     assert backbone.live_a_boundary_merge == "joint_svd"
+    assert backbone.live_a_history_forward == history_forward
+    assert backbone.lora_vit.blocks[0].attn.qkv.history_forward == history_forward

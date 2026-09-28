@@ -78,3 +78,31 @@
   or automatically restarted. Waiting is not reported as training.
 - Actual commit, service status and log verification are recorded below
   after deployment. This file is the authoritative migration ledger.
+
+## Deployment Verification: 2026-09-28 16:51 CST
+
+- Code commit: `efcba37` on both hosts. Only this ledger is updated after
+  that implementation commit; the training code and configuration remain
+  unchanged from `de107fd`.
+- Waiting service started at 16:44 CST; MainPID `660272`, active/running,
+  `ExecMainStatus=0`. Repeated separate SSH connections confirm that the
+  service persists and continues polling without initializing CUDA.
+- Enabled user linger for `zhaoyang`; `loginctl show-user` confirms
+  `Linger=yes`. The service and monitor can survive SSH logout.
+- Monitor timer is active, with first scheduled check at 17:14:15 CST and
+  subsequent checks every30 minutes.
+- GPU0 still has another user's job (1681 MiB,8% utilization); GPU1 is
+  idle; GPUs2/3 are busy. Latest controller messages report
+  `WAIT_FOR_GPUS ... idle=False streak=0/2`.
+- Status is WAITING, not TRAINING. No cuda6 training accuracy, Task0/1
+  smoke or dataset completion is reported. No other user's process is
+  stopped or shared. No local cuda7 experiment is stopped.
+- Once the pair becomes idle, the existing audited queue runs CUB's
+  common Live prefix, frozen continuation and live continuation, then
+  repeats the same sequence for ImageNet-R. Each complete result uses
+  only its own host's prefix; no cross-host checkpoint mixing occurs.
+- Subsequent cuda7 check: CUB service is failed. Its log records a rank1
+  NCCL ALLREDUCE timeout at 16:44:20 after600 seconds (sequence469),
+  followed by SIGABRT. ImageNet-R service remains active. This establishes
+  a communication failure, not a specific hardware root cause. Preserve
+  the failed run unchanged and never use its partial curve as a result.

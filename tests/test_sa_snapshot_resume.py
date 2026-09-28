@@ -171,3 +171,16 @@ def test_live_snapshot_rejects_an_added_training_setting(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="sa_hbd_lambda"):
         sa_snapshot_resume.restore_task_snapshot(args, _Learner(), _Manager())
     assert not (destination / "sa_state.pt").exists()
+
+
+@pytest.mark.parametrize("fixture", [_fixture, _live_fixture])
+def test_ddp_restore_synchronizes_before_and_after_rank_zero_copy(tmp_path, monkeypatch, fixture):
+    _, destination, args, _, _ = fixture(tmp_path, monkeypatch)
+    observed = []
+    monkeypatch.setattr(sa_snapshot_resume.dist, "is_available", lambda: True)
+    monkeypatch.setattr(sa_snapshot_resume.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(sa_snapshot_resume.dist, "barrier", lambda: observed.append(
+        (destination / "sa_state.pt").exists()
+    ))
+    sa_snapshot_resume.restore_task_snapshot(args, _Learner(), _Manager())
+    assert observed == [False, True]

@@ -4,6 +4,12 @@ set -Eeuo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 DATASET="${1:?dataset must be cub or inr}"
 PHASE="${2:-formal}"
+START_AT="${3:-prefix}"
+case "$START_AT" in
+  prefix|freeze) ARMS=(freeze live) ;;
+  live) ARMS=(live) ;;
+  *) echo "Unknown starting item: $START_AT" >&2; exit 2 ;;
+esac
 case "$DATASET" in
   cub) SEED=1; DEFAULT_GPU_IDS=4,5 ;;
   inr) SEED=1995; DEFAULT_GPU_IDS=6,7 ;;
@@ -46,8 +52,13 @@ run_one() {
 BASE="early_a_${DATASET}_seed${SEED}"
 PREFIX="${BASE}_prefix_t3_${SUFFIX}"
 SOURCE="$ROOT/${PREFIX^^}/task_snapshots/task_002"
-run_one "$PREFIX"
-for arm in freeze live; do
+if [[ "$START_AT" == prefix ]]; then
+  run_one "$PREFIX"
+else
+  python scripts/audit_sa_task_snapshots.py "${PREFIX^^}"
+  echo "$(date -Is) REUSE_VERIFIED_PREFIX $PREFIX start_at=$START_AT"
+fi
+for arm in "${ARMS[@]}"; do
   name="${BASE}_${arm}_t10_${SUFFIX}"
   run_one "$name"
   python scripts/verify_early_a_fork.py "${name^^}" --source "$SOURCE" --policy "$arm" \

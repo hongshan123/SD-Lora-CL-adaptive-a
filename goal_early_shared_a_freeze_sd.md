@@ -94,3 +94,19 @@ with these new single-seed trajectories.
 - Focused GREEN: 20 passed. Complete CPU suite: 542 passed, 1 skipped.
 - Queue syntax and diff whitespace checks passed; reviewer confirmed no
   remaining blocking issue. Real-data smoke starts next on 4,5 and 6,7.
+
+### 2026-09-28 15:50 CST: DDP Restore Race Fixed
+
+- CUB completed its three-task smoke prefix, but rank 0 imported files while
+  rank 1 was still constructing its fresh task-0 model. The latter correctly
+  rejected the now-existing state. This was a restore ordering error, not a
+  training loss or NCCL timeout.
+- Added a barrier after all per-rank freshness checks, before rank-0 copy;
+  retain the post-copy barrier. Two regression tests observed RED `[True]`
+  before the fix and GREEN `[False, True]` after it.
+- Focused tests: 22 passed. Complete CPU suite: 544 passed, 1 skipped.
+- Archived the failed CUB output and both log copies under
+  `EARLY_A_FAILED_CUB_RESTORE_RACE_20260928`; reuse the audited successful
+  prefix. Queue supports an explicit `freeze`/`live` starting item and still
+  refuses to overwrite any child output.
+- INR smoke prefix is still running; no formal experiment has started.

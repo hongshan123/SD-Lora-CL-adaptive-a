@@ -160,6 +160,9 @@ def _restore_completed_snapshot(args, learner, data_manager, live):
     names = ("sa_state.pt", "sa_merged_lora.pt", "sa_prototypes.pt", weight_name, bias_name)
     if any((output_dir / name).exists() for name in names):
         raise FileExistsError("fresh resume output already contains checkpoint artifacts")
+    # Every rank must finish its fresh constructor and output guard before copying.
+    if dist.is_available() and dist.is_initialized():
+        dist.barrier()
     if args.get("rank", 0) == 0:
         for name in names:
             shutil.copy2(snapshot / name, output_dir / name)

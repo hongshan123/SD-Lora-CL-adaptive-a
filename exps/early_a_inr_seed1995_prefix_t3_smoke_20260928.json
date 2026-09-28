@@ -1,0 +1,62 @@
+{
+    "prefix": "early_a_inr_seed1995_prefix_t3_smoke_20260928",
+    "dataset": "imagenetr",
+    "memory_size": 0,
+    "memory_per_class": 0,
+    "fixed_memory": false,
+    "shuffle": true,
+    "init_cls": 20,
+    "increment": 20,
+    "max_tasks": 3,
+    "model_name": "sa_sdlora",
+    "backbone_type": "vit_base_patch16_224",
+    "device": [
+        "0",
+        "1"
+    ],
+    "seed": [
+        1995
+    ],
+    "optimizer": "sgd",
+    "scheduler": "constant",
+    "min_lr": 0.005,
+    "tuned_epoch": 1,
+    "dist_backend": "nccl",
+    "filepath": "./EARLY_A_INR_SEED1995_PREFIX_T3_SMOKE_20260928/",
+    "init_epoch": 1,
+    "init_lr": 0.01,
+    "init_milestones": [
+        10000
+    ],
+    "init_lr_decay": 0,
+    "init_weight_decay": 0.0005,
+    "epochs": 1,
+    "lrate": 0.01,
+    "milestones": [
+        10000
+    ],
+    "lrate_decay": 0,
+    "batch_size": 64,
+    "weight_decay": 0.0002,
+    "lora_rank": 10,
+    "sa_shared_a_orthogonal": true,
+    "sa_train_a_all_tasks": true,
+    "sa_delete_per_task_files": false,
+    "sa_use_prototype_classifier": true,
+    "sa_cumulative_state": true,
+    "sa_cumulative_merge": "live_a_aggregate_b",
+    "sa_live_a_history_groups": 1,
+    "sa_live_a_coordinate_align": true,
+    "sa_live_a_absorb_mode": "bounded_norm_calibrated_absorb",
+    "sa_coordinate_stable_transport": true,
+    "sa_coordinate_transport_rank": 10,
+    "sa_coordinate_transport_reg": 0.0001,
+    "sa_coordinate_transport_min_gain": 0,
+    "sa_deterministic_training": true,
+    "sa_dual_head": false,
+    "sa_adaptive_a_enabled": false,
+    "sa_resume": false,
+    "sa_save_task_snapshots": true,
+    "sa_live_a_boundary_merge": "aligned",
+    "sa_live_a_history_forward": "shared"
+}

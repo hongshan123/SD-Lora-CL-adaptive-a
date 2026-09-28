@@ -140,3 +140,31 @@ with these new single-seed trajectories.
   seven-task delayed-Frozen continuation, then seven-task Live continuation.
 - INR Live smoke is in its final evaluation; formal INR launch remains
   contingent on its paired audit. No new algorithm or budget changes.
+
+### 2026-09-28 16:04 CST: Both Formal Queues Launched
+
+- INR one-epoch prefix and both Task-3 continuations passed the paired audit:
+  `early_a_inr_seed1995_smoke_20260928_paired_audit.json`. Frozen A is
+  bit-identical and both suffixes preserve the 368,640-scalar state budget.
+- Formal launch code: `0734f7c`; CUB launch documentation commit `1c3d4b3`.
+  All CPU tests pass (546 passed, 1 skipped); both two-rank real-data smoke
+  experiments pass after the recorded restore/parser fixes.
+- Running user-systemd services:
+  - `codex-early-a-cub-formal-20260928.service`, PID 1358500, GPUs 4,5,
+    seed 1, started 16:01:52 CST.
+  - `codex-early-a-inr-formal-20260928.service`, PID 1363010, GPUs 6,7,
+    seed 1995, started 16:03:53 CST.
+- Both queues use nohup, per-GPU batch 64, rank 10, 20 epochs/task and
+  preserve the approved complete Frozen-protocol modules. Prefix is trained
+  once per dataset; both seven-task suffixes import its finalized Task2
+  snapshot. No learned gate or test-based policy selection is introduced.
+- Queue logs: `early_a_cub_formal_queue_20260928.log` and
+  `early_a_inr_formal_queue_20260928.log`. Per-item logs use config basename
+  plus `.log`; artifacts use the corresponding uppercase output directory.
+- `codex-early-a-monitor-20260928.timer` is active every 30 minutes; first
+  scheduled check is 16:33:53 CST. Monitor output:
+  `monitor_early_a_freeze_20260928.log`. It checks only these two queues and
+  stops its own timer when both are terminal; failures do not auto-restart.
+- CUB has completed several Task0 epochs. INR startup and its first epoch
+  are verified below before ending the launch session. Formal metrics are
+  pending; smoke accuracy is not reported as a formal result.

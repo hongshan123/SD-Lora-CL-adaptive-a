@@ -1159,3 +1159,34 @@ The actual activation and output-sensitivity statistics are not yet
 calibrated, so neither function sensitivity nor CIL accuracy has been
 validated. The unmatched INR split remains excluded from any accuracy
 claim. No new T=10 method experiment has been launched from this P0.
+
+### Attempt 6 matched-INR completion audit (2026-09-28)
+
+Both matched-data cuda6 services are terminal (`MainPID=0`, inactive,
+`ExecMainStatus=0`). Both runs have all ten Task 0-9 snapshots;
+**20/20** checksum audits pass. Their run manifests use the same
+code commit `f005e4776757dfbcde603650e8aad1d1c1fa03a7`, the registered
+seed1995/T10/rank10/20-epoch/two-GPU batch64 protocol and the isolated
+ImageNet-R copy whose manifests match the local reference data.
+Each final state has 24 Q/V A/G pairs, exactly 368,640 LoRA scalars,
+and identical A tensors in state and merged artifact. The Frozen-A
+control exactly reproduces the earlier local Top-1 curve.
+
+| Method | INR Final | AAA | Forgetting | Final delta vs complete Frozen |
+|---|---:|---:|---:|---:|
+| Frozen-A aligned | 78.75 | 81.941 | 5.946 | -- |
+| Joint-A/B SVD | 79.13 | 81.949 | 5.644 | +0.38 |
+
+Joint curve: `87.68,84.92,83.98,82.07,81.83,81.10,79.96,79.76,79.06,79.13`.
+Frozen curve: `87.68,85.30,84.23,82.26,81.93,81.13,79.72,79.61,78.80,78.75`.
+The remote logs are copied locally as
+`joint_ab_boundary_inr_seed1995_t10_matched_20260926_remote.log` and
+`frozen_margin_inr_t10_seed1995_matched_20260926_remote.log`.
+The original unmatched cuda6 INR result 79.01 remains excluded.
+
+Attempt 6 now has one **valid** strict >+0.20 win (INR +0.38), while
+C100 is +0.07 and CUB is -0.19. The user goal is still **not achieved**.
+The P0 function-sensitive Live-A/G code is not yet a deployed method
+and cannot be counted as a second win. Subsequent experiments must
+retain these complete Frozen-A controls, not substitute stripped or
+dataset-specific baselines.

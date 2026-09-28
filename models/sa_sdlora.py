@@ -976,6 +976,11 @@ class Learner(SDLoraLearner):
     """Shared-A SD-LoRA: task-invariant A, per-task B, exact final merging."""
 
     def __init__(self, args):
+        if (
+            args.get("sa_live_a_history_forward", "shared") == "anchored"
+            and args.get("sa_hbd_enabled", False)
+        ):
+            raise ValueError("anchored history is incompatible with sa_hbd_enabled")
         super().__init__(args)
         self._sa_cuo_lambda = validate_cuo_lowrank_config(args)
         self._sa_sbgc_settings = validate_sbgc_config(args)

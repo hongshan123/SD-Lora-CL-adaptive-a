@@ -17,7 +17,7 @@ from backbone.sa_lora import (
     live_a_historical_outputs,
     register_live_a_historical_capture_hooks,
 )
-from models.sa_sdlora import Learner
+from models.sa_sdlora import Learner, SDLoraLearner
 
 
 class _TinyAttention(nn.Module):
@@ -307,3 +307,19 @@ def test_hbd_task0_creates_no_loss_and_missing_teacher_raises():
     learner._hbd_teacher = None
     with pytest.raises(RuntimeError):
         learner._hbd_training_loss()
+
+
+def test_anchored_history_rejects_hbd_before_constructing_network(monkeypatch):
+    parent_calls = []
+
+    def construct_network(self, args):
+        parent_calls.append(args)
+        raise RuntimeError("invalid HBD combination reached model construction")
+
+    monkeypatch.setattr(SDLoraLearner, "__init__", construct_network)
+    with pytest.raises(ValueError, match="anchored history.*sa_hbd_enabled"):
+        Learner({
+            "sa_live_a_history_forward": "anchored",
+            "sa_hbd_enabled": True,
+        })
+    assert not parent_calls

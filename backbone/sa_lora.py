@@ -5145,14 +5145,18 @@ class SharedALoRA_ViT_timm(nn.Module):
                 wrapper.b_q.weight.square().sum()
                 + wrapper.b_v.weight.square().sum()
             ).item()
-        hist_grads = torch.autograd.grad(
-            hist_loss, a_params, retain_graph=True
+        hist_grads = (
+            torch.autograd.grad(
+                hist_loss, a_params, retain_graph=True, allow_unused=True
+            )
+            if hist_loss.requires_grad
+            else (None,) * len(a_params)
         )
         cur_grads = torch.autograd.grad(
             cur_loss, a_params, retain_graph=True
         )
         hist_da_norm = sum(
-            g.detach().square().sum().item() for g in hist_grads
+            g.detach().square().sum().item() for g in hist_grads if g is not None
         ) ** 0.5
         cur_da_norm = sum(
             g.detach().square().sum().item() for g in cur_grads

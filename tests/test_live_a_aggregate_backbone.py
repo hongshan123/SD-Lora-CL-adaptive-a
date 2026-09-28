@@ -190,6 +190,42 @@ def test_anchored_history_requires_joint_boundary(tmp_path):
         )
 
 
+@pytest.mark.parametrize("input_requires_grad", [False, True])
+def test_anchored_history_gradient_diagnostic_accepts_zero_history_grad(
+    tmp_path, input_requires_grad
+):
+    import copy
+
+    torch.manual_seed(76)
+    pristine = _TinyViT(8)
+    settings = dict(
+        r=3, filepath=str(tmp_path), train_a_all_tasks=True,
+        cumulative_state=True, cumulative_merge="live_a_aggregate_b",
+        live_a_coordinate_align=True, live_a_boundary_merge="joint_svd",
+        live_a_history_forward="anchored",
+    )
+    task0 = SharedALoRA_ViT_timm(copy.deepcopy(pristine), cur_task_index=0, **settings)
+    with torch.no_grad():
+        for module in task0.w_Bs:
+            module.weight.copy_(torch.randn_like(module.weight))
+    task0.save_lora_parameters(str(tmp_path), task_id=0)
+    task1 = SharedALoRA_ViT_timm(copy.deepcopy(pristine), cur_task_index=1, **settings)
+    with torch.no_grad():
+        for module in task1.w_Bs:
+            module.weight.copy_(torch.randn_like(module.weight))
+    a_grads = []
+    for module in task1.w_As:
+        module.weight.grad = torch.randn_like(module.weight)
+        a_grads.append(module.weight.grad.clone())
+    x = torch.randn(2, 4, 8, requires_grad=input_requires_grad)
+    diagnostic = task1.live_a_gradient_diagnostics(x)
+    assert diagnostic["historical_dL_dA"] == diagnostic["ratio_hist_cur"] == 0.0
+    assert diagnostic["current_dL_dA"] > 0.0
+    assert x.grad is None
+    for module, before in zip(task1.w_As, a_grads):
+        assert torch.equal(module.weight.grad, before)
+
+
 def test_live_a_bank_vs_aggregate_forward_and_a_grad():
     torch.manual_seed(11)
     dim, rank, tasks = 8, 3, 3

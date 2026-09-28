@@ -9,6 +9,7 @@ import torch.nn as nn
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils.sa_snapshot_resume import restore_sbgc_snapshot
+from utils import sa_snapshot_resume
 from utils.sa_task_snapshots import audit_snapshot
 
 
@@ -117,4 +118,53 @@ def test_snapshot_resume_rejects_protocol_mismatch_without_copying(tmp_path, mon
     args["batch_size"] = 32
     with pytest.raises(ValueError, match="batch_size"):
         restore_sbgc_snapshot(args, _Learner(), _Manager())
+    assert not (destination / "sa_state.pt").exists()
+
+
+def _live_fixture(tmp_path, monkeypatch):
+    source, destination, args, weight, bias = _fixture(tmp_path, monkeypatch)
+    config = json.loads((source / "config.json").read_text())
+    config.pop("sa_g_budget_scope")
+    config.update(
+        sa_cumulative_merge="live_a_aggregate_b", sa_cumulative_state=True,
+        sa_train_a_all_tasks=True, sa_deterministic_training=True,
+        sa_live_a_coordinate_align=True, max_tasks=2,
+    )
+    (source / "config.json").write_text(json.dumps(config))
+    torch.save({"version": 4, "task_id": 2, "merge_mode": "live_a_aggregate_b"},
+               source / "sa_state.pt")
+    (source / "complete.json").unlink()
+    audit_snapshot(source, finalize=True)
+    args = dict(config, max_tasks=10, sa_freeze_a_after_tasks=2,
+                sa_resume_snapshot=str(source), filepath=str(destination), rank=0)
+    return source, destination, args, weight, bias
+
+
+def test_live_snapshot_forks_a_completed_prefix_with_full_metric_history(tmp_path, monkeypatch):
+    assert hasattr(sa_snapshot_resume, "restore_task_snapshot"), "Live-A boundary resume is missing"
+    source, destination, args, weight, bias = _live_fixture(tmp_path, monkeypatch)
+    learner = _Learner()
+    start, metrics = sa_snapshot_resume.restore_task_snapshot(args, learner, _Manager())
+    assert start == 2
+    assert learner._known_classes == 40 and learner._cur_task == 1
+    assert torch.equal(learner.network.fc.weight, weight)
+    assert torch.equal(learner.network.fc.bias, bias)
+    assert metrics["top1"] == [90.0, 86.0]
+    assert (destination / "sa_state.pt").read_bytes() == (source / "sa_state.pt").read_bytes()
+
+
+def test_live_snapshot_rejects_a_different_prefix_policy(tmp_path, monkeypatch):
+    assert hasattr(sa_snapshot_resume, "restore_task_snapshot"), "Live-A boundary resume is missing"
+    _, destination, args, _, _ = _live_fixture(tmp_path, monkeypatch)
+    args["sa_freeze_a_after_tasks"] = 1
+    with pytest.raises(ValueError, match="prefix A policy"):
+        sa_snapshot_resume.restore_task_snapshot(args, _Learner(), _Manager())
+    assert not (destination / "sa_state.pt").exists()
+
+
+def test_live_snapshot_rejects_an_added_training_setting(tmp_path, monkeypatch):
+    _, destination, args, _, _ = _live_fixture(tmp_path, monkeypatch)
+    args["sa_hbd_lambda"] = 0.1
+    with pytest.raises(ValueError, match="sa_hbd_lambda"):
+        sa_snapshot_resume.restore_task_snapshot(args, _Learner(), _Manager())
     assert not (destination / "sa_state.pt").exists()

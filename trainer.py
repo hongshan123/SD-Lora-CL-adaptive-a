@@ -87,9 +87,9 @@ def _train(args):
     args["nb_classes"] = data_manager.nb_classes # update args
     args["nb_tasks"] = data_manager.nb_tasks
     model = factory.get_model(args["model_name"], args)
-    from utils.sa_snapshot_resume import restore_sbgc_snapshot
+    from utils.sa_snapshot_resume import restore_task_snapshot
 
-    start_task, restored_metrics = restore_sbgc_snapshot(args, model, data_manager)
+    start_task, restored_metrics = restore_task_snapshot(args, model, data_manager)
     if restored_metrics is not None and _is_main_process(args):
         logging.info(
             "[SnapshotResume] restored through task %d; next task %d; "

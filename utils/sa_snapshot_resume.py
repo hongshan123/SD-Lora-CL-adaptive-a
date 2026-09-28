@@ -1,4 +1,4 @@
-"""Restore a completed SBGC task boundary into a fresh training run."""
+"""Restore a completed deterministic task boundary into a fresh run."""
 
 import json
 import re
@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 import torch.distributed as dist
 
-from backbone.sa_lora import SA_STATE_VERSION_SBGC_GLOBAL
+from backbone.sa_lora import SA_STATE_VERSION_LIVE_A, SA_STATE_VERSION_SBGC_GLOBAL
 from utils.sa_task_snapshots import audit_snapshot
 
 
@@ -65,14 +65,49 @@ def _previous_metrics(config, task_count):
 
 
 def restore_sbgc_snapshot(args, learner, data_manager):
-    """Return (next task, prior metrics), or (0, None) for a fresh run."""
-    snapshot_arg = args.get("sa_resume_snapshot")
-    if not snapshot_arg:
+    """Compatibility entry point retaining the original global-SBGC guard."""
+    if not args.get("sa_resume_snapshot"):
         return 0, None
     if args.get("model_name") != "sa_sdlora" or args.get(
         "sa_cumulative_merge"
     ) != "sensitivity_budgeted_g" or args.get("sa_g_budget_scope") != "global":
         raise ValueError("snapshot resume is restricted to global SBGC")
+    return _restore_completed_snapshot(args, learner, data_manager, live=False)
+
+
+def restore_task_snapshot(args, learner, data_manager):
+    """Dispatch the audited global-SBGC or aligned Live-A boundary restore."""
+    if not args.get("sa_resume_snapshot"):
+        return 0, None
+    if args.get("sa_cumulative_merge") != "live_a_aggregate_b":
+        return restore_sbgc_snapshot(args, learner, data_manager)
+    if (
+        args.get("model_name") != "sa_sdlora"
+        or not args.get("sa_cumulative_state", False)
+        or not args.get("sa_deterministic_training", False)
+        or args.get("sa_adaptive_a_enabled", False)
+        or args.get("sa_dual_head", False)
+        or args.get("sa_live_a_boundary_merge", "aligned") != "aligned"
+        or args.get("sa_live_a_history_forward", "shared") != "shared"
+    ):
+        raise ValueError("Live-A snapshot resume requires deterministic aligned state without controllers")
+    return _restore_completed_snapshot(args, learner, data_manager, live=True)
+
+
+def _prefix_a_trainable(config, task):
+    freeze_after = config.get("sa_freeze_a_after_tasks")
+    if freeze_after is not None and (
+        isinstance(freeze_after, bool) or not isinstance(freeze_after, int)
+        or freeze_after <= 0
+    ):
+        raise ValueError("sa_freeze_a_after_tasks must be a positive integer")
+    return (task == 0 or config.get("sa_train_a_all_tasks", False)) and (
+        freeze_after is None or task < freeze_after
+    )
+
+
+def _restore_completed_snapshot(args, learner, data_manager, live):
+    snapshot_arg = args.get("sa_resume_snapshot")
     if args.get("sa_resume", False):
         raise ValueError("snapshot resume requires a fresh output directory")
 
@@ -81,19 +116,30 @@ def restore_sbgc_snapshot(args, learner, data_manager):
     if not audit["verified"]:
         raise ValueError("resume requires a finalized snapshot")
     source_config = json.loads((snapshot / "config.json").read_text())
-    for key, value in source_config.items():
-        if key not in _RUNTIME_KEYS and args.get(key) != value:
+    allowed_changes = _RUNTIME_KEYS | (
+        {"max_tasks", "sa_freeze_a_after_tasks", "sa_train_a_all_tasks"}
+        if live else set()
+    )
+    protocol_keys = source_config.keys() | args.keys() if live else source_config.keys()
+    for key in protocol_keys:
+        if key not in allowed_changes and args.get(key) != source_config.get(key):
             raise ValueError(f"resume protocol differs at {key}")
     state = torch.load(snapshot / "sa_state.pt", map_location="cpu", weights_only=True)
-    if state.get("version") != SA_STATE_VERSION_SBGC_GLOBAL or state.get(
-        "budget_scope"
-    ) != "global":
+    if live:
+        if state.get("version") != SA_STATE_VERSION_LIVE_A or state.get("merge_mode") != "live_a_aggregate_b":
+            raise ValueError("resume snapshot is not aligned Live-A v4")
+    elif state.get("version") != SA_STATE_VERSION_SBGC_GLOBAL or state.get("budget_scope") != "global":
         raise ValueError("resume snapshot is not global SBGC v8")
     start_task = int(state["task_id"])
     if start_task != int(audit["task_id"]) + 1 or not (
         0 < start_task < min(data_manager.nb_tasks, int(args.get("max_tasks", data_manager.nb_tasks)))
     ):
         raise ValueError("resume task index does not match the completed snapshot")
+    if live and any(
+        _prefix_a_trainable(source_config, task) != _prefix_a_trainable(args, task)
+        for task in range(start_task)
+    ):
+        raise ValueError("resume prefix A policy differs from the source trajectory")
     completed_classes = sum(data_manager.get_task_size(i) for i in range(start_task))
     weight_name = f"CLs_weight{start_task - 1}.pt"
     bias_name = f"CLs_bias{start_task - 1}.pt"

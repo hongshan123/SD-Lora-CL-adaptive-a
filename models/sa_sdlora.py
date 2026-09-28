@@ -1244,6 +1244,7 @@ class Learner(SDLoraLearner):
             cur_task_index=cur_task_index,
             shared_a_orthogonal=self.args.get("sa_shared_a_orthogonal", True),
             train_a_all_tasks=self.args.get("sa_train_a_all_tasks", False),
+            freeze_a_after_tasks=self.args.get("sa_freeze_a_after_tasks"),
             delete_per_task_files=self.args.get("sa_delete_per_task_files", False),
             cumulative_state=self.args.get("sa_cumulative_state", False),
             cumulative_gauge=self.args.get("sa_cumulative_gauge", True),
@@ -1272,6 +1273,17 @@ class Learner(SDLoraLearner):
             resume=self.args.get("sa_resume", False),
         )
         model.out_dim = 768
+        if self.args.get("sa_freeze_a_after_tasks") is not None and self._is_main_process():
+            logging.info(
+                "[SharedAFreeze] task=%d A_trainable=%s freeze_after_tasks=%d "
+                "trainable_A_params=%d trainable_B_params=%d",
+                cur_task_index, model.train_a_current_task,
+                model.freeze_a_after_tasks,
+                sum(module.weight.numel() for module in model.w_As
+                    if module.weight.requires_grad),
+                sum(module.weight.numel() for module in model.w_Bs
+                    if module.weight.requires_grad),
+            )
         return model
 
     def _after_backward(self, inputs=None, targets=None, optimizer=None):

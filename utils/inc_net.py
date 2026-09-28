@@ -53,6 +53,7 @@ def get_backbone(args, pretrained=False):
                 cur_task_index=0,
                 shared_a_orthogonal=args.get("sa_shared_a_orthogonal", True),
                 train_a_all_tasks=args.get("sa_train_a_all_tasks", False),
+                freeze_a_after_tasks=args.get("sa_freeze_a_after_tasks"),
                 delete_per_task_files=args.get("sa_delete_per_task_files", False),
                 cumulative_state=args.get("sa_cumulative_state", False),
                 cumulative_gauge=args.get("sa_cumulative_gauge", True),

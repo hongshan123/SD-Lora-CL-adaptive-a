@@ -2162,9 +2162,29 @@ class SharedALoRA_ViT_timm(nn.Module):
         functional_temperature=2.0,
         resume=False,
         live_a_history_forward="shared",
+        freeze_a_after_tasks=None,
     ):
         super().__init__()
         assert r > 0
+        if freeze_a_after_tasks is not None:
+            if (
+                isinstance(freeze_a_after_tasks, bool)
+                or not isinstance(freeze_a_after_tasks, int)
+                or freeze_a_after_tasks <= 0
+            ):
+                raise ValueError("sa_freeze_a_after_tasks must be a positive integer")
+            if (
+                not train_a_all_tasks
+                or not cumulative_state
+                or cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+                or adaptive_a_enabled
+                or live_a_boundary_merge != "aligned"
+                or live_a_history_forward != "shared"
+            ):
+                raise ValueError(
+                    "sa_freeze_a_after_tasks requires an aligned Live-A prefix "
+                    "without an Adaptive-A controller"
+                )
         if cumulative_merge not in (
             SA_MERGE_MODE_GAUGE,
             SA_MERGE_MODE_UNION_SVD,
@@ -2476,6 +2496,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         self.increment = increment
         self.shared_a_orthogonal = bool(shared_a_orthogonal)
         self.train_a_all_tasks = bool(train_a_all_tasks)
+        self.freeze_a_after_tasks = freeze_a_after_tasks
         self.delete_per_task_files = bool(delete_per_task_files)
         self.cumulative_state = bool(cumulative_state)
         self.cumulative_gauge = bool(cumulative_gauge)
@@ -2491,6 +2512,12 @@ class SharedALoRA_ViT_timm(nn.Module):
             self.task_id, self.cur_id = 0, 0
         if cur_task_index is not None:
             self.task_id = cur_task_index
+        self.train_a_current_task = (
+            self.task_id == 0 or self.train_a_all_tasks
+        ) and (
+            self.freeze_a_after_tasks is None
+            or self.task_id < self.freeze_a_after_tasks
+        )
 
         for param in vit_model.parameters():
             param.requires_grad = False
@@ -3093,7 +3120,7 @@ class SharedALoRA_ViT_timm(nn.Module):
             self.w_As.extend([a_q, a_v])
             self.w_Bs.extend([b_q, b_v])
 
-            if self.task_id > 0 and not self.train_a_all_tasks:
+            if self.task_id > 0 and not self.train_a_current_task:
                 a_q.weight.data.copy_(shared_a[offset].to(a_q.weight.dtype))
                 a_v.weight.data.copy_(shared_a[offset + 1].to(a_v.weight.dtype))
                 a_q.weight.requires_grad_(False)

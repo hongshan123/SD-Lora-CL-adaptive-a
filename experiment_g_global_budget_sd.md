@@ -1361,3 +1361,53 @@ MainPIDs are now zero. Their logs/output directories were archived to
 `ANCHORED_JOINT_AB_INVALID_DIAGNOSTIC_20260928/`. Restart smoke from fresh
 Task0; do not combine the partial r1 results with later runs or count
 their Task0 accuracy as a completed experiment.
+
+### Attempt 8 validated smoke and independent-basis snapshots
+
+Audit time: 2026-09-28 10:20 CST. All three r2 user-systemd/nohup
+services are terminal with `MainPID=0`, `ExecMainStatus=0`. Each has
+exactly two completed real-data tasks, two epochs per task, two ranks
+and batch64 per rank. These runs use training commit `ce9d5fb` and are
+path checks, not T10 performance evidence.
+
+| Smoke | Task0 Top-1 | Task1 Top-1 | Two-task AAA | Forgetting | Task1 mean/max relative SVD truncation |
+|---|---:|---:|---:|---:|---:|
+| C100 seed1993 | 96.90 | 95.90 | 96.400 | 0.900 | 0.003778 / 0.017029 |
+| INR seed1995 | 83.95 | 82.10 | 83.025 | 1.130 | 0.002390 / 0.014059 |
+| CUB seed1 | 96.87 | 92.57 | 94.720 | 6.090 | 0.000092 / 0.000341 |
+
+All six Task0/1 checksum audits pass, with eight hashed files each.
+Every state/merged artifact records `history_forward="anchored"` and
+`boundary_merge="joint_svd"`; factors are finite, all 24 Q/V A/G pairs
+are present, and A tensors match between state and deployment artifact.
+Persisted LoRA factors remain exactly **368,640 scalars** at both tasks.
+Prototype rank synchronization, evaluation RNG hashes and model tensor
+hashes pass for all six evaluations. No communication hang or traceback
+occurs in the validated r2 logs.
+
+The existing v1 research pre-merge snapshot assumed a shared historical
+and current down basis. That assumption is false for anchored history.
+Commit `26b1bd5` introduces research snapshot v3 storing the immutable
+historical down factor and its already-normalized up factor separately
+from current A/B. Replay uses these explicit factors, without a second
+normalization, and preserves current A independently. Tests first
+reproduced incorrect v1 capture/replay, then verify exact branch replay.
+The full suite passes **524 tests** in this GPU-visible environment.
+This is a research capture/replay change only: training, persistent
+deployment state, NormCap, joint SVD, transport and classifier are
+unchanged. Default shared snapshots stay v1; SBGC capture stays v2.
+This particular shared/anchored intrusion replay command now explicitly
+rejects unsupported v2 instead of silently applying shared normalization.
+
+Completed r2 smoke snapshots still contain the older v1 pre-merge
+format, because their processes started before this capture change.
+Do not rewrite their files or completion hashes. The diagnostic CLI
+rejects legacy anchored v1 rather than silently producing wrong outputs;
+manual reconstruction would require the preceding saved task state.
+Fresh formal runs will capture explicit v3 factors. Rerunning real-data
+smoke solely for this analysis-format change is not required: the
+training code is identical and the new capture/replay tests pass.
+
+Attempt 8 is ready for its registered three full T10 runs, not declared
+successful. Complete Frozen-A Final references remain C100 88.17,
+INR 78.75, CUB 84.40. Strict >+0.20 on two datasets is still unverified.

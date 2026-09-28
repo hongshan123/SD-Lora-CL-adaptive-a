@@ -1190,3 +1190,61 @@ The P0 function-sensitive Live-A/G code is not yet a deployed method
 and cannot be counted as a second win. Subsequent experiments must
 retain these complete Frozen-A controls, not substitute stripped or
 dataset-specific baselines.
+
+### Attempt 7 P1: offline functional calibration and CUB boundary check
+
+Added an opt-in, offline QKV statistics collector and a sequential
+calibration command. Each saved task is calibrated on **its own training
+classes only**, with deterministic test preprocessing and the saved
+deployed backbone/prototype cosine head. Frozen parameters receive no
+`.grad`; Q/V output derivatives are collected with `autograd.grad` and
+the batch CE mean is undone before squaring. The collector preserves
+the graph through earlier QKV outputs and removes all temporary hooks.
+Calibration wraps model creation and loading in RNG preservation and
+checks the model tensor hash. It is not wired into training or DDP.
+
+CUB Task 0-8 sequential calibration used batch16 on local GPU4. Sample
+counts were `600,600,598,600,599,600,599,600,600`; all nine model/RNG
+hash checks passed. All statistics are finite. The final mean sensitivity
+CV is 1.357554. Running state has 12 input vectors and 24 sensitivity
+vectors, **27,648 FP32 values**, plus 36 counts. Task metadata and paired
+diagnostic logits are research artifacts, not deployment state.
+
+For a cheap falsification check, only the Task-9 boundary was replaced.
+Historical statistics stop at Task 8. Current statistics use Task 9's
+own 598 training samples; they are not added to the history before
+solving. Importantly, the current calibration uses the **already saved
+joint-SVD backbone and prototype head**. This is diagnostic lookahead,
+not an online-valid pre-merge calibration or a newly trained method.
+The candidates retain the trained pre-merge A and solve G jointly across
+24 branches with the preregistered 5% functional surrogate budget.
+Uniform uses the same input moments but unit output sensitivities.
+
+| CUB Task-9 candidate | Old test Top-1 | New test Top-1 | Full test Top-1 | Total historical surrogate risk | Irrecoverable risk | Current distortion | Dual eta |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Saved joint-SVD | 84.299 | 83.417 | 84.208 | -- | -- | -- | -- |
+| Functional uniform | 84.145 | 83.752 | 84.104 | 0.050000000 | 0.008865687 | 0.140206594 | 0.599110010 |
+| Functional Fisher | 84.068 | 83.752 | 84.035 | 0.050000000 | 0.008806661 | 0.092014209 | 0.432624652 |
+
+All candidates use the exact same saved prototype head and 5,794 test
+samples (5,197 old; 597 new). Fisher improves new-class accuracy versus
+joint but loses more old-class accuracy, giving a net -0.173 points;
+uniform is -0.104. Fisher's smaller reported target distortion is
+**not a common-metric improvement over uniform**, because the two
+objective weightings differ. Meeting the branch surrogate risk budget
+does not demonstrate improved class margins or reduced forgetting.
+
+The six raw statistics/candidate/paired-logit files were retained under
+`LIVE_A_FUNCTIONAL_DIAGNOSTIC_CUB_T9_20260928/` rather than left only in
+`/tmp`. Focused collector/calibration tests and the full CPU suite pass:
+**514 passed, 1 skipped**. No new formal T=10 run has been launched.
+Offline calibration implementation/tests are committed as `50346e9`.
+A separate read-only review was requested but returned no findings
+before it was stopped; it is not counted as completed verification.
+This single-boundary negative result neither proves that all A/B
+function-sensitive training must fail nor supports integrating this
+5% diagonal-Fisher boundary solver as the next expensive main experiment.
+Before any such integration, calibration must be made pre-merge and
+the historical-function proxy validated against paired old-class
+prediction changes. The two-dataset Final improvement goal remains
+unmet; Attempt 6 still contributes only the matched-INR +0.38 result.

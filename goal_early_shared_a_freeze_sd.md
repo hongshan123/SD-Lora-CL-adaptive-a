@@ -165,6 +165,8 @@ with these new single-seed trajectories.
   scheduled check is 16:33:53 CST. Monitor output:
   `monitor_early_a_freeze_20260928.log`. It checks only these two queues and
   stops its own timer when both are terminal; failures do not auto-restart.
-- CUB has completed several Task0 epochs. INR startup and its first epoch
-  are verified below before ending the launch session. Formal metrics are
-  pending; smoke accuracy is not reported as a formal result.
+- Startup verification at 16:04:32 CST: CUB completed Task0 epoch 10/20 and
+  INR completed Task0 epoch 1/20. Both formal services are active/running,
+  each selected GPU uses about 8.5 GiB, and no startup traceback or NCCL
+  timeout is present. Formal metrics are pending; smoke accuracy is not
+  reported as a formal result.

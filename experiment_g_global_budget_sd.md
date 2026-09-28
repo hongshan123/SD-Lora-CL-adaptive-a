@@ -1337,3 +1337,27 @@ Python `-u -m torch.distributed.run --standalone --nproc_per_node=2
 main.py --config=./exps/anchored_joint_ab_*_t2_e2_smoke_20260928.json`.
 Training code/config commit is `38604c8`. Formal T10 runs are still
 gated on completed real-data smoke audits, not launcher success.
+
+### Attempt 8 real-data diagnostic compatibility fix
+
+The corrected CUB smoke completed Task0 training, absorption, deployment
+rebuild, rank-consistent prototypes and snapshot checks, then failed at
+the first Task1 batch. The existing `live_a_gradient_diagnostics` called
+`autograd.grad(hist_loss, current_A)` unconditionally. Anchored history
+has no direct dependence on current A, so this loss has no grad_fn when
+its input is frozen, or unused A inputs when x requires grad. This is a
+logging-path incompatibility, not a non-finite training gradient.
+
+Two regression cases first reproduced both errors, then the diagnostic
+was changed to handle absent/unused historical gradients as zero while
+leaving current gradients and previously accumulated `.grad` unchanged.
+The full suite is now **521 passed, 1 skipped**. The same-mode shared
+diagnostic tests still pass. No optimizer, classifier, absorption,
+transport or training-forward formula was changed by this fix.
+
+The C100/INR r1 smoke services were explicitly stopped rather than left
+running code with the same known diagnostic incompatibility. All three
+MainPIDs are now zero. Their logs/output directories were archived to
+`ANCHORED_JOINT_AB_INVALID_DIAGNOSTIC_20260928/`. Restart smoke from fresh
+Task0; do not combine the partial r1 results with later runs or count
+their Task0 accuracy as a completed experiment.

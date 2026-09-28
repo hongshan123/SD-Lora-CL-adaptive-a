@@ -1,5 +1,6 @@
 """Read-only 30-minute monitoring for the two early-freeze queues."""
 
+import argparse
 import datetime
 import subprocess
 from pathlib import Path
@@ -17,10 +18,10 @@ def command(arguments):
     return result.stdout + result.stderr
 
 
-def main():
+def main(controller_unit=None):
     terminal = True
     print(datetime.datetime.now().astimezone().isoformat(), flush=True)
-    for unit in UNITS:
+    for unit in ((controller_unit,) if controller_unit else UNITS):
         status = command([
             "systemctl", "--user", "show", unit, "--property=LoadState",
             "--property=ActiveState", "--property=SubState",
@@ -37,6 +38,7 @@ def main():
         "Task ", "CNN top1 curve", "Forgetting (CNN)", "SnapshotResume",
         "SharedAFreeze", "Traceback", "NCCL", "Error", "QUEUE_EXIT",
         "START ", "END ", "FORK_VERIFIED",
+        "WAIT_FOR_GPUS", "DATASET_START", "DATASET_END", "GPU_QUERY_FAILED",
     )
     for path in sorted(ROOT.glob("early_a_*20260928*.log")):
         if "smoke" in path.name:
@@ -54,4 +56,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--controller-unit")
+    main(parser.parse_args().controller_unit)

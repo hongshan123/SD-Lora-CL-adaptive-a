@@ -2,7 +2,9 @@ from pathlib import Path
 
 import torch
 from torch import nn
+import pytest
 
+from backbone.lora import ParameterWrapper
 from backbone.sa_lora import _LiveAAggregateQKV, _SensitivityBudgetedGQKV
 from utils.sa_task_snapshots import audit_snapshot, capture_pre_merge, save_post_merge
 from scripts.diagnose_main_branch_intrusion import summarize_intrusion
@@ -85,6 +87,77 @@ def test_sbgc_pre_merge_snapshot_reconstructs_fixed_p_and_current_branch():
     assert snapshot["version"] == 2
     assert torch.allclose(historical, expected_historical)
     assert torch.allclose(current, expected_current)
+
+
+def test_anchored_snapshot_records_independent_history_basis():
+    torch.manual_seed(31)
+    down = nn.Linear(5, 2, bias=False)
+    up = nn.Linear(2, 5, bias=False)
+    scale = torch.tensor(0.7)
+    wrapper = _LiveAAggregateQKV(
+        nn.Linear(5, 15), down, down, up, up,
+        torch.randn(5, 2), torch.randn(5, 2),
+        [ParameterWrapper(nn.Parameter(scale.clone()))], 0,
+        history_forward="anchored",
+    )
+    with torch.no_grad():
+        down.weight.add_(torch.randn_like(down.weight))
+    backbone = FakeBackbone(wrapper, down, up, scale)
+    snapshot = capture_pre_merge(backbone, nn.Linear(5, 3), {}, 1, 2, 3)
+    assert snapshot["version"] == 3
+    assert snapshot["history_forward"] == "anchored"
+    inputs = torch.randn(2, 4, 5)
+    for branch, expected in zip(snapshot["branches"], wrapper.historical_output(inputs)):
+        actual = torch.nn.functional.linear(
+            torch.nn.functional.linear(inputs, branch["historical_down"]),
+            branch["historical_up"],
+        )
+        assert torch.equal(actual, expected)
+        assert not torch.equal(branch["down"], branch["historical_down"])
+
+
+def test_anchored_snapshot_replay_keeps_current_and_historical_bases(monkeypatch):
+    from scripts.causal_subspace_intervention import TaskQKV
+    from scripts.diagnose_main_branch_intrusion import build_model
+
+    class TinyTaskModel(nn.Module):
+        def __init__(self, state, old_weight, old_bias, new_classes, live):
+            super().__init__()
+            self.scale = nn.Parameter(torch.tensor(0.8))
+            self.fc = nn.Linear(5, len(old_weight) + new_classes)
+            self.wrappers = nn.ModuleList([
+                TaskQKV(
+                    nn.Linear(5, 15), state["projection_down"][index],
+                    state["unified_up"][index], state["projection_down"][index + 1],
+                    state["unified_up"][index + 1], lambda: self.scale, live,
+                ) for index in range(0, 24, 2)
+            ])
+
+    monkeypatch.setattr("scripts.diagnose_main_branch_intrusion.TaskModel", TinyTaskModel)
+    torch.manual_seed(32)
+    historical_down = torch.eye(5)[:2]
+    current_down = torch.eye(5)[2:4]
+    historical_up = torch.randn(5, 2)
+    current_up = torch.randn(5, 2)
+    snapshot = {
+        "version": 3, "history_forward": "anchored",
+        "normalize_current_branch": False, "known_classes": 2, "total_classes": 3,
+        "current_scale": torch.tensor(0.7), "fc_weight": torch.randn(3, 5),
+        "fc_bias": torch.randn(3), "branches": [{
+            "down": current_down, "current_up": current_up,
+            "historical_down": historical_down, "historical_up": historical_up,
+        } for _ in range(24)],
+    }
+    model = build_model(snapshot, torch.device("cpu"))
+    x = torch.randn(2, 4, 5)
+    wrapper = model.wrappers[0]
+    raw = wrapper.qkv(x)
+    change = x @ (historical_up @ historical_down + 0.7 * current_up @ current_down).T
+    expected = torch.cat((raw[..., :5] + change, raw[..., 5:10], raw[..., -5:] + change), -1)
+    assert torch.allclose(wrapper(x), expected, atol=1e-6, rtol=1e-6)
+    invalid = {**snapshot, "version": 1}
+    with pytest.raises(ValueError, match="explicit historical factors"):
+        build_model(invalid, torch.device("cpu"))
 
 
 def test_post_merge_copies_task_local_artifacts(tmp_path):

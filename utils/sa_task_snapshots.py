@@ -63,6 +63,9 @@ def capture_pre_merge(backbone, fc, old_prototypes, task_id, known_classes, tota
     ]
     if len(wrappers) != len(backbone.lora_vit.blocks):
         raise RuntimeError("every attention block must have the configured QKV wrapper")
+    anchored_history = (
+        wrapper_type is _LiveAAggregateQKV and wrappers[0].history_forward == "anchored"
+    )
     branches = []
     for wrapper in wrappers:
         for suffix in ("q", "v"):
@@ -85,13 +88,23 @@ def capture_pre_merge(backbone, fc, old_prototypes, task_id, known_classes, tota
                     branch["current_effective_up"] = _cpu(effective_up)
                     branch["training_projection_alpha"] = _cpu(alpha)
                     branch["raw_historical_risk"] = _cpu(raw_risk)
+            elif anchored_history:
+                branch["historical_down"] = _cpu(
+                    getattr(wrapper, "recoverability_anchor_a_" + suffix)
+                )
+                branch["historical_up"] = _cpu(
+                    getattr(wrapper, "recoverability_anchor_up_" + suffix)
+                )
             else:
                 branch["historical_up"] = _cpu(
                     getattr(wrapper, "aggregate_" + suffix)
                 )
             branches.append(branch)
     snapshot = {
-        "version": 2 if backbone.cumulative_merge == "sensitivity_budgeted_g" else 1,
+        "version": (
+            2 if backbone.cumulative_merge == "sensitivity_budgeted_g"
+            else 3 if anchored_history else 1
+        ),
         "stage": "pre_merge",
         "task_id": int(task_id),
         "known_classes": int(known_classes),
@@ -107,8 +120,10 @@ def capture_pre_merge(backbone, fc, old_prototypes, task_id, known_classes, tota
             int(key): _cpu(value) for key, value in old_prototypes.items()
         },
     }
-    if snapshot["version"] == 2:
+    if snapshot["version"] in (2, 3):
         snapshot["merge_mode"] = backbone.cumulative_merge
+    if anchored_history:
+        snapshot["history_forward"] = "anchored"
     return snapshot
 
 

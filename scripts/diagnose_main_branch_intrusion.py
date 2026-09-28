@@ -27,13 +27,24 @@ def build_model(snapshot, device):
     branches = snapshot["branches"]
     if len(branches) != 24:
         raise ValueError("expected 24 Q/V branches for ViT-B/16")
-    state = {
-        "projection_down": [item["down"] for item in branches],
-        "unified_up": [
-            item["historical_up"] / (item["down"].norm() + 1e-8)
-            for item in branches
-        ],
-    }
+    version = int(snapshot.get("version", 1))
+    if version == 3:
+        if snapshot.get("history_forward") != "anchored":
+            raise ValueError("v3 snapshot must use anchored history")
+        state = {
+            "projection_down": [item["historical_down"] for item in branches],
+            "unified_up": [item["historical_up"] for item in branches],
+        }
+    elif version == 1 and snapshot.get("history_forward", "shared") == "shared":
+        state = {
+            "projection_down": [item["down"] for item in branches],
+            "unified_up": [
+                item["historical_up"] / (item["down"].norm() + 1e-8)
+                for item in branches
+            ],
+        }
+    else:
+        raise ValueError("this diagnostic requires shared v1 or explicit historical factors in anchored v3")
     model = TaskModel(
         state,
         snapshot["fc_weight"][:snapshot["known_classes"]],
@@ -46,6 +57,8 @@ def build_model(snapshot, device):
         model.fc.weight.copy_(snapshot["fc_weight"])
         model.fc.bias.copy_(snapshot["fc_bias"])
         for layer, wrapper in enumerate(model.wrappers):
+            wrapper.a_q.copy_(branches[2 * layer]["down"])
+            wrapper.a_v.copy_(branches[2 * layer + 1]["down"])
             wrapper.b_q.copy_(branches[2 * layer]["current_up"])
             wrapper.b_v.copy_(branches[2 * layer + 1]["current_up"])
     return model.to(device).eval()
@@ -123,6 +136,10 @@ def main():
     directory = args.run_dir / "task_snapshots" / f"task_{args.task:03d}"
     snapshot = torch.load(directory / "pre_merge.pt", map_location="cpu", weights_only=False)
     config = json.loads((directory / "config.json").read_text())
+    if config.get("sa_live_a_history_forward", "shared") == "anchored" and snapshot.get(
+        "history_forward"
+    ) != "anchored":
+        raise ValueError("legacy anchored snapshot lacks explicit historical factors")
     if snapshot["task_id"] != args.task or args.task == 0:
         raise ValueError("diagnostic requires a matching incremental task >= 1")
     device = torch.device(args.device)

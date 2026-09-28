@@ -158,6 +158,10 @@ def main():
     audit_snapshot(current_dir)
     config = json.loads((current_dir / "config.json").read_text())
     pre = torch.load(current_dir / "pre_merge.pt", map_location="cpu", weights_only=False)
+    if config.get("sa_live_a_history_forward", "shared") == "anchored" and pre.get(
+        "history_forward"
+    ) != "anchored":
+        raise ValueError("legacy anchored snapshot lacks explicit historical factors")
     old = torch.load(previous_dir / "sa_state.pt", map_location="cpu", weights_only=True)
     deployed = torch.load(current_dir / "sa_merged_lora.pt", map_location="cpu", weights_only=True)
     prototypes = torch.load(current_dir / "sa_prototypes.pt", map_location="cpu", weights_only=True)

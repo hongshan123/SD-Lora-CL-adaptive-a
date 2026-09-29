@@ -109,14 +109,22 @@ def prepare_data_link(root, dataset):
     return link
 
 
-def build_jobs(root, config_root, runtime, tag, smoke=False, reuse_existing=False):
+def validate_seeds(seeds):
+    seeds = tuple(seeds)
+    if not seeds or any(type(seed) is not int or seed < 0 for seed in seeds) or len(set(seeds)) != len(seeds):
+        raise ValueError("seeds must be a nonempty sequence of distinct nonnegative integers")
+    return seeds
+
+
+def build_jobs(root, config_root, runtime, tag, smoke=False, reuse_existing=False, seeds=SEEDS):
     if not re.fullmatch(r"[A-Za-z0-9_]+", tag):
         raise ValueError("run tag must contain only letters, digits and underscores")
+    seeds = validate_seeds(seeds)
     source = json.loads((Path(root) / "exps/frozen_margin_inr_t10_seed1995.json").read_text())
     runtime = Path(runtime).resolve()
     jobs = []
     for method in ("frozen", "live"):
-        for seed in ((1995,) if smoke else SEEDS):
+        for seed in (seeds[:1] if smoke else seeds):
             name = f"ina_{'smoke' if smoke else 'formal'}_{method}_seed{seed}_{tag}"
             config = dict(source)
             config.update(dataset="imageneta", prefix=name, filepath=str(runtime / "results" / name) + "/", seed=[seed], sa_train_a_all_tasks=method == "live")
@@ -132,7 +140,7 @@ def build_jobs(root, config_root, runtime, tag, smoke=False, reuse_existing=Fals
     return jobs
 
 
-def validate_gpu_pairs(value):
+def validate_gpu_pairs(value, excluded_gpus=(2, 3)):
     pairs = tuple(pair.strip() for pair in value.split(";") if pair.strip())
     used = []
     for pair in pairs:
@@ -140,7 +148,7 @@ def validate_gpu_pairs(value):
         if len(ids) != 2 or any(not item.isdigit() for item in ids):
             raise ValueError("every GPU slot must contain exactly two GPU IDs")
         used.extend(int(item) for item in ids)
-    if not pairs or len(set(used)) != len(used) or any(item not in {0, 1, 4, 5, 6, 7} for item in used):
+    if not pairs or len(set(used)) != len(used) or any(item not in range(8) or item in excluded_gpus for item in used):
         raise ValueError("GPU pairs overlap or contain an excluded/nonexistent GPU")
     return pairs
 
@@ -177,20 +185,22 @@ def parse_training_log(text, tasks=10):
     return result
 
 
-def paired_summary(records):
+def paired_summary(records, seeds=SEEDS):
+    seeds = validate_seeds(seeds)
+    expected_count = 2 * len(seeds)
     selected = {(item["method"], item["seed"]): item for item in records if item["complete"]}
-    if len(selected) != 6 or any((method, seed) not in selected for method in ("frozen", "live") for seed in SEEDS):
+    if len(records) != expected_count or len(selected) != expected_count or any((method, seed) not in selected for method in ("frozen", "live") for seed in seeds):
         return None
     summary = {}
     for method in ("frozen", "live"):
         summary[method] = {}
         for metric in ("final", "aaa", "forgetting"):
-            values = [selected[method, seed][metric] for seed in SEEDS]
-            summary[method][metric] = dict(mean=statistics.mean(values), sample_std=statistics.stdev(values))
+            values = [selected[method, seed][metric] for seed in seeds]
+            summary[method][metric] = dict(mean=statistics.mean(values), sample_std=statistics.stdev(values) if len(values) > 1 else None)
     summary["paired_live_minus_frozen"] = {}
     for metric in ("final", "aaa", "forgetting"):
-        values = [selected["live", seed][metric] - selected["frozen", seed][metric] for seed in SEEDS]
-        summary["paired_live_minus_frozen"][metric] = dict(values=values, mean=statistics.mean(values), sample_std=statistics.stdev(values))
+        values = [selected["live", seed][metric] - selected["frozen", seed][metric] for seed in seeds]
+        summary["paired_live_minus_frozen"][metric] = dict(values=values, mean=statistics.mean(values), sample_std=statistics.stdev(values) if len(values) > 1 else None)
     return summary
 
 
@@ -243,7 +253,7 @@ def report(runtime, phase):
     runtime = Path(runtime)
     manifest = json.loads((runtime / "manifest.json").read_text())
     records = [inspect_job(job, verify_artifacts=True) for job in manifest[phase]]
-    result = dict(phase=phase, records=records, summary=paired_summary(records) if phase == "formal" else None)
+    result = dict(phase=phase, records=records, summary=paired_summary(records, seeds=manifest.get("seeds", SEEDS)) if phase == "formal" else None)
     write_json(runtime / (phase + "_results.json"), result)
     with tempfile.NamedTemporaryFile(mode="w", dir=runtime, prefix=phase + "_results.", suffix=".csv.tmp", newline="", delete=False) as stream:
         temporary = Path(stream.name)
@@ -329,11 +339,14 @@ def check_idle(pairs):
             raise RuntimeError(f"GPU {index} is occupied; refusing to overlap training")
 
 
-def queue(runtime, phase, pairs):
+def queue(runtime, phase, pairs=None):
     runtime = Path(runtime).resolve()
     with (runtime / "queue.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         manifest = json.loads((runtime / "manifest.json").read_text())
+        if pairs is None:
+            pairs = manifest.get("gpu_pairs", ("0,1", "4,5", "6,7"))
+        pairs = validate_gpu_pairs(";".join(pairs), excluded_gpus=manifest.get("excluded_gpus", (2, 3)))
         validate_seal(runtime, manifest)
         if phase == "formal":
             gate = json.loads((runtime / "smoke_verification.json").read_text())
@@ -359,7 +372,7 @@ def monitor(runtime, interval=1800):
                 output = "\n".join(line for line in output.splitlines() if "imageneta_live_frozen" in line or "ina_formal_" in line)
             print(output, flush=True)
         if all(item["complete"] for item in result["records"]):
-            print("MONITOR END: all six formal results verified", flush=True)
+            print(f"MONITOR END: all {len(result['records'])} formal results verified", flush=True)
             return
         time.sleep(interval)
 
@@ -374,16 +387,20 @@ def main():
     parser.add_argument("--reseal", action="store_true", help="archive preformal smoke attempts before a verified code fix")
     parser.add_argument("--dataset", type=Path, default=Path("/data/dataset/Imagenet-A"))
     parser.add_argument("--phase", choices=("smoke", "formal"), default="formal")
-    parser.add_argument("--gpu-pairs", default="0,1;4,5;6,7")
+    parser.add_argument("--gpu-pairs", help="override registered GPU slots; preparation defaults to 0,1;4,5;6,7")
+    parser.add_argument("--seeds", type=int, nargs="+", default=SEEDS)
+    parser.add_argument("--excluded-gpus", type=int, nargs="+", default=(2, 3))
     args = parser.parse_args()
     runtime = args.runtime.resolve()
     if args.action == "prepare":
+        seeds = validate_seeds(args.seeds)
+        pairs = validate_gpu_pairs(args.gpu_pairs or "0,1;4,5;6,7", excluded_gpus=args.excluded_gpus)
         audit = audit_dataset(args.dataset)
         if audit["counts"] != {"train": 5981, "test": 1519}:
             raise ValueError("unexpected ImageNet-A split sizes")
         prepare_data_link(args.root, args.dataset)
         configs = args.root / "exps" / ("imageneta_live_frozen_" + args.tag)
-        manifest = dict(version=1, tag=args.tag, data_sha256=audit["data_sha256"], smoke=build_jobs(args.root, configs, runtime, args.tag, smoke=True, reuse_existing=True), formal=build_jobs(args.root, configs, runtime, args.tag, reuse_existing=True))
+        manifest = dict(version=2, tag=args.tag, seeds=list(seeds), excluded_gpus=list(args.excluded_gpus), gpu_pairs=list(pairs), data_sha256=audit["data_sha256"], smoke=build_jobs(args.root, configs, runtime, args.tag, smoke=True, reuse_existing=True, seeds=seeds), formal=build_jobs(args.root, configs, runtime, args.tag, reuse_existing=True, seeds=seeds))
         write_json(runtime / "data_audit.json", audit, exclusive=True)
         write_json(runtime / "manifest.json", manifest, exclusive=True)
         print(json.dumps({key: audit[key] for key in ("counts", "data_sha256", "relative_path_overlap", "content_hash_overlap")}))
@@ -406,7 +423,7 @@ def main():
         write_json(runtime / "manifest.json", manifest)
         print(f"SEALED {manifest['git_commit']}")
     elif args.action == "queue":
-        sys.exit(queue(runtime, args.phase, validate_gpu_pairs(args.gpu_pairs)))
+        sys.exit(queue(runtime, args.phase, args.gpu_pairs.split(";") if args.gpu_pairs else None))
     elif args.action == "report":
         print(json.dumps(report(runtime, args.phase), indent=2))
     else:

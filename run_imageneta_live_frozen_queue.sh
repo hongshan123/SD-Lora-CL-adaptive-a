@@ -15,13 +15,16 @@ fi
 
 RUNTIME=${1:?Usage: bash run_imageneta_live_frozen_queue.sh RUNTIME smoke\|formal\|monitor [GPU_PAIRS]}
 PHASE=${2:-formal}
-GPU_PAIRS=${3:-0,1;4,5;6,7}
+GPU_PAIRS=${3:-}
 case "$PHASE" in
   smoke|formal|monitor) ;;
   *) printf 'Unknown phase: %s\n' "$PHASE" >&2; exit 2 ;;
 esac
 RUNTIME=$(realpath "$RUNTIME")
 SOURCE=$("$CONDA_HOME/envs/sdlora/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"])' "$RUNTIME/manifest.json")
+if [[ -z "$GPU_PAIRS" ]]; then
+  GPU_PAIRS=$("$CONDA_HOME/envs/sdlora/bin/python" -c 'import json,sys; print(";".join(json.load(open(sys.argv[1])).get("gpu_pairs", ["0,1", "4,5", "6,7"])))' "$RUNTIME/manifest.json")
+fi
 TAG=$(basename "$RUNTIME")
 UNIT="ina-${PHASE}-${TAG#.runtime_}"
 ACTION=queue

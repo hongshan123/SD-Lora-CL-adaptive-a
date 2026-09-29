@@ -79,3 +79,24 @@ F = mean_{i=0..8}(max_{t=i..9} accuracy[class_range_i, t]
 ```
 
 Raw logged Frozen F for seeds1995/1996/1997: `11.5022/13.5667/9.9778`; raw logged Live F: `14.2922/14.2344/12.2378`. The existing generated `formal_results.json/csv` preserves these raw logged values. Use the corrected values in this document for reporting; do not silently overwrite raw evidence. Training, immutable source, configurations and artifacts are unchanged. A future trainer/reporting fix is separate from this read-only result audit.
+
+## Registered Extension: Seeds 1--10
+
+User approved ten additional paired seeds on 2026-09-29. This extends sample coverage, not an outcome-dependent search for winning seeds.
+
+- Dataset/protocol: exactly the binding protocol above, including both arms' alignment, transport and bounded NormCap. Only seeds, run identity and physical GPU placement change.
+- Registered seeds: `1,2,3,4,5,6,7,8,9,10`; Frozen and Live for each, 20 formal runs. Do not replace failed/unfavorable seeds or stop based on performance.
+- New GPU exclusions: physical `3,4`; allowed double-GPU slots `0,1 / 2,5 / 6,7`. This explicitly supersedes the earlier exclusion of GPU2 for this extension, subject to real smoke passing.
+- Runtime: `.runtime_imageneta_live_frozen_20260929_seeds1_10/`; configurations: `exps/imageneta_live_frozen_20260929_seeds1_10/`. Original three seeds and their outputs remain untouched.
+- Queue: same dynamic slot scheduler, immediately refill a freed pair; user-systemd/nohup and independent 30-minute monitor. Nonzero exit or snapshot audit failure stops new scheduling; archive and rerun only failed items from Task0, never use partial curves as final results.
+- Reports: all ten new pairs plus the combined thirteen-pair analysis, keeping raw logged F separate from task-identity-corrected F. No cherry-picking based on Final or AAA.
+- Ruling: parameterize orchestration only; immutable training clone will have byte-identical backbone/model/trainer code to `38fe295`. Repeat seed1 Task0/1 smoke to validate the changed GPU policy and current sealed orchestration code.
+
+Execution:
+
+- [x] Existing isolated worktree and idle GPUs checked; original focused27 tests pass.
+- [x] Fourteen new red-to-green regression cases; focused41 and full592 tests pass. Review identified the legacy default topology; two new failing regressions reproduced it and now pass with manifest-based defaults. Follow-up review has no blocking findings.
+- [ ] Twenty formal and two smoke configurations, data/pretrained seals committed and checked.
+- [ ] Real paired seed1 Task0/1 smoke, including GPU2,5, verified.
+- [ ] Twenty formal runs and 30-minute monitor launched; verify first epoch and exclusion of GPU3,4.
+- [ ] Complete ten-pair results and combined thirteen-pair analysis.

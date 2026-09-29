@@ -1,6 +1,7 @@
 """Safety and protocol tests for the paired ImageNet-A study."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -69,6 +70,39 @@ def test_only_a_policy_differs_in_each_pair(tmp_path):
             "prefix", "filepath", "sa_train_a_all_tasks"
         }
         assert not a["sa_train_a_all_tasks"] and b["sa_train_a_all_tasks"]
+
+
+def test_ten_additional_seeds_keep_the_paired_protocol(tmp_path):
+    seeds = tuple(range(1, 11))
+    jobs = build_jobs(ROOT, tmp_path / "configs", tmp_path / "runtime", "ten_seeds", seeds=seeds)
+    assert [(job["method"], job["seed"]) for job in jobs] == [
+        (method, seed) for method in ("frozen", "live") for seed in seeds
+    ]
+    assert len({job["log"] for job in jobs}) == 20
+    assert len({job["result"] for job in jobs}) == 20
+    for frozen, live in zip(jobs[:10], jobs[10:]):
+        a = json.loads(Path(frozen["config"]).read_text())
+        b = json.loads(Path(live["config"]).read_text())
+        assert a["seed"] == b["seed"] == [frozen["seed"]]
+        assert a["batch_size"] == b["batch_size"] == 64
+        assert a["max_tasks"] == b["max_tasks"] == 10
+        assert a["init_epoch"] == a["epochs"] == 20
+        assert {key for key in a if a[key] != b[key]} == {
+            "prefix", "filepath", "sa_train_a_all_tasks"
+        }
+
+
+def test_custom_seed_smoke_uses_first_registered_seed(tmp_path):
+    jobs = build_jobs(ROOT, tmp_path / "configs", tmp_path, "ten_seeds", smoke=True, seeds=range(1, 11))
+    assert len(jobs) == 2
+    assert all(job["seed"] == 1 for job in jobs)
+
+
+@pytest.mark.parametrize("seeds", [(), (1, 1), (-1, 2), (True, 2), (1.5, 2)])
+def test_seed_registration_rejects_invalid_or_duplicate_seeds(tmp_path, seeds):
+    with pytest.raises(ValueError, match="seed"):
+        build_jobs(ROOT, tmp_path / "configs", tmp_path, "invalid", seeds=seeds)
+    assert not (tmp_path / "configs").exists()
 
 
 def test_smoke_is_separate_and_cannot_overwrite_configs(tmp_path):
@@ -224,6 +258,48 @@ def test_gpu_slots_allow_three_independent_pairs():
     assert validate_gpu_pairs("0,1;4,5;6,7") == ("0,1", "4,5", "6,7")
 
 
+def test_new_gpu_exclusion_policy_allows_gpu2_and_rejects_gpu3_gpu4():
+    assert validate_gpu_pairs("0,1;2,5;6,7", excluded_gpus=(3, 4)) == ("0,1", "2,5", "6,7")
+    for pairs in ("0,1;3,5", "0,1;4,5", "0,1;2,8", "0,1;2,2"):
+        with pytest.raises(ValueError):
+            validate_gpu_pairs(pairs, excluded_gpus=(3, 4))
+
+
+def test_queue_enforces_manifest_gpu_exclusions_before_launch(tmp_path):
+    from scripts.imageneta_live_frozen import queue
+
+    write_json(tmp_path / "manifest.json", {"excluded_gpus": [3, 4]})
+    with pytest.raises(ValueError, match="GPU"):
+        queue(tmp_path, "formal", ("0,1", "4,5"))
+
+
+def test_queue_defaults_to_registered_gpu_slots(tmp_path, monkeypatch):
+    from scripts import imageneta_live_frozen as study
+
+    pairs = ("0,1", "2,5", "6,7")
+    write_json(tmp_path / "manifest.json", {"excluded_gpus": [3, 4], "gpu_pairs": list(pairs), "source": str(ROOT), "git_commit": "unit", "smoke": []})
+    monkeypatch.setattr(study, "validate_seal", lambda *_args: None)
+    monkeypatch.setattr(study, "check_idle", lambda slots: None)
+    monkeypatch.setattr(study, "report", lambda *_args: None)
+    observed = []
+    monkeypatch.setattr(study, "dispatch_jobs", lambda _source, _jobs, slots, _world_size, **_kwargs: observed.append(slots) or 0)
+    assert study.queue(tmp_path, "smoke") == 0
+    assert observed == [pairs]
+
+
+def test_launcher_without_explicit_slots_uses_manifest_policy(tmp_path):
+    runtime = tmp_path / "runtime"
+    write_json(runtime / "manifest.json", {"source": str(ROOT), "gpu_pairs": ["0,1", "2,5", "6,7"], "excluded_gpus": [3, 4]})
+    binary = tmp_path / "bin/systemd-run"
+    binary.parent.mkdir()
+    binary.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+    binary.chmod(0o755)
+    env = dict(os.environ, PATH=str(binary.parent) + os.pathsep + os.environ["PATH"])
+    result = subprocess.run(["bash", str(ROOT / "run_imageneta_live_frozen_queue.sh"), str(runtime), "formal"], env=env, capture_output=True, text=True, check=True)
+    assert "--gpu-pairs\n0,1;2,5;6,7\n" in result.stdout
+    assert "0,1;4,5;6,7" not in result.stdout
+
+
 def complete_log():
     return (
         "CNN: {'total': np.float64(80.0), 'old': 0, 'new': 80.0}\n"
@@ -273,6 +349,43 @@ def test_pair_summary_uses_sample_std_and_all_registered_seeds():
     assert summary["frozen"]["final"] == {"mean": 61, "sample_std": 1}
     assert summary["paired_live_minus_frozen"]["final"]["values"] == [1, 2, 1]
     assert paired_summary(records[:-1]) is None
+
+
+def test_pair_summary_requires_all_ten_registered_pairs():
+    seeds = tuple(range(1, 11))
+    records = [
+        dict(method=method, seed=seed, complete=True, final=60 + seed + (method == "live"), aaa=70 + seed, forgetting=4)
+        for method in ("frozen", "live") for seed in seeds
+    ]
+    summary = paired_summary(records, seeds=seeds)
+    assert summary["frozen"]["final"]["mean"] == 65.5
+    assert summary["paired_live_minus_frozen"]["final"]["values"] == [1] * 10
+    assert paired_summary(records[:-1], seeds=seeds) is None
+    assert paired_summary(records + [dict(records[0])], seeds=seeds) is None
+
+
+def test_single_pair_has_no_defined_sample_standard_deviation():
+    records = [
+        dict(method=method, seed=1, complete=True, final=60, aaa=70, forgetting=4)
+        for method in ("frozen", "live")
+    ]
+    result = paired_summary(records, seeds=(1,))
+    assert result["frozen"]["final"]["sample_std"] is None
+
+
+def test_report_uses_manifest_seeds_instead_of_legacy_defaults(tmp_path, monkeypatch):
+    from scripts import imageneta_live_frozen as study
+
+    seeds = tuple(range(1, 11))
+    records = [
+        dict(method=method, seed=seed, complete=True, final=60, aaa=70, forgetting=4, curve=[], old_curve=[], new_curve=[])
+        for method in ("frozen", "live") for seed in seeds
+    ]
+    write_json(tmp_path / "manifest.json", {"seeds": list(seeds), "formal": records})
+    monkeypatch.setattr(study, "inspect_job", lambda job, verify_artifacts: job)
+    result = study.report(tmp_path, "formal")
+    assert result["summary"] is not None
+    assert len(result["summary"]["paired_live_minus_frozen"]["final"]["values"]) == 10
 
 
 def test_smoke_policy_checks_both_endpoints_and_task0():

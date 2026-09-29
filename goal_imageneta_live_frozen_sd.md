@@ -96,7 +96,14 @@ Execution:
 
 - [x] Existing isolated worktree and idle GPUs checked; original focused27 tests pass.
 - [x] Fourteen new red-to-green regression cases; focused41 and full592 tests pass. Review identified the legacy default topology; two new failing regressions reproduced it and now pass with manifest-based defaults. Follow-up review has no blocking findings.
-- [ ] Twenty formal and two smoke configurations, data/pretrained seals committed and checked.
-- [ ] Real paired seed1 Task0/1 smoke, including GPU2,5, verified.
-- [ ] Twenty formal runs and 30-minute monitor launched; verify first epoch and exclusion of GPU3,4.
+- [x] Twenty formal and two smoke configurations committed (`6200607`); sealed clean detached clone and matched original data/pretrained hashes. Implementation commit `81651db`.
+- [x] Real paired seed1 Task0/1 smoke, including GPU2,5, verified. Both status0, Task0 tensor/RNG equality, Frozen A unchanged, Live A max change `0.00393774`, DDP prototype agreement and four snapshot audits pass. Max rebuild operator relative error `2.39911e-7`, logits error `1.05798e-6`, feature relative error `1.48322e-6`. Smoke is not a formal result.
+- [x] Twenty formal runs and 30-minute monitor launched at 2026-09-29 15:13 CST. At 15:14, first Frozen seeds1/2/3 on 0,1 / 2,5 / 6,7 reached Task0 epochs12/8/14 without exceptions. Per-rank batch64; physical GPU3,4 at 1 MiB idle.
 - [ ] Complete ten-pair results and combined thirteen-pair analysis.
+
+Extension handoff:
+
+- Immutable training/verification Git: `620060711a4de9403b660927e7338c595592d690`. Verification script SHA matches the original audit helper; data and base-weight fingerprints match the first three-seed study.
+- Queue unit: `ina-formal-imageneta_live_frozen_20260929_seeds1_10.service`; monitor unit: `ina-monitor-imageneta_live_frozen_20260929_seeds1_10.service`. Both use nohup and systemd control groups.
+- Queue log: `.runtime_imageneta_live_frozen_20260929_seeds1_10/formal_queue.log`; per-run logs under its `logs/` directory; report `formal_results.{json,csv}`. Monitor log: `monitor_queue.log`, interval 1,800 seconds.
+- Resume unfinished jobs only when the service is not active: `bash run_imageneta_live_frozen_queue.sh .runtime_imageneta_live_frozen_20260929_seeds1_10 formal`. Omitted GPU slots now resolve to registered `0,1;2,5;6,7`; excluded GPU3,4 are checked again inside the queue.

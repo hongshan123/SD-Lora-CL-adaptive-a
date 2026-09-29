@@ -1178,3 +1178,6 @@
 - 实现核验：将seed列表和GPU排除登记到manifest，完整配对汇总不再硬编码3seed；重复/非法seed、少一组或重复记录均拒绝形成最终汇总。原27项定向测试通过，新增14项先红后绿，最终41项定向与592项完整回归通过。
 - 审查修正：默认启动仍采用旧GPU4的缺陷通过两个失败回归复现，已改为队列/CLI/launcher默认读取manifest槽位，并对显式override再次核对排除名单。复审无阻断问题；无backbone/model/trainer/utils修改，不将日志F排序修复混入本次训练。
 - 数据与下一步：22份正式/smoke配置已生成，7500张图像重新解码与内容查重通过，指纹完全相同。先封存独立Git clone、核对相同预训练hash，再用seed1真实Task0/1检查GPU2/5和两臂策略，然后启动20条正式队列与独立30分钟监控。部分曲线不能作为Final。
+- 15:11--15:12：GPU2/5的Frozen与GPU0/1的Live真实smoke均status0；数值与策略审计全部通过，四份快照的logits最大重建差1.05798e-6，Task0 tensor/RNG一致。训练与验证均固定6200607，数据/基础权重hash与原轮相同，source工作树干净且训练核心对38fe295无diff。
+- 通过门槛后已启动正式20条与独立1800秒监控，默认从本次manifest读取0/1、2/5、6/7，物理3、4禁止分配。下一步现场确认三条首发进入epoch、每卡batch64、20条seed覆盖和nohup/systemd进程归属；不等待全部训练完成才向用户交付队列状态。
+- 15:14：正式queue登记20条，三个Frozen首发seed1/2/3分别使用0/1、2/5、6/7；Task0已到Epoch12/8/14，无Traceback、CUDA或NCCL异常。六张卡各约8.48GiB，物理3、4为1MiB空闲；queue与monitor两unit均active。后续自动填槽，最终需核验20份完整曲线及200份任务快照，再合并原3seed配对分析。

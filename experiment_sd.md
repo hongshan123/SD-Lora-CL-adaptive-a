@@ -1087,4 +1087,5 @@
 - 输出：新runtime `.runtime_imageneta_live_frozen_20260929_seeds1_10/`，22份配置位于 `exps/imageneta_live_frozen_20260929_seeds1_10/`。不覆盖原三seed、日志或artifact。
 - 预检：重新解码7500张图像、train/test内容SHA交集为0，数据指纹与原轮一致。14项新回归先观察失败再修复，定向41项与完整592项均通过；独立审查指出默认旧配卡问题，已修复为读取登记manifest并再次验证GPU排除，复审无阻断问题。
 - 指标边界：训练原样保留已知的日志F字符串排序问题；最终F从CNN类别区间按数值任务身份重算，原日志和自动CSV/JSON不覆盖。该问题不影响Final、AAA或old/new曲线。
-- 当前状态：配置登记和测试完成，正在封存不可变代码与验证真实smoke；正式结果未产生。
+- 真实smoke：seed1两臂均于15:11:41完整status0，Frozen运行于2/5卡、Live于0/1卡。Task0 tensor/RNG一致，Frozen A变化0、Live最大变化0.00393774；四份快照各24分支、368640个LoRA部署标量，最大operator相对误差2.39911e-7、logits误差1.05798e-6、feature相对误差1.48322e-6，全部通过。smoke不计入正式性能。
+- 当前状态：不可变训练代码封存于6200607，预训练hash和数据hash与原轮一致。15:13正式20条队列及30分钟独立监控通过user-systemd/nohup启动；units为 `ina-formal-imageneta_live_frozen_20260929_seeds1_10` 和 `ina-monitor-imageneta_live_frozen_20260929_seeds1_10`。15:14三条首发Frozen seeds1/2/3在0/1、2/5、6/7分别进入Task0 Epoch12/8/14，均无异常，每卡batch64；GPU3、4为1MiB空闲。尚无完整正式结果，不使用smoke或部分曲线作为最终性能。

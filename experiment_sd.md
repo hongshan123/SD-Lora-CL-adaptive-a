@@ -1052,3 +1052,12 @@
 - 协议：与上述 T=3 唯一配置差异是任务数、实验名和输出目录。CUB seed1、C100 seed1993；T=10、rank10、20 epoch、双卡每卡 batch64。GPU 4/5 与 6/7 并行训练，结束后各自顺序对 Task1-9 生成只读分支诊断；所有 Task0-9 保存合并前后快照。
 - 运行信息：提交 `761e1fd`；unit `frozen-branch-intrusion-t10-20260923.service`；队列日志 `frozen_branch_intrusion_t10_queue_20260923.log`；结果目录 `FROZEN_BRANCH_INTRUSION_CUB_T10_SEED1_20260923/` 与 `FROZEN_BRANCH_INTRUSION_C100_T10_SEED1993_20260923/`。22:06 两组均进入 Task0 Epoch1，无启动错误。
 - 当前结果：无完整 T=10 结果，暂不作性能判断。验收时检查每组十份任务快照、九份逐样本 logits、逐任务全局 Top-1、旧类正确到新类错误比例及新类收益；若训练失败，不使用部分序列下结论。
+# ImageNet-A Live-A / Frozen-A 配对验证：2026-09-29
+
+- 尝试：在既有完整 INR Frozen 配置上仅更换数据集和实验身份、seed、A 更新策略；同 seed 两臂唯一算法差异为 `sa_train_a_all_tasks`。
+- 理论依据：检验共享输入子空间持续更新的收益是否依赖数据分布，而非先假定 Frozen 或 Live 必须获胜。已有 INR 结果仅作为动机，不作为本数据集结论。本实验不新增理论机制，也不声称证明 SA-LoRA 的特定模块缺失。
+- 协议：ImageNet-A 200类、T10、rank10、SGD/LR0.01、20epoch、有效batch128（双卡64）；seeds1995/1996/1997。Prototype classifier、alignment、transport、bounded NormCap均开启；Dual-B、Adaptive-A、replay关闭。
+- 数据：既有 `/data/dataset/Imagenet-A/train` 5981张、test1519张；200类映射一致，全部7500张解码通过。相对路径交集0，内容SHA256交集0；数据指纹 `a64b08530b5145d5f24a3a66a4de35e0e21dab7bd10268542ed3cb28356f1fcb`。仅称本地审计划分，不声称官方固定训练/测试协议。
+- 配置目录：`exps/imageneta_live_frozen_20260929_paired/`，包含6条正式配置和2条smoke配置。结果根：`.runtime_imageneta_live_frozen_20260929_paired/`，不覆盖历史结果。
+- 验证：原完整套件551项通过；新增20项覆盖配对控制、泄漏检测、失败归档、GPU排除、完整结果解析、样本标准差和smoke策略检查。完整回归和真实smoke待核验。
+- 结果：尚未产生正式结果。smoke不计入性能统计；六条完整正式结果均须进入配对统计，不筛除不利seed。

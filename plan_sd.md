@@ -240,3 +240,11 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 关键验收：三个数据集不低于最佳 Frozen/Live 端点超过 0.30，且至少两个数据集 Final 或 AAA 提升至少 0.30；不得按数据集选择 epsilon。
 - 新颖性边界：不宣称首次提出能量分解或稳定/可塑子空间。候选差异是“直接分解固定状态部署历史算子的规范坐标能量，并给出 LS alignment 后不可恢复能量的全局预算上界”；须正面对照 SplitLoRA、LoDA、Geo-LoRA 与 Share。
 - 当前状态：有条件立项，尚未修改训练代码、尚未产生性能结果，不替换冻结主方法。
+
+## 17. ImageNet-A 配对验证（2026-09-29）
+
+- 任务书：`goal_imageneta_live_frozen_sd.md`。本阶段验证 Live/Frozen 的数据集差异，不再新增 Adaptive controller。
+- 复用本地 ImageNet-A 200 类划分：train5981/test1519，完整内容 SHA256 和解码审计通过，不重新划分数据。
+- 严格配对 seeds1995/1996/1997，T10、rank10、SGD constant LR0.01、20 epoch、双卡每卡batch64；两边保留 alignment、prototype transport、bounded NormCap，关闭 Dual-B/Adaptive/replay。
+- 先完成两条 Task0/1、2 epoch smoke，再启动六条正式运行；GPU 槽位 0,1 / 4,5 / 6,7，排除2,3。使用不可变 Git 副本、nohup/user-systemd 和30分钟监控。
+- 报告全部 seeds 的 Final/AAA/Forgetting、逐任务全局 old/new accuracy、样本标准差和配对差值。不得把本阶段解释为 alignment 或 transport 的独立因果消融。

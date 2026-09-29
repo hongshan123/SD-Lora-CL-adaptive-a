@@ -1164,3 +1164,6 @@
 - 并发回归：强制监控/队列同时提交JSON时复现共享临时文件冲突，改为独立临时文件+atomic replace；focused24项和完整575项均通过。训练模型、损失、梯度及RNG路径没有改变。
 - 11:52：首次真实smoke在 `run_guard` 打开lock文件时失败：runtime/results父目录不存在。没有创建模型、epoch、artifact或性能结果；不能计入实验统计。补充失败回归测试，只创建父目录，不预先创建受guard保护的具体run目录。
 - 修正后26项focused测试通过；增加严格的preformal reseal入口，旧seal和smoke输出一起归档，任一正式任务启动后禁止更换code seal。systemd transient units启用collect，避免失败单元阻碍同队列重启。
+- 11:59：两条真实smoke完整status0；Task0 tensor/RNG hash和Top1（81.76）一致。Frozen Task1 A逐元素不变，Live A实际更新；四份snapshot checksum和每任务DDP prototype同步均通过。
+- 12:07：重建诊断初版额外要求feature逐元素绝对误差<1e-5，触发数值误报。确定性backend下Frozen Task0 feature绝对误差1.28746e-5、相对L2误差1.23594e-6，CPU/GPU的A范数差7.15256e-7；logits差7.74860e-7，已满足预注册logits<1e-5。
+- Ruling：不是修改训练来追求通过。只读验证使用训练backend，将额外feature gate改为相对误差<1e-5并完整报告绝对误差，补上effective operator相对误差<1e-6；训练代码继续固定38fe295，验证工具独立记录Git/script SHA。新回归证明原absolute gate失败、relative/logits gate通过；27项focused与578项完整测试通过。

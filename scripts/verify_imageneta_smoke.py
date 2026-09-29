@@ -4,12 +4,13 @@
 import argparse
 import copy
 import json
+import os
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.imageneta_live_frozen import inspect_job, validate_seal, write_json
+from scripts.imageneta_live_frozen import git_commit, inspect_job, sha256_file, validate_seal, write_json
 
 
 def compare_policy_tensors(frozen0, frozen1, live0, live1):
@@ -27,7 +28,22 @@ def compare_policy_tensors(frozen0, frozen1, live0, live1):
     return dict(passed=True, frozen_max_abs_diff=0.0, live_branch_max_abs_diff=changes)
 
 
+def rebuild_errors(reference, rebuilt, logits0, logits1):
+    import torch
+
+    if not all(torch.isfinite(tensor).all() for tensor in (reference, rebuilt, logits0, logits1)):
+        raise ValueError("rebuild tensors must be finite")
+    feature_error = float((reference - rebuilt).abs().max())
+    feature_relative_error = float(torch.linalg.vector_norm(reference - rebuilt) / torch.linalg.vector_norm(reference).clamp_min(1e-12))
+    logit_error = float((logits0 - logits1).abs().max())
+    # Export normalizes G on CPU; rebuilt historical forward normalizes on GPU.
+    if feature_relative_error >= 1e-5 or logit_error >= 1e-5:
+        raise ValueError(f"persistent/merged rebuild mismatch: {feature_relative_error}, {logit_error}")
+    return dict(feature_max_abs_diff=feature_error, feature_relative_l2_error=feature_relative_error, logits_max_abs_diff=logit_error)
+
+
 def verify(runtime, device="cuda:0"):
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     import timm
     import torch
     import torch.nn.functional as F
@@ -37,6 +53,9 @@ def verify(runtime, device="cuda:0"):
     from scripts.evaluate_sa_sdlora import build_merged_backbone
     from utils.canonical_hash import hash_named_tensors
     from utils.data import build_transform
+    from trainer import _set_deterministic_backend
+
+    _set_deterministic_backend({"sa_deterministic_training": True})
 
     runtime = Path(runtime).resolve()
     manifest = json.loads((runtime / "manifest.json").read_text())
@@ -84,6 +103,20 @@ def verify(runtime, device="cuda:0"):
         for job, paths in zip(jobs, snapshots):
             config = json.loads(Path(job["config"]).read_text())
             for task, path in enumerate(paths):
+                state = load(path / "sa_state.pt")
+                exported = load(path / "sa_merged_lora.pt")
+                if len(state["shared_a"]) != 24 or len(state["aggregate_up"]) != 24:
+                    raise ValueError("snapshot must contain 24 Q/V branches")
+                operator_errors, norm_errors = [], []
+                for a, g, up in zip(state["shared_a"], state["aggregate_up"], exported["merged_b"]):
+                    a, g, up = a.to(device), g.to(device), up.to(device)
+                    norm = torch.linalg.vector_norm(a)
+                    norm_errors.append(abs(float(norm) - float(torch.linalg.vector_norm(a.cpu()))))
+                    effective0 = (g / (norm + 1e-8)) @ a
+                    effective1 = up @ a
+                    operator_errors.append(float(torch.linalg.vector_norm(effective0 - effective1) / torch.linalg.vector_norm(effective0).clamp_min(1e-12)))
+                if max(operator_errors) >= 1e-6:
+                    raise ValueError("FP32 persistent/exported operator mismatch")
                 persistent = SharedALoRA_ViT_timm(
                     vit_model=copy.deepcopy(base), r=10, increment=20,
                     index=False, filepath=str(path), cur_task_index=task + 1,
@@ -93,20 +126,17 @@ def verify(runtime, device="cuda:0"):
                     live_a_coordinate_align=True,
                     live_a_absorb_mode="bounded_norm_calibrated_absorb",
                 ).to(device).eval()
-                merged = build_merged_backbone(copy.deepcopy(base), load(path / "sa_merged_lora.pt")).to(device).eval()
+                merged = build_merged_backbone(copy.deepcopy(base), exported).to(device).eval()
                 reference = persistent(tensor)
                 rebuilt = merged(tensor)
                 prototypes = load(path / "sa_prototypes.pt")
                 weight = F.normalize(torch.stack([prototypes[key] for key in sorted(prototypes)]).to(device), dim=1)
                 logits0 = F.normalize(reference, dim=1) @ weight.t()
                 logits1 = F.normalize(rebuilt, dim=1) @ weight.t()
-                feature_error = float((reference - rebuilt).abs().max())
-                logit_error = float((logits0 - logits1).abs().max())
-                if feature_error >= 1e-5 or logit_error >= 1e-5:
-                    raise ValueError(f"persistent/merged rebuild mismatch: {feature_error}, {logit_error}")
-                result["rebuild"].append(dict(method=job["method"], task=task, feature_max_abs_diff=feature_error, logits_max_abs_diff=logit_error, adaptation_scalars=sum(a.numel() + g.numel() for a, g in zip(states[0][task]["shared_a"], states[0][task]["aggregate_up"]))))
+                errors = rebuild_errors(reference, rebuilt, logits0, logits1)
+                result["rebuild"].append(dict(method=job["method"], task=task, **errors, max_operator_relative_error=max(operator_errors), max_cpu_gpu_norm_diff=max(norm_errors), branches=len(state["shared_a"]), adaptation_scalars=sum(a.numel() + g.numel() for a, g in zip(state["shared_a"], state["aggregate_up"]))))
                 del persistent, merged, reference, rebuilt
-    result.update(git_commit=manifest["git_commit"], data_sha256=manifest["data_sha256"], task0_hashes=hashes[0]["0"], task0_top1=metrics[0]["curve"][0], ddp_prototype_consistency=True, evaluation_files=files)
+    result.update(git_commit=manifest["git_commit"], verification_git_commit=git_commit(Path(__file__).resolve().parents[1]), verification_script_sha256=sha256_file(__file__), data_sha256=manifest["data_sha256"], task0_hashes=hashes[0]["0"], task0_top1=metrics[0]["curve"][0], ddp_prototype_consistency=True, evaluation_files=files)
     write_json(runtime / "smoke_verification.json", result, exclusive=True)
     return result
 

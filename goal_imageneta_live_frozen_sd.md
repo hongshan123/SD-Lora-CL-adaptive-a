@@ -13,7 +13,7 @@
 
 - [x] Existing isolated worktree verified; baseline full suite: 551 passed.
 - [x] Content SHA256 / image decode / class mapping audit; link `data/imagenet-a` without overwriting existing data.
-- [x] Tests and queue implementation; independent configuration commit. Final focused: 24 passed; full suite: 575 passed.
+- [x] Tests and queue implementation; independent configuration commit. Final focused: 27 passed; full suite: 578 passed.
 - [ ] Frozen/Live smoke: Task0 equality, Task1 A policy, snapshots, rebuild logits, DDP consistency.
 - [ ] Six formal runs, three dynamic double-GPU slots: 0,1 / 4,5 / 6,7. Never use GPU 2 or 3.
 - [ ] Final / AAA / Forgetting / global old-new curves and paired sample mean/std.
@@ -24,6 +24,7 @@
 - Review fix: enforce an independent, clean, detached clone at `runtime/source` and recheck before each run. Check the sealed pretrained tensor hash whenever training constructs a backbone; use offline HF cache and the same hash for smoke reconstruction. This adds diagnostics only, not a new model or RNG operation.
 - Review clarification: the initial prepare succeeded before configurations were committed. Subsequent preparation may validate identical registered configurations, but must never replace changed configurations or reuse a different output path under the same tag.
 - Smoke fix: the trainer's run guard needs the result-parent directory before opening its lock. The scheduler creates only that parent, never the guarded run directory. Initial failed output contained no training and is archived; resealing is forbidden once any formal run has started.
+- Numerical-audit ruling: retain the planned FP32 logits `max_abs_diff < 1e-5`. The extra feature-absolute gate was not part of the plan and rejected CPU/GPU normalization rounding; replace it with relative L2 `<1e-5`, explicitly report absolute error, and additionally require each effective operator's relative error `<1e-6`. Use the training backend settings. Training remains pinned to `38fe295`; the read-only verification tool has a separately recorded Git/script SHA.
 - Ruling: cross-split file-content hashes must be disjoint. Relative names alone are not a leakage test; record their overlap separately.
 - Ruling: archive failed logs and partial artifacts together; rerun only unfinished items from Task0, never silently resume a partial task sequence or change batch/LR.
 - Interface: committed configurations point at independent runtime result directories; the run manifest records code/config/data SHA256 and both GPU ranks.

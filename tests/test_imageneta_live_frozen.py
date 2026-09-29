@@ -290,6 +290,25 @@ def test_smoke_policy_checks_both_endpoints_and_task0():
         compare_policy_tensors(initial, initial, initial, initial)
 
 
+def test_rebuild_gate_uses_relative_feature_error_and_preregistered_logits():
+    import torch
+    from scripts.verify_imageneta_smoke import rebuild_errors
+
+    reference = torch.tensor([100.0, 2.0])
+    rebuilt = reference + 2e-5
+    logits0 = torch.zeros(2)
+    logits1 = logits0 + 5e-7
+    result = rebuild_errors(reference, rebuilt, logits0, logits1)
+    assert result["feature_max_abs_diff"] > 1e-5
+    assert result["feature_relative_l2_error"] < 1e-5
+    with pytest.raises(ValueError, match="rebuild"):
+        rebuild_errors(reference, rebuilt, logits0, logits0 + 1e-4)
+    with pytest.raises(ValueError, match="rebuild"):
+        rebuild_errors(reference, reference + 1, logits0, logits1)
+    with pytest.raises(ValueError, match="finite"):
+        rebuild_errors(reference, reference * float("nan"), logits0, logits1)
+
+
 def test_launcher_syntax_and_bad_phase():
     path = ROOT / "run_imageneta_live_frozen_queue.sh"
     assert path.is_file()

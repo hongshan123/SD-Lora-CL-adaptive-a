@@ -1,0 +1,60 @@
+{
+  "backbone_type": "vit_base_patch16_224",
+  "batch_size": 64,
+  "dataset": "imageneta",
+  "device": [
+    "0",
+    "1"
+  ],
+  "dist_backend": "nccl",
+  "epochs": 20,
+  "filepath": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_imageneta_live_frozen_20260929_seeds1_10/results/ina_formal_frozen_seed3_20260929_seeds1_10/",
+  "fixed_memory": false,
+  "increment": 20,
+  "init_cls": 20,
+  "init_epoch": 20,
+  "init_lr": 0.01,
+  "init_lr_decay": 0,
+  "init_milestones": [
+    10000
+  ],
+  "init_weight_decay": 0.0005,
+  "lora_rank": 10,
+  "lrate": 0.01,
+  "lrate_decay": 0,
+  "max_tasks": 10,
+  "memory_per_class": 0,
+  "memory_size": 0,
+  "milestones": [
+    10000
+  ],
+  "min_lr": 0.005,
+  "model_name": "sa_sdlora",
+  "optimizer": "sgd",
+  "prefix": "ina_formal_frozen_seed3_20260929_seeds1_10",
+  "sa_adaptive_a_enabled": false,
+  "sa_coordinate_stable_transport": true,
+  "sa_coordinate_transport_min_gain": 0.0,
+  "sa_coordinate_transport_rank": 10,
+  "sa_coordinate_transport_reg": 0.0001,
+  "sa_cumulative_merge": "live_a_aggregate_b",
+  "sa_cumulative_state": true,
+  "sa_delete_per_task_files": false,
+  "sa_deterministic_training": true,
+  "sa_dual_head": false,
+  "sa_live_a_absorb_mode": "bounded_norm_calibrated_absorb",
+  "sa_live_a_coordinate_align": true,
+  "sa_live_a_history_groups": 1,
+  "sa_resume": false,
+  "sa_save_task_snapshots": true,
+  "sa_shared_a_orthogonal": true,
+  "sa_train_a_all_tasks": false,
+  "sa_use_prototype_classifier": true,
+  "scheduler": "constant",
+  "seed": [
+    3
+  ],
+  "shuffle": true,
+  "tuned_epoch": 20,
+  "weight_decay": 0.0002
+}

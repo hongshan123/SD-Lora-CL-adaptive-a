@@ -1077,3 +1077,14 @@
 - 塑性/稳定性拆解：对每seed的Task1--9逐任务新类差值做等权平均，再对seed等权平均，Live新类准确率提高 `1.7659 pp`，旧类准确率降低 `0.3559 pp`；最终边界新类提高 `3.5200 pp`、旧类降低 `1.0733 pp`。全局Final按样本加权，不能把旧/新两个指标简单平均。三组Task0训练tensor/RNG hash完全一致。
 - 指标审计：`trainer.py`将分组标签用字符串排序；类号超过99后，`100-119`插到`20-39`前面，导致accuracy matrix的行跨task不再代表同一组类别。原日志F分别为Frozen `11.5022/13.5667/9.9778`、Live `14.2922/14.2344/12.2378`，不作为有效遗忘指标。上表从每任务`CNN`字典按同一数值类别区间重算 `mean_i(max_t a_i,t - a_i,9)`，保留原日志与自动CSV/JSON作为原始证据。Final、AAA及old/new不受此排序问题影响，本次未修改训练代码。
 - 判断：本地ImageNet-A协议不支持Live稳定优于Frozen；AAA几乎相同，Final两负一正，修正后的F三个配对均更高。但Live有新类塑性收益，不能写成“A更新完全没有价值”，也不能据此否定所有数据集或参数设置。三seed不足以把数值方向宣称为统计显著；两臂均有alignment/transport/NormCap，不归因于单个补偿模块。完整结果与指标审计见 `goal_imageneta_live_frozen_sd.md`。
+
+## 2026-09-29：ImageNet-A 新增 seeds1--10 配对扩展
+
+- 实验标题：十个新增种子的Frozen/Live严格配对验证，共20条正式运行。
+- 方法与依据：用户预先固定seeds1--10，扩大覆盖而非挑选Live胜出的seed；原三个seed保留，后续同时报告新增十组与合并十三组结果。本阶段不新增算法，也不依据中途Final/AAA删改seed。
+- 协议：与上一节相同的本地200类划分、T10、rank10、SGD/constant LR0.01、20epoch、双卡每卡batch64；alignment、prototype transport、bounded NormCap和prototype classifier开启，Dual-B/Adaptive/replay关闭。训练核心与38fe295逐文件相同，只参数化队列、种子登记和配对汇总。
+- 资源：明确排除物理GPU3、4；登记三组槽位 `0,1 / 2,5 / 6,7`，空闲槽位立即派发下一条。全部nohup+user-systemd托管，独立30分钟监控；先做seed1双臂Task0/1、2epoch smoke，包含GPU2/5健康验证。
+- 输出：新runtime `.runtime_imageneta_live_frozen_20260929_seeds1_10/`，22份配置位于 `exps/imageneta_live_frozen_20260929_seeds1_10/`。不覆盖原三seed、日志或artifact。
+- 预检：重新解码7500张图像、train/test内容SHA交集为0，数据指纹与原轮一致。14项新回归先观察失败再修复，定向41项与完整592项均通过；独立审查指出默认旧配卡问题，已修复为读取登记manifest并再次验证GPU排除，复审无阻断问题。
+- 指标边界：训练原样保留已知的日志F字符串排序问题；最终F从CNN类别区间按数值任务身份重算，原日志和自动CSV/JSON不覆盖。该问题不影响Final、AAA或old/new曲线。
+- 当前状态：配置登记和测试完成，正在封存不可变代码与验证真实smoke；正式结果未产生。

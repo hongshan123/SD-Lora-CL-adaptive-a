@@ -14,8 +14,8 @@
 - [x] Existing isolated worktree verified; baseline full suite: 551 passed.
 - [x] Content SHA256 / image decode / class mapping audit; link `data/imagenet-a` without overwriting existing data.
 - [x] Tests and queue implementation; independent configuration commit. Final focused: 27 passed; full suite: 578 passed.
-- [ ] Frozen/Live smoke: Task0 equality, Task1 A policy, snapshots, rebuild logits, DDP consistency.
-- [ ] Six formal runs, three dynamic double-GPU slots: 0,1 / 4,5 / 6,7. Never use GPU 2 or 3.
+- [x] Frozen/Live smoke: Task0 equality, Task1 A policy, snapshots, rebuild logits, DDP consistency. Report: `.runtime_imageneta_live_frozen_20260929_paired/smoke_verification.json`.
+- [ ] Six formal results: launched/queued on three dynamic double-GPU slots, 0,1 / 4,5 / 6,7. Never use GPU 2 or 3. Full completion pending.
 - [ ] Final / AAA / Forgetting / global old-new curves and paired sample mean/std.
 
 ## Rulings And Interfaces
@@ -34,3 +34,12 @@
 ## Claim Boundary
 
 This compares A policies with all other components held fixed. It does not independently establish the causal benefit of alignment, transport or NormCap, and does not claim an official ImageNet-A train/test protocol beyond the locally audited split. Report every registered seed and either direction of the paired difference.
+
+## Runtime Handoff
+
+- Training Git: `38fe295c98b19b6c2a0ab1bb1ae1be944b28a4bc`; verification Git: `2e974bfefe87f8b311252850ff5b0842cc981cae`.
+- Queue/monitor started 2026-09-29 12:12 CST via user-systemd and nohup. Monitor interval: 1,800 seconds.
+- Runtime: `.runtime_imageneta_live_frozen_20260929_paired/`; individual logs: `logs/`; results/snapshots: `results/`; automatic JSON/CSV: `formal_results.{json,csv}`.
+- Start/restart unfinished work: `bash run_imageneta_live_frozen_queue.sh .runtime_imageneta_live_frozen_20260929_paired formal '0,1;4,5;6,7'`. Never invoke this while the queue is active; systemd rejects duplicate units. Successful complete runs are reused, failed/partial attempts are archived.
+- Monitor: `bash run_imageneta_live_frozen_queue.sh .runtime_imageneta_live_frozen_20260929_paired monitor '0,1;4,5;6,7'`.
+- Final analysis remains pending. Smoke is not a formal accuracy result.

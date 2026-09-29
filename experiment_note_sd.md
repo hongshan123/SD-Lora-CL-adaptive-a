@@ -1167,3 +1167,6 @@
 - 11:59：两条真实smoke完整status0；Task0 tensor/RNG hash和Top1（81.76）一致。Frozen Task1 A逐元素不变，Live A实际更新；四份snapshot checksum和每任务DDP prototype同步均通过。
 - 12:07：重建诊断初版额外要求feature逐元素绝对误差<1e-5，触发数值误报。确定性backend下Frozen Task0 feature绝对误差1.28746e-5、相对L2误差1.23594e-6，CPU/GPU的A范数差7.15256e-7；logits差7.74860e-7，已满足预注册logits<1e-5。
 - Ruling：不是修改训练来追求通过。只读验证使用训练backend，将额外feature gate改为相对误差<1e-5并完整报告绝对误差，补上effective operator相对误差<1e-6；训练代码继续固定38fe295，验证工具独立记录Git/script SHA。新回归证明原absolute gate失败、relative/logits gate通过；27项focused与578项完整测试通过。
+- 12:12：最终smoke报告 `passed=true`：四个backbone effective operator最大相对差2.41415e-7、prototype logits最大差7.74860e-7；每份24分支和368640个adaptation scalars。报告显式区分训练commit38fe295与只读验证commit2e974bf，不改训练源、不重跑有效smoke。
+- 正式队列和监控已由user-systemd启动：`ina-formal-imageneta_live_frozen_20260929_paired` / `ina-monitor-imageneta_live_frozen_20260929_paired`；GPU0,1 /4,5 /6,7，首发Frozen seeds1995/1996/1997，后续Live自动补位。正式结果尚未完成，不从smoke或部分curve推出性能结论。
+- 12:14：三条正式Frozen均完成Task0并进入Task1；GPU0/1与6/7为Epoch2--4，4/5在Task1初始化。每卡显存约8.5--8.7GiB，GPU2/3为1MiB空闲；未见异常堆栈或NCCL错误。继续保持20epoch与batch64，不依据中途结果改协议。

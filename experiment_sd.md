@@ -1059,5 +1059,7 @@
 - 协议：ImageNet-A 200类、T10、rank10、SGD/LR0.01、20epoch、有效batch128（双卡64）；seeds1995/1996/1997。Prototype classifier、alignment、transport、bounded NormCap均开启；Dual-B、Adaptive-A、replay关闭。
 - 数据：既有 `/data/dataset/Imagenet-A/train` 5981张、test1519张；200类映射一致，全部7500张解码通过。相对路径交集0，内容SHA256交集0；数据指纹 `a64b08530b5145d5f24a3a66a4de35e0e21dab7bd10268542ed3cb28356f1fcb`。仅称本地审计划分，不声称官方固定训练/测试协议。
 - 配置目录：`exps/imageneta_live_frozen_20260929_paired/`，包含6条正式配置和2条smoke配置。结果根：`.runtime_imageneta_live_frozen_20260929_paired/`，不覆盖历史结果。
-- 验证：原完整套件551项通过；新增27项覆盖配对控制、泄漏检测、失败归档、GPU排除、完整结果解析、样本标准差、smoke策略、不可变训练源、预训练hash不改变RNG、并发写入、run guard父目录、preformal reseal和FP32重建检查。完整回归578项通过（39.07s）；两条真实smoke已status0，最终数学重建检查待核验。
-- 结果：尚未产生正式结果。smoke不计入性能统计；六条完整正式结果均须进入配对统计，不筛除不利seed。
+- 验证：原完整套件551项通过；新增27项覆盖配对控制、泄漏检测、失败归档、GPU排除、完整结果解析、样本标准差、smoke策略、不可变训练源、预训练hash不改变RNG、并发写入、run guard父目录、preformal reseal和FP32重建检查。完整回归578项通过（39.07s）；两条真实smoke已status0，最终数学检查通过。
+- Smoke证据：Frozen A差为0，Live A最大变化0.00475183；Task0 tensor/RNG及Top1完全一致。四份快照各24分支、368640个部署LoRA标量；最大operator相对误差2.41415e-7、logits差7.74860e-7、feature相对L2误差1.37640e-6（绝对误差也完整保留）。
+- 运行：2026-09-29 12:12 CST启动正式六条和30分钟监控；训练源38fe295，验证工具2e974bf。首发3条Frozen，完成一条即调度下一条Live；nohup+user-systemd托管，全部双卡64。
+- 结果：正式运行中，尚未产生完整正式结果。smoke不计入性能统计；六条完整正式结果均须进入配对统计，不筛除不利seed。

@@ -28,7 +28,7 @@ ACTION=queue
 [[ "$PHASE" == monitor ]] && ACTION=monitor
 mkdir -p "$RUNTIME/logs"
 
-systemd-run --user --unit="$UNIT" \
+systemd-run --user --collect --unit="$UNIT" \
   --property="WorkingDirectory=$SOURCE" \
   --property="StandardOutput=append:$RUNTIME/${PHASE}_queue.log" \
   --property="StandardError=append:$RUNTIME/${PHASE}_queue.log" \

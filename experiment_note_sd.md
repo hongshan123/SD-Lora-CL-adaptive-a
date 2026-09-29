@@ -1162,3 +1162,5 @@
 - 下一步：核验两臂Task0 tensor/RNG与准确率一致、Task1 Frozen A逐元素不变而Live A更新、快照checksum、DDP prototype一致和持久态重建logits。
 - 独立审查后的修正：源必须为runtime内独立detached clone，启动每条运行前重查code SHA；所有训练backbone构造都验证sealed pretrained tensor hash，离线重建也匹配同一hash。首次prepare已成功；再次prepare仅允许验证相同注册配置，禁止覆盖差异配置。
 - 并发回归：强制监控/队列同时提交JSON时复现共享临时文件冲突，改为独立临时文件+atomic replace；focused24项和完整575项均通过。训练模型、损失、梯度及RNG路径没有改变。
+- 11:52：首次真实smoke在 `run_guard` 打开lock文件时失败：runtime/results父目录不存在。没有创建模型、epoch、artifact或性能结果；不能计入实验统计。补充失败回归测试，只创建父目录，不预先创建受guard保护的具体run目录。
+- 修正后26项focused测试通过；增加严格的preformal reseal入口，旧seal和smoke输出一起归档，任一正式任务启动后禁止更换code seal。systemd transient units启用collect，避免失败单元阻碍同队列重启。

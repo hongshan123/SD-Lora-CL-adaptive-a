@@ -133,6 +133,44 @@ def test_monitor_and_queue_can_publish_json_concurrently(tmp_path, monkeypatch):
     assert json.loads(output.read_text())["value"] in (1, 2)
 
 
+def test_runner_creates_parent_but_not_guarded_output_directory(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scripts import imageneta_live_frozen as study
+
+    runtime = tmp_path / "runtime"
+    jobs = build_jobs(ROOT, tmp_path / "configs", runtime, "unit")
+    source = runtime / "source"
+    source.mkdir(parents=True)
+    write_json(runtime / "manifest.json", {"base_weight_sha256": "unit"})
+    monkeypatch.setattr(study, "validate_source", lambda *_args: None)
+
+    def fake_training(command, **kwargs):
+        output = Path(jobs[0]["result"])
+        assert output.parent.is_dir(), "missing parent for run_guard lock file"
+        assert not output.exists(), "only the trainer may create the guarded run directory"
+        assert command[0] == "nohup"
+        assert command[-2] == "scripts/train_imageneta_paired.py"
+        assert kwargs["env"]["CUDA_VISIBLE_DEVICES"] == "0,1"
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(study.subprocess, "run", fake_training)
+    assert study.run_one(source, jobs[0], "0,1", 2) == 1
+
+
+def test_reseal_is_only_allowed_before_formal_training(tmp_path):
+    from scripts.imageneta_live_frozen import reset_preformal_seal
+
+    manifest = {"git_commit": "old", "base_weight_sha256": "base", "formal": [{"log": str(tmp_path / "formal.log"), "result": str(tmp_path / "formal_result")}], "smoke": []}
+    write_json(tmp_path / "manifest.json", manifest)
+    (tmp_path / "formal.log").write_text("started")
+    with pytest.raises(ValueError, match="formal"):
+        reset_preformal_seal(tmp_path, manifest)
+    (tmp_path / "formal.log").unlink()
+    reset = reset_preformal_seal(tmp_path, manifest)
+    assert "git_commit" not in reset
+    assert len(list((tmp_path / "archive").glob("seal_*/*.json"))) == 1
+
+
 def test_data_audit_is_stable_and_records_content_hashes(tmp_path):
     make_dataset(tmp_path)
     a = audit_dataset(tmp_path, expected_classes=2)

@@ -23,6 +23,7 @@
 - Ruling: use an immutable local Git clone for training, inside an ignored runtime directory. This prevents another agent's edits from changing the code halfway through the six runs. The implementation remains in the current isolated worktree.
 - Review fix: enforce an independent, clean, detached clone at `runtime/source` and recheck before each run. Check the sealed pretrained tensor hash whenever training constructs a backbone; use offline HF cache and the same hash for smoke reconstruction. This adds diagnostics only, not a new model or RNG operation.
 - Review clarification: the initial prepare succeeded before configurations were committed. Subsequent preparation may validate identical registered configurations, but must never replace changed configurations or reuse a different output path under the same tag.
+- Smoke fix: the trainer's run guard needs the result-parent directory before opening its lock. The scheduler creates only that parent, never the guarded run directory. Initial failed output contained no training and is archived; resealing is forbidden once any formal run has started.
 - Ruling: cross-split file-content hashes must be disjoint. Relative names alone are not a leakage test; record their overlap separately.
 - Ruling: archive failed logs and partial artifacts together; rerun only unfinished items from Task0, never silently resume a partial task sequence or change batch/LR.
 - Interface: committed configurations point at independent runtime result directories; the run manifest records code/config/data SHA256 and both GPU ranks.

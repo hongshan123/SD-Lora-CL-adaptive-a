@@ -205,6 +205,21 @@ def archive_attempt(job, archive_root):
     return archive
 
 
+def reset_preformal_seal(runtime, manifest):
+    runtime = Path(runtime)
+    if any(Path(job[key]).exists() for job in manifest["formal"] for key in ("log", "result")):
+        raise ValueError("cannot reseal after any formal training has started")
+    archive = runtime / "archive" / ("seal_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
+    write_json(archive / "manifest.json", manifest, exclusive=True)
+    for job in manifest["smoke"]:
+        if any(Path(job[key]).exists() for key in ("log", "result")):
+            archive_attempt(job, archive)
+    verification = runtime / "smoke_verification.json"
+    if verification.exists():
+        shutil.move(str(verification), str(archive / verification.name))
+    return {key: value for key, value in manifest.items() if key not in {"source", "git_commit", "base_weight_sha256", "environment"}}
+
+
 def inspect_job(job, verify_artifacts=False):
     log = Path(job["log"])
     text = log.read_text(errors="replace") if log.is_file() else ""
@@ -286,6 +301,7 @@ def run_one(source, job, gpu_ids, world_size):
         print(f"ARCHIVE {job['name']} {archive}", flush=True)
     if sha256_file(job["config"]) != job["config_sha256"]:
         raise RuntimeError("configuration checksum changed")
+    result.parent.mkdir(parents=True, exist_ok=True)
     log.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.update(CUDA_VISIBLE_DEVICES=gpu_ids, PYTHONUNBUFFERED="1", HF_ENDPOINT="https://hf-mirror.com", HF_HUB_OFFLINE="1", CUBLAS_WORKSPACE_CONFIG=":4096:8", TORCH_DETERMINISTIC="1", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", INA_BASE_WEIGHT_SHA256=manifest["base_weight_sha256"])
@@ -355,6 +371,7 @@ def main():
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--source", type=Path)
     parser.add_argument("--tag")
+    parser.add_argument("--reseal", action="store_true", help="archive preformal smoke attempts before a verified code fix")
     parser.add_argument("--dataset", type=Path, default=Path("/data/dataset/Imagenet-A"))
     parser.add_argument("--phase", choices=("smoke", "formal"), default="formal")
     parser.add_argument("--gpu-pairs", default="0,1;4,5;6,7")
@@ -377,7 +394,9 @@ def main():
 
         manifest = json.loads((runtime / "manifest.json").read_text())
         if "git_commit" in manifest:
-            raise ValueError("run is already sealed")
+            if not args.reseal:
+                raise ValueError("run is already sealed")
+            manifest = reset_preformal_seal(runtime, manifest)
         prepare_data_link(args.source, args.dataset)
         manifest.update(source=str(args.source.resolve()), git_commit=git_commit(args.source))
         validate_seal(runtime, manifest)

@@ -15,8 +15,8 @@
 - [x] Content SHA256 / image decode / class mapping audit; link `data/imagenet-a` without overwriting existing data.
 - [x] Tests and queue implementation; independent configuration commit. Final focused: 27 passed; full suite: 578 passed.
 - [x] Frozen/Live smoke: Task0 equality, Task1 A policy, snapshots, rebuild logits, DDP consistency. Report: `.runtime_imageneta_live_frozen_20260929_paired/smoke_verification.json`.
-- [ ] Six formal results: launched/queued on three dynamic double-GPU slots, 0,1 / 4,5 / 6,7. Never use GPU 2 or 3. Full completion pending.
-- [ ] Final / AAA / Forgetting / global old-new curves and paired sample mean/std.
+- [x] Six formal results: completed 2026-09-29 13:09:56 CST, all exit status 0; all 60 checksummed task snapshots verified. GPU slots 0,1 / 4,5 / 6,7; GPU 2 and 3 excluded.
+- [x] Final / AAA / global old-new curves and paired sample mean/std. Forgetting recomputed from numeric class-range identities; the raw trainer metric has a class-range string-sorting defect.
 
 ## Rulings And Interfaces
 
@@ -42,4 +42,40 @@ This compares A policies with all other components held fixed. It does not indep
 - Runtime: `.runtime_imageneta_live_frozen_20260929_paired/`; individual logs: `logs/`; results/snapshots: `results/`; automatic JSON/CSV: `formal_results.{json,csv}`.
 - Start/restart unfinished work: `bash run_imageneta_live_frozen_queue.sh .runtime_imageneta_live_frozen_20260929_paired formal '0,1;4,5;6,7'`. Never invoke this while the queue is active; systemd rejects duplicate units. Successful complete runs are reused, failed/partial attempts are archived.
 - Monitor: `bash run_imageneta_live_frozen_queue.sh .runtime_imageneta_live_frozen_20260929_paired monitor '0,1;4,5;6,7'`.
-- Final analysis remains pending. Smoke is not a formal accuracy result.
+- Final analysis completed 2026-09-29 14:50 CST; queue and monitor exited successfully, all GPUs idle. Smoke is not a formal accuracy result.
+
+## Formal Results
+
+All numbers below use all three registered seeds. Standard deviations are sample standard deviations. F is the corrected task-identity-aligned forgetting, not the raw logged value.
+
+| Seed | Policy | Final | AAA | Corrected F |
+|---|---|---:|---:|---:|
+| 1995 | Frozen | 63.33 | 69.273 | 10.2333 |
+| 1995 | Live | 62.48 | 69.385 | 13.4922 |
+| 1996 | Frozen | 62.54 | 68.820 | 11.1400 |
+| 1996 | Live | 62.80 | 68.995 | 11.2222 |
+| 1997 | Frozen | 63.33 | 70.014 | 9.6933 |
+| 1997 | Live | 62.34 | 69.772 | 13.7389 |
+
+| Policy | Final mean +/- std | AAA mean +/- std | Corrected F mean +/- std |
+|---|---:|---:|---:|
+| Frozen | 63.0667 +/- 0.4561 | 69.3690 +/- 0.6028 | 10.3556 +/- 0.7310 |
+| Live | 62.5400 +/- 0.2358 | 69.3840 +/- 0.3885 | 12.8178 +/- 1.3873 |
+
+- Paired Live minus Frozen Final: `[-0.85, +0.26, -0.99]`, mean `-0.5267` pp. AAA: `[+0.112, +0.175, -0.242]`, mean `+0.0150` pp. Corrected F mean difference: `+2.4622` pp.
+- Unweighted mean of the nine Task1--9 new-class accuracy differences per seed: `[+2.2267, +0.3678, +2.7033]` pp, across-seed mean `+1.7659` pp. Corresponding old-class mean difference: `-0.3559` pp. These are descriptive paired accuracies, not causal attribution to an individual module.
+- At the final boundary, new-class accuracy difference averages `+3.5200` pp and old-class accuracy difference averages `-1.0733` pp. Final is sample-weighted over all seen classes and must not be replaced by an equal-weight average of old and new accuracies.
+- Task0 training tensor/RNG hashes match within every seed pair. This protocol does not support a stable Live advantage on ImageNet-A: AAA is essentially tied, Live Final is lower in two of three pairs, and corrected F is higher in all three. It does show new-class plasticity gains; it does not establish that A updates have no value in all settings or statistical significance with three seeds.
+
+## Forgetting Audit
+
+The executed `trainer.py` sorts keys using `sorted(cnn_keys)`. Labels from `utils/toolkit.py` are padded to two digits only, so `100-119` sorts before `20-39` once Task5 is introduced. Accuracy-matrix rows therefore change task identity across columns; the printed forgetting is not task-aligned. This does not affect `grouped["total"]`, old/new accuracies, Final or AAA.
+
+Recompute from each logged `CNN` dictionary, retaining the same class-range key across all task boundaries:
+
+```text
+F = mean_{i=0..8}(max_{t=i..9} accuracy[class_range_i, t]
+                 - accuracy[class_range_i, 9])
+```
+
+Raw logged Frozen F for seeds1995/1996/1997: `11.5022/13.5667/9.9778`; raw logged Live F: `14.2922/14.2344/12.2378`. The existing generated `formal_results.json/csv` preserves these raw logged values. Use the corrected values in this document for reporting; do not silently overwrite raw evidence. Training, immutable source, configurations and artifacts are unchanged. A future trainer/reporting fix is separate from this read-only result audit.

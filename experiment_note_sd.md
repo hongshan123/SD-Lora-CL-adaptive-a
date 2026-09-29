@@ -1170,3 +1170,7 @@
 - 12:12：最终smoke报告 `passed=true`：四个backbone effective operator最大相对差2.41415e-7、prototype logits最大差7.74860e-7；每份24分支和368640个adaptation scalars。报告显式区分训练commit38fe295与只读验证commit2e974bf，不改训练源、不重跑有效smoke。
 - 正式队列和监控已由user-systemd启动：`ina-formal-imageneta_live_frozen_20260929_paired` / `ina-monitor-imageneta_live_frozen_20260929_paired`；GPU0,1 /4,5 /6,7，首发Frozen seeds1995/1996/1997，后续Live自动补位。正式结果尚未完成，不从smoke或部分curve推出性能结论。
 - 12:14：三条正式Frozen均完成Task0并进入Task1；GPU0/1与6/7为Epoch2--4，4/5在Task1初始化。每卡显存约8.5--8.7GiB，GPU2/3为1MiB空闲；未见异常堆栈或NCCL错误。继续保持20epoch与batch64，不依据中途结果改协议。
+- 14:50：正式六条均已于13:09:56结束，60份Task0--9快照checksum全部通过，queue/monitor正常退出，GPU全部空闲。冻结训练commit仍为38fe295；三seed的Task0训练tensor/RNG hash逐对一致。
+- 观察：Live平均Final较Frozen低0.5267 pp，AAA仅高0.0150 pp；配对Final为-0.85/+0.26/-0.99，不支持“ImageNet-A同样让Live稳定胜出”。Task1--9新类准确率差的跨seed均值为+1.7659 pp，说明塑性收益存在，但最终旧类平均差为-1.0733 pp，不能只用新类收益描述最终性能。
+- 指标风险：本次核对accuracy matrix发现既有trainer使用字符串排序任务类别区间，Task5起`100-119`先于`20-39`，矩阵行身份漂移。已从原始CNN分组字典按同一任务标签只读重算F，Frozen/Live均值为10.3556/12.8178，替代之前聊天引用的原日志F；Final/AAA不受影响。自动CSV/JSON仍保存原日志值，引用时必须看任务书的修正表。
+- 判断与下一步：完整配对结果作为负面/条件性证据保留，不挑seed、不基于本数据集搜索参数、不自动新增训练。论文不能以此声称Live普遍优于Frozen，也不能将整个新旧类差距归因于LS不可恢复性。指标排序修复及已有INR对照的同口径复核应作为独立后续任务；当前只更新研究记录，不改已封存的训练代码或artifact。

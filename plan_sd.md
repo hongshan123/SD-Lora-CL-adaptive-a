@@ -248,3 +248,4 @@ LRPT 的明确新机制：**以 LoRA 分解的结构为先验（ΔA 秩 = r ⇒ 
 - 严格配对 seeds1995/1996/1997，T10、rank10、SGD constant LR0.01、20 epoch、双卡每卡batch64；两边保留 alignment、prototype transport、bounded NormCap，关闭 Dual-B/Adaptive/replay。
 - 先完成两条 Task0/1、2 epoch smoke，再启动六条正式运行；GPU 槽位 0,1 / 4,5 / 6,7，排除2,3。使用不可变 Git 副本、nohup/user-systemd 和30分钟监控。
 - 报告全部 seeds 的 Final/AAA/Forgetting、逐任务全局 old/new accuracy、样本标准差和配对差值。不得把本阶段解释为 alignment 或 transport 的独立因果消融。
+- 完成：六条正式运行及60份任务快照于2026-09-29核验通过。Frozen/Live的Final均值为63.0667/62.5400，AAA为69.3690/69.3840；该协议不支持Live稳定优于Frozen。Forgetting须按任务数值标签重算，原trainer字符串排序破坏矩阵行身份；修正均值为10.3556/12.8178。详见任务书与实验台账，不据此追加参数搜索。

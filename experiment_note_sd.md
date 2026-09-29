@@ -1160,3 +1160,5 @@
 - Ruling：训练在忽略目录内的不可变 Git clone 中运行，避免其他 Agent 的后续编辑污染跨seed代码一致性。研究日志可继续在主工作树追加，不改变训练源代码。
 - 测试：先观察新增模块缺失导致测试失败，再实现；新增20项已通过，基线551项已通过。正式启动前还需完整回归、独立审查、Task0/1真实smoke。
 - 下一步：核验两臂Task0 tensor/RNG与准确率一致、Task1 Frozen A逐元素不变而Live A更新、快照checksum、DDP prototype一致和持久态重建logits。
+- 独立审查后的修正：源必须为runtime内独立detached clone，启动每条运行前重查code SHA；所有训练backbone构造都验证sealed pretrained tensor hash，离线重建也匹配同一hash。首次prepare已成功；再次prepare仅允许验证相同注册配置，禁止覆盖差异配置。
+- 并发回归：强制监控/队列同时提交JSON时复现共享临时文件冲突，改为独立临时文件+atomic replace；focused24项和完整575项均通过。训练模型、损失、梯度及RNG路径没有改变。

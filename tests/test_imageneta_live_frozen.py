@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 import pytest
 from PIL import Image
@@ -15,6 +17,8 @@ from scripts.imageneta_live_frozen import (
     parse_training_log,
     prepare_data_link,
     validate_gpu_pairs,
+    validate_source,
+    write_json,
 )
 
 
@@ -78,6 +82,55 @@ def test_smoke_is_separate_and_cannot_overwrite_configs(tmp_path):
         assert "smoke" in job["name"]
     with pytest.raises(FileExistsError):
         build_jobs(ROOT, tmp_path / "configs", tmp_path, "unit", smoke=True)
+
+
+def test_registered_configs_may_be_validated_but_never_replaced(tmp_path):
+    jobs = build_jobs(ROOT, tmp_path / "configs", tmp_path, "unit")
+    assert build_jobs(ROOT, tmp_path / "configs", tmp_path, "unit", reuse_existing=True) == jobs
+    path = Path(jobs[0]["config"])
+    config = json.loads(path.read_text())
+    config["batch_size"] = 128
+    path.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="registered config"):
+        build_jobs(ROOT, tmp_path / "configs", tmp_path, "unit", reuse_existing=True)
+
+
+def test_sealed_source_rejects_main_worktree(tmp_path):
+    with pytest.raises(ValueError, match="runtime/source"):
+        validate_source(tmp_path, {"source": str(ROOT), "git_commit": "unused"})
+
+
+def test_pretrained_hash_check_does_not_touch_rng():
+    import torch
+    from scripts.train_imageneta_paired import check_base_weights
+    from utils.canonical_hash import hash_named_tensors
+
+    model = torch.nn.Linear(3, 4)
+    before = torch.get_rng_state().clone()
+    expected = hash_named_tensors(dict(model.state_dict()))
+    assert check_base_weights(model, expected) == expected
+    assert torch.equal(before, torch.get_rng_state())
+    with pytest.raises(ValueError, match="pretrained weights"):
+        check_base_weights(model, "wrong hash")
+
+
+def test_monitor_and_queue_can_publish_json_concurrently(tmp_path, monkeypatch):
+    import os
+
+    replace = os.replace
+    barrier = threading.Barrier(2)
+
+    def synchronized_replace(source, target):
+        barrier.wait(timeout=5)
+        return replace(source, target)
+
+    monkeypatch.setattr(os, "replace", synchronized_replace)
+    output = tmp_path / "summary.json"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(write_json, output, {"value": value}) for value in (1, 2)]
+        for future in futures:
+            future.result()
+    assert json.loads(output.read_text())["value"] in (1, 2)
 
 
 def test_data_audit_is_stable_and_records_content_hashes(tmp_path):

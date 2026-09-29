@@ -69,6 +69,8 @@ def verify(runtime, device="cuda:0"):
     torch.manual_seed(1995)
     base = timm.create_model("vit_base_patch16_224", pretrained=True, num_classes=0).eval()
     result["base_weight_sha256"] = hash_named_tensors(dict(base.state_dict()))
+    if result["base_weight_sha256"] != manifest["base_weight_sha256"]:
+        raise ValueError("rebuild pretrained weights differ from sealed training weights")
     audit = json.loads((runtime / "data_audit.json").read_text())
     transform = transforms.Compose(build_transform(False, None))
     files = [item["path"] for item in audit["files"] if item["split"] == "test"][:8]

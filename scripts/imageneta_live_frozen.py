@@ -16,6 +16,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -45,9 +46,13 @@ def write_json(path, value, exclusive=False):
         with path.open("x") as stream:
             stream.write(serialized)
     else:
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(serialized)
-        os.replace(temporary, path)
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
+            stream.write(serialized)
+            temporary = Path(stream.name)
+        try:
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def audit_dataset(root, expected_classes=200, decode=True):
@@ -104,7 +109,7 @@ def prepare_data_link(root, dataset):
     return link
 
 
-def build_jobs(root, config_root, runtime, tag, smoke=False):
+def build_jobs(root, config_root, runtime, tag, smoke=False, reuse_existing=False):
     if not re.fullmatch(r"[A-Za-z0-9_]+", tag):
         raise ValueError("run tag must contain only letters, digits and underscores")
     source = json.loads((Path(root) / "exps/frozen_margin_inr_t10_seed1995.json").read_text())
@@ -118,7 +123,11 @@ def build_jobs(root, config_root, runtime, tag, smoke=False):
             if smoke:
                 config.update(max_tasks=2, init_epoch=2, epochs=2, tuned_epoch=2)
             path = Path(config_root).resolve() / (name + ".json")
-            write_json(path, config, exclusive=True)
+            if reuse_existing and path.exists():
+                if json.loads(path.read_text()) != config:
+                    raise ValueError(f"registered config differs from protocol: {path}")
+            else:
+                write_json(path, config, exclusive=True)
             jobs.append(dict(name=name, method=method, seed=seed, config=str(path), config_sha256=sha256_file(path), result=config["filepath"], log=str(runtime / "logs" / (name + ".log")), tasks=config["max_tasks"]))
     return jobs
 
@@ -221,12 +230,14 @@ def report(runtime, phase):
     records = [inspect_job(job, verify_artifacts=True) for job in manifest[phase]]
     result = dict(phase=phase, records=records, summary=paired_summary(records) if phase == "formal" else None)
     write_json(runtime / (phase + "_results.json"), result)
-    with (runtime / (phase + "_results.csv")).open("w", newline="") as stream:
+    with tempfile.NamedTemporaryFile(mode="w", dir=runtime, prefix=phase + "_results.", suffix=".csv.tmp", newline="", delete=False) as stream:
+        temporary = Path(stream.name)
         writer = csv.writer(stream)
         writer.writerow(["method", "seed", "complete", "final", "aaa", "forgetting", "task", "top1_global", "old_global", "new_global"])
         for item in records:
             for task, top1 in enumerate(item.get("curve", [])):
                 writer.writerow([item["method"], item["seed"], item["complete"], item.get("final"), item.get("aaa"), item.get("forgetting"), task, top1, item["old_curve"][task] if task < len(item["old_curve"]) else "", item["new_curve"][task] if task < len(item["new_curve"]) else ""])
+    os.replace(temporary, runtime / (phase + "_results.csv"))
     return result
 
 
@@ -234,12 +245,20 @@ def git_commit(root):
     return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
 
 
-def validate_seal(runtime, manifest):
+def validate_source(runtime, manifest):
     source = Path(manifest["source"])
+    if source.resolve() != (Path(runtime) / "source").resolve() or not (source / ".git").is_dir():
+        raise ValueError("training source must be an independent clone in runtime/source")
+    if subprocess.run(["git", "symbolic-ref", "-q", "HEAD"], cwd=source, capture_output=True).returncode != 1:
+        raise ValueError("training clone must have detached HEAD")
     if git_commit(source) != manifest["git_commit"]:
         raise RuntimeError("training source commit changed")
     if subprocess.check_output(["git", "status", "--porcelain"], cwd=source, text=True).strip():
         raise RuntimeError("training source is not clean")
+
+
+def validate_seal(runtime, manifest):
+    validate_source(runtime, manifest)
     for job in manifest["smoke"] + manifest["formal"]:
         if sha256_file(job["config"]) != job["config_sha256"]:
             raise RuntimeError(f"configuration changed: {job['name']}")
@@ -250,6 +269,9 @@ def validate_seal(runtime, manifest):
 
 
 def run_one(source, job, gpu_ids, world_size):
+    runtime = Path(source).parent
+    manifest = json.loads((runtime / "manifest.json").read_text())
+    validate_source(runtime, manifest)
     result = Path(job["result"])
     log = Path(job["log"])
     if result.exists() or log.exists():
@@ -266,8 +288,10 @@ def run_one(source, job, gpu_ids, world_size):
         raise RuntimeError("configuration checksum changed")
     log.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
-    env.update(CUDA_VISIBLE_DEVICES=gpu_ids, PYTHONUNBUFFERED="1", HF_ENDPOINT="https://hf-mirror.com", CUBLAS_WORKSPACE_CONFIG=":4096:8", TORCH_DETERMINISTIC="1", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1")
-    command = ["nohup"] + torchrun_command(world_size, job["config"])
+    env.update(CUDA_VISIBLE_DEVICES=gpu_ids, PYTHONUNBUFFERED="1", HF_ENDPOINT="https://hf-mirror.com", HF_HUB_OFFLINE="1", CUBLAS_WORKSPACE_CONFIG=":4096:8", TORCH_DETERMINISTIC="1", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", INA_BASE_WEIGHT_SHA256=manifest["base_weight_sha256"])
+    command = torchrun_command(world_size, job["config"])
+    command[-2] = "scripts/train_imageneta_paired.py"
+    command = ["nohup"] + command
     print(f"START {job['name']} GPUs={gpu_ids} time={datetime.now().isoformat()}", flush=True)
     with log.open("x") as stream:
         stream.write(f"===== START {job['name']} GPUs={gpu_ids} =====\ncommand={json.dumps(command)}\n")
@@ -342,17 +366,24 @@ def main():
             raise ValueError("unexpected ImageNet-A split sizes")
         prepare_data_link(args.root, args.dataset)
         configs = args.root / "exps" / ("imageneta_live_frozen_" + args.tag)
-        manifest = dict(version=1, tag=args.tag, data_sha256=audit["data_sha256"], smoke=build_jobs(args.root, configs, runtime, args.tag, smoke=True), formal=build_jobs(args.root, configs, runtime, args.tag))
+        manifest = dict(version=1, tag=args.tag, data_sha256=audit["data_sha256"], smoke=build_jobs(args.root, configs, runtime, args.tag, smoke=True, reuse_existing=True), formal=build_jobs(args.root, configs, runtime, args.tag, reuse_existing=True))
         write_json(runtime / "data_audit.json", audit, exclusive=True)
         write_json(runtime / "manifest.json", manifest, exclusive=True)
         print(json.dumps({key: audit[key] for key in ("counts", "data_sha256", "relative_path_overlap", "content_hash_overlap")}))
     elif args.action == "seal":
+        from importlib.metadata import version
+        import timm
+        from utils.canonical_hash import hash_named_tensors
+
         manifest = json.loads((runtime / "manifest.json").read_text())
         if "git_commit" in manifest:
             raise ValueError("run is already sealed")
         prepare_data_link(args.source, args.dataset)
         manifest.update(source=str(args.source.resolve()), git_commit=git_commit(args.source))
         validate_seal(runtime, manifest)
+        base = timm.create_model("vit_base_patch16_224", pretrained=True, num_classes=0).eval()
+        manifest["base_weight_sha256"] = hash_named_tensors(dict(base.state_dict()))
+        manifest["environment"] = dict(python=sys.version, executable=sys.executable, packages={package: version(package) for package in ("torch", "torchvision", "timm", "numpy", "pillow")}, gpu=subprocess.check_output(["nvidia-smi", "--query-gpu=index,name,driver_version", "--format=csv"], text=True))
         write_json(runtime / "manifest.json", manifest)
         print(f"SEALED {manifest['git_commit']}")
     elif args.action == "queue":

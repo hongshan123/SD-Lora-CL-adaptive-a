@@ -1059,5 +1059,5 @@
 - 协议：ImageNet-A 200类、T10、rank10、SGD/LR0.01、20epoch、有效batch128（双卡64）；seeds1995/1996/1997。Prototype classifier、alignment、transport、bounded NormCap均开启；Dual-B、Adaptive-A、replay关闭。
 - 数据：既有 `/data/dataset/Imagenet-A/train` 5981张、test1519张；200类映射一致，全部7500张解码通过。相对路径交集0，内容SHA256交集0；数据指纹 `a64b08530b5145d5f24a3a66a4de35e0e21dab7bd10268542ed3cb28356f1fcb`。仅称本地审计划分，不声称官方固定训练/测试协议。
 - 配置目录：`exps/imageneta_live_frozen_20260929_paired/`，包含6条正式配置和2条smoke配置。结果根：`.runtime_imageneta_live_frozen_20260929_paired/`，不覆盖历史结果。
-- 验证：原完整套件551项通过；新增20项覆盖配对控制、泄漏检测、失败归档、GPU排除、完整结果解析、样本标准差和smoke策略检查。完整回归和真实smoke待核验。
+- 验证：原完整套件551项通过；新增24项覆盖配对控制、泄漏检测、失败归档、GPU排除、完整结果解析、样本标准差、smoke策略、不可变训练源、预训练hash不改变RNG、监控/队列并发写入。完整回归575项通过（38.21s）；真实smoke待核验。
 - 结果：尚未产生正式结果。smoke不计入性能统计；六条完整正式结果均须进入配对统计，不筛除不利seed。

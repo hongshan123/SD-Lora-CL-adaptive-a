@@ -99,7 +99,7 @@ Execution:
 - [x] Twenty formal and two smoke configurations committed (`6200607`); sealed clean detached clone and matched original data/pretrained hashes. Implementation commit `81651db`.
 - [x] Real paired seed1 Task0/1 smoke, including GPU2,5, verified. Both status0, Task0 tensor/RNG equality, Frozen A unchanged, Live A max change `0.00393774`, DDP prototype agreement and four snapshot audits pass. Max rebuild operator relative error `2.39911e-7`, logits error `1.05798e-6`, feature relative error `1.48322e-6`. Smoke is not a formal result.
 - [x] Twenty formal runs and 30-minute monitor launched at 2026-09-29 15:13 CST. At 15:14, first Frozen seeds1/2/3 on 0,1 / 2,5 / 6,7 reached Task0 epochs12/8/14 without exceptions. Per-rank batch64; physical GPU3,4 at 1 MiB idle.
-- [ ] Complete ten-pair results and combined thirteen-pair analysis.
+- [x] Complete ten-pair results and combined thirteen-pair analysis. All 20 runs exited 0; all 200 task snapshots passed checksum audit. The queue and monitor exited successfully on 2026-09-29; corrected F is computed separately from the unchanged training logs.
 
 Extension handoff:
 
@@ -107,3 +107,32 @@ Extension handoff:
 - Queue unit: `ina-formal-imageneta_live_frozen_20260929_seeds1_10.service`; monitor unit: `ina-monitor-imageneta_live_frozen_20260929_seeds1_10.service`. Both use nohup and systemd control groups.
 - Queue log: `.runtime_imageneta_live_frozen_20260929_seeds1_10/formal_queue.log`; per-run logs under its `logs/` directory; report `formal_results.{json,csv}`. Monitor log: `monitor_queue.log`, interval 1,800 seconds.
 - Resume unfinished jobs only when the service is not active: `bash run_imageneta_live_frozen_queue.sh .runtime_imageneta_live_frozen_20260929_seeds1_10 formal`. Omitted GPU slots now resolve to registered `0,1;2,5;6,7`; excluded GPU3,4 are checked again inside the queue.
+
+## Seeds 1--10 Results
+
+All values below are percentage points. F is recomputed by matching each numeric class-range key across task boundaries; `formal_results.json/csv` retains the defective raw logged F. The immutable training core is byte-identical to the original three-seed run.
+
+| Seed | Frozen Final | Live Final | Frozen AAA | Live AAA | Frozen F | Live F |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 62.34 | 62.41 | 72.096 | 71.693 | 11.9656 | 12.5444 |
+| 2 | 62.41 | 62.21 | 71.717 | 71.556 | 10.5233 | 11.0300 |
+| 3 | 62.67 | 63.00 | 70.294 | 70.170 | 10.7178 | 12.9533 |
+| 4 | 63.92 | 62.28 | 70.366 | 69.787 | 11.0700 | 13.2356 |
+| 5 | 63.07 | 62.54 | 72.299 | 72.200 | 9.9278 | 13.1944 |
+| 6 | 63.13 | 62.94 | 72.599 | 72.393 | 11.6278 | 13.3256 |
+| 7 | 63.40 | 62.21 | 70.136 | 69.701 | 11.4889 | 13.9256 |
+| 8 | 63.73 | 62.94 | 72.956 | 72.904 | 9.4067 | 12.3400 |
+| 9 | 62.54 | 61.82 | 72.267 | 71.655 | 10.4789 | 11.7689 |
+| 10 | 62.94 | 62.87 | 72.510 | 72.389 | 10.6856 | 12.3033 |
+
+| Population | Policy | Final mean +/- sample std | AAA mean +/- sample std | Corrected F mean +/- sample std |
+|---|---|---:|---:|---:|
+| New 10 | Frozen | 63.0150 +/- 0.5443 | 71.7240 +/- 1.0581 | 10.7892 +/- 0.7811 |
+| New 10 | Live | 62.5220 +/- 0.4025 | 71.4448 +/- 1.1558 | 12.6621 +/- 0.8460 |
+| Combined 13 | Frozen | 63.0269 +/- 0.5074 | 71.1805 +/- 1.4024 | 10.6891 +/- 0.7635 |
+| Combined 13 | Live | 62.5262 +/- 0.3617 | 70.9692 +/- 1.3578 | 12.6980 +/- 0.9286 |
+
+- New ten paired Live-minus-Frozen means: Final `-0.4930 +/- 0.6049`, AAA `-0.2792 +/- 0.2089`, corrected F `+1.8729 +/- 0.9176`. Live leads Final in 2/10 pairs, AAA in 0/10, and has worse corrected F in 10/10.
+- Combined thirteen paired means: Final `-0.5008 +/- 0.5940`, AAA `-0.2113 +/- 0.2404`, corrected F `+2.0089 +/- 1.1967`. Live leads Final in 3/13 and AAA in 2/13.
+- Task1--9 equal-weight new-class accuracy differs by `+1.2737 pp` for new ten and `+1.3873 pp` for combined thirteen, Live minus Frozen; old-class accuracy differs by `-0.6434` and `-0.5771 pp`. New-class gain occurs in 10/10 new pairs and 13/13 combined pairs; old-class loss occurs in 10/10 new pairs and 12/13 combined pairs. These are diagnostics, not the sample-weighted global Final.
+- Interpretation: Live-A provides repeatable new-task plasticity on this local ImageNet-A split but fails to convert it into better Final or AAA under this fixed protocol. Do not select the two winning Final seeds as the paper result. This paired policy comparison does not isolate the effects of alignment, transport or NormCap and does not establish a universal preference across other datasets or budgets.

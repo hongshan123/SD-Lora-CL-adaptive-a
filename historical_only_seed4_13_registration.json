@@ -1,0 +1,680 @@
+{
+  "base_weights": "/home/hongzhijun/.cache/huggingface/hub/models--timm--vit_base_patch16_224.augreg2_in21k_ft_in1k/snapshots/063c6c38a5d8510b2e57df480445e94b231dad2c/model.safetensors",
+  "base_weights_sha256": "32aa17d6e17b43500f531d5f6dc9bc93e56ed8841b8a75682e1bb295d722405b",
+  "created_at": "2026-09-30T14:36:08.977339",
+  "effective_batch_size": 128,
+  "environment": {
+    "python": "3.10.20 (main, Jun 11 2026, 15:17:37) [GCC 14.3.0]",
+    "timm": "1.0.9",
+    "torch": "2.4.1+cu121"
+  },
+  "excluded_gpus": [
+    3,
+    4
+  ],
+  "formal": [
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/c100_historical_only_formal_seed4_t10_i4_bs128.json",
+      "config_sha256": "b7ae678b3e380a01218f623e644523eca5c3a3d09521cd16f8dd8211c7f5613a",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/c100_historical_only_formal_seed4_t10_i4_bs128.log",
+      "name": "c100_historical_only_formal_seed4_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/c100_historical_only_formal_seed4_t10_i4_bs128/",
+      "seed": 4,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/inr_historical_only_formal_seed4_t10_i4_bs128.json",
+      "config_sha256": "c1a2c74a76b9ae586e0f7305b05a209fb1d904a0e4736fda635b9b260321862d",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/inr_historical_only_formal_seed4_t10_i4_bs128.log",
+      "name": "inr_historical_only_formal_seed4_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/inr_historical_only_formal_seed4_t10_i4_bs128/",
+      "seed": 4,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/cub_historical_only_formal_seed4_t10_i4_bs128.json",
+      "config_sha256": "d5d025b3c973f2c0175c4adf5511e19a9a90c596e4ed8b4a2a4d1cec668e59ce",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/cub_historical_only_formal_seed4_t10_i4_bs128.log",
+      "name": "cub_historical_only_formal_seed4_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/cub_historical_only_formal_seed4_t10_i4_bs128/",
+      "seed": 4,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/c100_historical_only_formal_seed5_t10_i4_bs128.json",
+      "config_sha256": "220ccd926791a48ba793e7583bca4039f22688e612753a74743c5293d3c72764",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/c100_historical_only_formal_seed5_t10_i4_bs128.log",
+      "name": "c100_historical_only_formal_seed5_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/c100_historical_only_formal_seed5_t10_i4_bs128/",
+      "seed": 5,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/inr_historical_only_formal_seed5_t10_i4_bs128.json",
+      "config_sha256": "c2c4d3f3e6121483c4c8d07ef454df577c6f5d5258fe25bd538494ad985d68e2",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/inr_historical_only_formal_seed5_t10_i4_bs128.log",
+      "name": "inr_historical_only_formal_seed5_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/inr_historical_only_formal_seed5_t10_i4_bs128/",
+      "seed": 5,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/cub_historical_only_formal_seed5_t10_i4_bs128.json",
+      "config_sha256": "15e80c659a17d8daa0f91f0d1e326e3b6f824127bb6d57b71d1dccd3a0b947ed",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/cub_historical_only_formal_seed5_t10_i4_bs128.log",
+      "name": "cub_historical_only_formal_seed5_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/cub_historical_only_formal_seed5_t10_i4_bs128/",
+      "seed": 5,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/c100_historical_only_formal_seed6_t10_i4_bs128.json",
+      "config_sha256": "2b0f669cd304af3d75a7388e8ad6fcbd914c282dfe85e6822944615edd582eb4",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/c100_historical_only_formal_seed6_t10_i4_bs128.log",
+      "name": "c100_historical_only_formal_seed6_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/c100_historical_only_formal_seed6_t10_i4_bs128/",
+      "seed": 6,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/inr_historical_only_formal_seed6_t10_i4_bs128.json",
+      "config_sha256": "f5286521deb42e5cf085f52b678bceec5930b055732fc9fc71e507c2897452ee",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/inr_historical_only_formal_seed6_t10_i4_bs128.log",
+      "name": "inr_historical_only_formal_seed6_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/inr_historical_only_formal_seed6_t10_i4_bs128/",
+      "seed": 6,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/cub_historical_only_formal_seed6_t10_i4_bs128.json",
+      "config_sha256": "203027e0ca0686391715d3be33eb7400f80629253e540992ff51bce1d4117946",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/cub_historical_only_formal_seed6_t10_i4_bs128.log",
+      "name": "cub_historical_only_formal_seed6_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/cub_historical_only_formal_seed6_t10_i4_bs128/",
+      "seed": 6,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/c100_historical_only_formal_seed7_t10_i4_bs128.json",
+      "config_sha256": "24b7e8f052d8975d7138c16760c799261a80dbcc35d43305620c856ad193a3bf",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/c100_historical_only_formal_seed7_t10_i4_bs128.log",
+      "name": "c100_historical_only_formal_seed7_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/c100_historical_only_formal_seed7_t10_i4_bs128/",
+      "seed": 7,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/inr_historical_only_formal_seed7_t10_i4_bs128.json",
+      "config_sha256": "b3913c84085f24f351dc3d16119c1e68554afa0d17e2a71cd5d900c44c98d311",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/inr_historical_only_formal_seed7_t10_i4_bs128.log",
+      "name": "inr_historical_only_formal_seed7_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/inr_historical_only_formal_seed7_t10_i4_bs128/",
+      "seed": 7,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/cub_historical_only_formal_seed7_t10_i4_bs128.json",
+      "config_sha256": "bb7f445e5620d456f7433e8e052794609cb80df8750283d1602135323f03ac8e",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/cub_historical_only_formal_seed7_t10_i4_bs128.log",
+      "name": "cub_historical_only_formal_seed7_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/cub_historical_only_formal_seed7_t10_i4_bs128/",
+      "seed": 7,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/c100_historical_only_formal_seed8_t10_i4_bs128.json",
+      "config_sha256": "7f2cc55d3f20e6d4020d649f02260ed24d8f0418c617734caf35075a9e29cc46",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/c100_historical_only_formal_seed8_t10_i4_bs128.log",
+      "name": "c100_historical_only_formal_seed8_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/c100_historical_only_formal_seed8_t10_i4_bs128/",
+      "seed": 8,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/inr_historical_only_formal_seed8_t10_i4_bs128.json",
+      "config_sha256": "42292217702e77d6186437e93c5b614f3f129ae78734d0a729e9b515d2cc9375",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/inr_historical_only_formal_seed8_t10_i4_bs128.log",
+      "name": "inr_historical_only_formal_seed8_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/inr_historical_only_formal_seed8_t10_i4_bs128/",
+      "seed": 8,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/cub_historical_only_formal_seed8_t10_i4_bs128.json",
+      "config_sha256": "80b7e7be7a7c01ed61fa56e3948126f74119a7858ffbad41ec30ab49647c101b",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/cub_historical_only_formal_seed8_t10_i4_bs128.log",
+      "name": "cub_historical_only_formal_seed8_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/cub_historical_only_formal_seed8_t10_i4_bs128/",
+      "seed": 8,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/c100_historical_only_formal_seed9_t10_i4_bs128.json",
+      "config_sha256": "30e515d7723ceb0aee8cae15125c479b16ed6fe0f126ee4519237be39d3f3abd",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/c100_historical_only_formal_seed9_t10_i4_bs128.log",
+      "name": "c100_historical_only_formal_seed9_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/c100_historical_only_formal_seed9_t10_i4_bs128/",
+      "seed": 9,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/inr_historical_only_formal_seed9_t10_i4_bs128.json",
+      "config_sha256": "0805bdd4cbce30abf48e6868bea4d9aebc1b23c323b18aad3fade3e472b55c62",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/inr_historical_only_formal_seed9_t10_i4_bs128.log",
+      "name": "inr_historical_only_formal_seed9_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/inr_historical_only_formal_seed9_t10_i4_bs128/",
+      "seed": 9,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/cub_historical_only_formal_seed9_t10_i4_bs128.json",
+      "config_sha256": "04d0ba3cc4f5e3bb29fd9f47cf701b14e6d880f0bf726b0fa92ba7eaff157768",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/cub_historical_only_formal_seed9_t10_i4_bs128.log",
+      "name": "cub_historical_only_formal_seed9_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/cub_historical_only_formal_seed9_t10_i4_bs128/",
+      "seed": 9,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/c100_historical_only_formal_seed10_t10_i4_bs128.json",
+      "config_sha256": "bad35a8e79809d5473d68ed6450a49eec901b5a38653932b3395ddcc057c94f6",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/c100_historical_only_formal_seed10_t10_i4_bs128.log",
+      "name": "c100_historical_only_formal_seed10_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/c100_historical_only_formal_seed10_t10_i4_bs128/",
+      "seed": 10,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/inr_historical_only_formal_seed10_t10_i4_bs128.json",
+      "config_sha256": "8ad38d22770a0e4fb6b9410f8e679f36794a05c4b17aa2fcfb356715843627a9",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/inr_historical_only_formal_seed10_t10_i4_bs128.log",
+      "name": "inr_historical_only_formal_seed10_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/inr_historical_only_formal_seed10_t10_i4_bs128/",
+      "seed": 10,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/cub_historical_only_formal_seed10_t10_i4_bs128.json",
+      "config_sha256": "b32e41402f431292d34f55f5b4608963efa6fee916ac9d2c1b1d1be593d02fdf",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/cub_historical_only_formal_seed10_t10_i4_bs128.log",
+      "name": "cub_historical_only_formal_seed10_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/cub_historical_only_formal_seed10_t10_i4_bs128/",
+      "seed": 10,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/c100_historical_only_formal_seed11_t10_i4_bs128.json",
+      "config_sha256": "87f32406668c78c90d85f299de0f371a92369ec19b1e080c69d2f0c945e37897",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/c100_historical_only_formal_seed11_t10_i4_bs128.log",
+      "name": "c100_historical_only_formal_seed11_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/c100_historical_only_formal_seed11_t10_i4_bs128/",
+      "seed": 11,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/inr_historical_only_formal_seed11_t10_i4_bs128.json",
+      "config_sha256": "ed005e41c93e7a7e307cc988cca1fd3c7352d2294411d41b651d97ebc96a5faa",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/inr_historical_only_formal_seed11_t10_i4_bs128.log",
+      "name": "inr_historical_only_formal_seed11_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/inr_historical_only_formal_seed11_t10_i4_bs128/",
+      "seed": 11,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/cub_historical_only_formal_seed11_t10_i4_bs128.json",
+      "config_sha256": "0e57ef9d7f32a48172a6f17a3c864948be21845876b48b2edce8228317202a9f",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/cub_historical_only_formal_seed11_t10_i4_bs128.log",
+      "name": "cub_historical_only_formal_seed11_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/cub_historical_only_formal_seed11_t10_i4_bs128/",
+      "seed": 11,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/c100_historical_only_formal_seed12_t10_i4_bs128.json",
+      "config_sha256": "9d2d574666032c411b2a45f17b8bb57f947be6238b0a0e26edaf862bd3bb53b7",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/c100_historical_only_formal_seed12_t10_i4_bs128.log",
+      "name": "c100_historical_only_formal_seed12_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/c100_historical_only_formal_seed12_t10_i4_bs128/",
+      "seed": 12,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/inr_historical_only_formal_seed12_t10_i4_bs128.json",
+      "config_sha256": "d09017083a895bea9c2a896b7d6322cb3e6a522394abac2b07b7fa38fe5b0afe",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/inr_historical_only_formal_seed12_t10_i4_bs128.log",
+      "name": "inr_historical_only_formal_seed12_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/inr_historical_only_formal_seed12_t10_i4_bs128/",
+      "seed": 12,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/cub_historical_only_formal_seed12_t10_i4_bs128.json",
+      "config_sha256": "40c90d3f2a74ccc476b3b36deaccf5b297c36f36b377ed107dd8bb39274e69ca",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/cub_historical_only_formal_seed12_t10_i4_bs128.log",
+      "name": "cub_historical_only_formal_seed12_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/cub_historical_only_formal_seed12_t10_i4_bs128/",
+      "seed": 12,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/c100_historical_only_formal_seed13_t10_i4_bs128.json",
+      "config_sha256": "fef6cfa2f63a8e1d695bd74c126b5dc9e7d05e5190efac51c88a3152a8d72bc6",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/c100_historical_only_formal_seed13_t10_i4_bs128.log",
+      "name": "c100_historical_only_formal_seed13_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/c100_historical_only_formal_seed13_t10_i4_bs128/",
+      "seed": 13,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/inr_historical_only_formal_seed13_t10_i4_bs128.json",
+      "config_sha256": "a844562a06a977a8de4b667aa00ad9b8a443f92f0545f376be206915e82236e6",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/inr_historical_only_formal_seed13_t10_i4_bs128.log",
+      "name": "inr_historical_only_formal_seed13_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/inr_historical_only_formal_seed13_t10_i4_bs128/",
+      "seed": 13,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/cub_historical_only_formal_seed13_t10_i4_bs128.json",
+      "config_sha256": "6616dbb7e029276912843f1b0d723290faef0fed2c028f3fc16d0aebac948709",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/cub_historical_only_formal_seed13_t10_i4_bs128.log",
+      "name": "cub_historical_only_formal_seed13_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/cub_historical_only_formal_seed13_t10_i4_bs128/",
+      "seed": 13,
+      "tasks": 10
+    }
+  ],
+  "git_commit": "c68e12a557bef0b197841a0a8ecb9a308c4b83cf",
+  "gpu_pairs": [
+    "0,1",
+    "2,5",
+    "6,7"
+  ],
+  "prior": [
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_signal_multiseed/c100_historical_signal_seed1_t10_i4_bs128_2gpu.json",
+      "config_sha256": "705bf97f4caadc930572935826588bde69a5f23598b2730c2411933595a3cbfd",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/c100_historical_signal_seed1_t10_i4_bs128_2gpu.log",
+      "name": "c100_historical_signal_seed1_t10_i4_bs128_2gpu",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/C100_HISTORICAL_SIGNAL_SEED1_T10_I4_BS128_2GPU",
+      "seed": 1,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_signal_multiseed/c100_historical_signal_seed2_t10_i4_bs128_2gpu.json",
+      "config_sha256": "fee97daf66a3b1ea1a228d9a23ba361984942cd0af98995e4bb62cd269129e40",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/c100_historical_signal_seed2_t10_i4_bs128_2gpu.log",
+      "name": "c100_historical_signal_seed2_t10_i4_bs128_2gpu",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/C100_HISTORICAL_SIGNAL_SEED2_T10_I4_BS128_2GPU",
+      "seed": 2,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_signal_multiseed/c100_historical_signal_seed3_t10_i4_bs128_2gpu.json",
+      "config_sha256": "1d03e3eca33d0afc25fff8d1f7249b07dc346bab6a1a8425225bc187af4d910e",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/c100_historical_signal_seed3_t10_i4_bs128_2gpu.log",
+      "name": "c100_historical_signal_seed3_t10_i4_bs128_2gpu",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/C100_HISTORICAL_SIGNAL_SEED3_T10_I4_BS128_2GPU",
+      "seed": 3,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_signal_multiseed/inr_historical_signal_seed1_t10_i4_bs128_2gpu.json",
+      "config_sha256": "d6039c39ea119dd5dfba2b619af7f5145f4743a7308cb12d3e07b14b3c631ade",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/inr_historical_signal_seed1_t10_i4_bs128_2gpu.log",
+      "name": "inr_historical_signal_seed1_t10_i4_bs128_2gpu",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/INR_HISTORICAL_SIGNAL_SEED1_T10_I4_BS128_2GPU",
+      "seed": 1,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_signal_multiseed/inr_historical_signal_seed2_t10_i4_bs128_2gpu.json",
+      "config_sha256": "9fd81e2283454e0282450fec858e58953815a5f5894cbb7b09f911cf2058dfcf",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/inr_historical_signal_seed2_t10_i4_bs128_2gpu.log",
+      "name": "inr_historical_signal_seed2_t10_i4_bs128_2gpu",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/INR_HISTORICAL_SIGNAL_SEED2_T10_I4_BS128_2GPU",
+      "seed": 2,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_signal_multiseed/inr_historical_signal_seed3_t10_i4_bs128_2gpu.json",
+      "config_sha256": "4654e02c98a9e4feb92e771476d3036982bfa380d4a8ab8a799ab896674db09e",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/inr_historical_signal_seed3_t10_i4_bs128_2gpu.log",
+      "name": "inr_historical_signal_seed3_t10_i4_bs128_2gpu",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/INR_HISTORICAL_SIGNAL_SEED3_T10_I4_BS128_2GPU",
+      "seed": 3,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_signal_multiseed/cub_historical_signal_seed1_t10_i4_bs128_2gpu.json",
+      "config_sha256": "80afc72683fab6e59c776eacd1a99a0ae7cec99c5004dfbb9ad03d67d9cb9136",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/cub_historical_signal_seed1_t10_i4_bs128_2gpu.log",
+      "name": "cub_historical_signal_seed1_t10_i4_bs128_2gpu",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/CUB_HISTORICAL_SIGNAL_SEED1_T10_I4_BS128_2GPU",
+      "seed": 1,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_signal_multiseed/cub_historical_signal_seed2_t10_i4_bs128_2gpu.json",
+      "config_sha256": "d736f808b286caf84208a1ee216fa2cfa5a1c1415de9dfd08d3cf7de585b113e",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/cub_historical_signal_seed2_t10_i4_bs128_2gpu.log",
+      "name": "cub_historical_signal_seed2_t10_i4_bs128_2gpu",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/CUB_HISTORICAL_SIGNAL_SEED2_T10_I4_BS128_2GPU",
+      "seed": 2,
+      "tasks": 10
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_signal_multiseed/cub_historical_signal_seed3_t10_i4_bs128_2gpu.json",
+      "config_sha256": "e23a4c7d4e560e2902d7b7cd28cfa383c001ab4c6e921900979f034157e8f17f",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/cub_historical_signal_seed3_t10_i4_bs128_2gpu.log",
+      "name": "cub_historical_signal_seed3_t10_i4_bs128_2gpu",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/CUB_HISTORICAL_SIGNAL_SEED3_T10_I4_BS128_2GPU",
+      "seed": 3,
+      "tasks": 10
+    }
+  ],
+  "reused_seeds": [
+    1,
+    2,
+    3
+  ],
+  "runner_commit": "d32c8fa9deb53c1140babdb53c26c640b1cd5077",
+  "seeds": [
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13
+  ],
+  "smoke": [
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/c100_historical_only_smoke_seed4_t10_i4_bs128.json",
+      "config_sha256": "3c409ffc74fe6030f46ecbf8601eb35098f44a08c88adc99361ea44c1be7d1c7",
+      "dataset": "c100",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/c100_historical_only_smoke_seed4_t10_i4_bs128.log",
+      "name": "c100_historical_only_smoke_seed4_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/c100_historical_only_smoke_seed4_t10_i4_bs128/",
+      "seed": 4,
+      "tasks": 2
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/inr_historical_only_smoke_seed4_t10_i4_bs128.json",
+      "config_sha256": "9ba4cafd6afaae995943327837c3703d211326a0ee7f9573a68802b97c9c9877",
+      "dataset": "inr",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/inr_historical_only_smoke_seed4_t10_i4_bs128.log",
+      "name": "inr_historical_only_smoke_seed4_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/inr_historical_only_smoke_seed4_t10_i4_bs128/",
+      "seed": 4,
+      "tasks": 2
+    },
+    {
+      "config": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/configs/cub_historical_only_smoke_seed4_t10_i4_bs128.json",
+      "config_sha256": "27e92c73be66155235330aaa094cd6529fef81b840d44af9391ece9c61f09834",
+      "dataset": "cub",
+      "log": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/logs/cub_historical_only_smoke_seed4_t10_i4_bs128.log",
+      "name": "cub_historical_only_smoke_seed4_t10_i4_bs128",
+      "result": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/results/cub_historical_only_smoke_seed4_t10_i4_bs128/",
+      "seed": 4,
+      "tasks": 2
+    }
+  ],
+  "source": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-adaptive-a/.runtime_historical_only_seed4_13_20260930/source",
+  "templates": {
+    "c100": {
+      "backbone_type": "vit_base_patch16_224",
+      "batch_size": 64,
+      "dataset": "cifar224",
+      "device": [
+        "0",
+        "1"
+      ],
+      "dist_backend": "nccl",
+      "epochs": 20,
+      "filepath": "./C100_HISTORICAL_SIGNAL_SEED1_T10_I4_BS128_2GPU/",
+      "fixed_memory": false,
+      "increment": 10,
+      "init_cls": 10,
+      "init_epoch": 20,
+      "init_lr": 0.008,
+      "init_lr_decay": 0.1,
+      "init_milestones": [
+        60,
+        120,
+        170
+      ],
+      "init_weight_decay": 0.0005,
+      "lora_rank": 10,
+      "lrate": 0.008,
+      "lrate_decay": 0,
+      "max_tasks": 10,
+      "memory_per_class": 0,
+      "memory_size": 0,
+      "milestones": [
+        40,
+        70
+      ],
+      "min_lr": 0.005,
+      "model_name": "sa_sdlora",
+      "optimizer": "sgd",
+      "prefix": "c100_historical_signal_seed1_t10_i4_bs128_2gpu",
+      "sa_adaptive_a_crossfit_interval": 4,
+      "sa_adaptive_a_enabled": true,
+      "sa_adaptive_a_eps": 1e-08,
+      "sa_adaptive_a_gate_floor": 0.05,
+      "sa_adaptive_a_gate_momentum": 0.9,
+      "sa_adaptive_a_stability_weight": 1.0,
+      "sa_adaptive_a_strategy": "function_safe_pareto",
+      "sa_coordinate_stable_transport": true,
+      "sa_coordinate_transport_min_gain": 0.0,
+      "sa_coordinate_transport_rank": 10,
+      "sa_coordinate_transport_reg": 0.0001,
+      "sa_cumulative_merge": "live_a_aggregate_b",
+      "sa_cumulative_state": true,
+      "sa_delete_per_task_files": false,
+      "sa_deterministic_training": true,
+      "sa_dual_head": false,
+      "sa_functional_conflict_cosine": 0.05,
+      "sa_functional_diagnostics_interval": 0,
+      "sa_functional_student_scope": "historical",
+      "sa_functional_temperature": 2.0,
+      "sa_hbd_enabled": false,
+      "sa_live_a_absorb_mode": "bounded_norm_calibrated_absorb",
+      "sa_live_a_coordinate_align": true,
+      "sa_live_a_history_groups": 1,
+      "sa_resume": false,
+      "sa_shared_a_orthogonal": true,
+      "sa_train_a_all_tasks": true,
+      "sa_use_prototype_classifier": true,
+      "scheduler": "cosine",
+      "seed": [
+        1
+      ],
+      "shuffle": true,
+      "tuned_epoch": 20,
+      "weight_decay": 0.0002
+    },
+    "cub": {
+      "backbone_type": "vit_base_patch16_224",
+      "batch_size": 64,
+      "dataset": "cub",
+      "device": [
+        "0",
+        "1"
+      ],
+      "dist_backend": "nccl",
+      "epochs": 20,
+      "filepath": "./CUB_HISTORICAL_SIGNAL_SEED1_T10_I4_BS128_2GPU/",
+      "fixed_memory": false,
+      "increment": 20,
+      "init_cls": 20,
+      "init_epoch": 20,
+      "init_lr": 0.01,
+      "init_lr_decay": 0,
+      "init_milestones": [
+        10000
+      ],
+      "init_weight_decay": 0.0005,
+      "lora_rank": 10,
+      "lrate": 0.01,
+      "lrate_decay": 0,
+      "max_tasks": 10,
+      "memory_per_class": 0,
+      "memory_size": 0,
+      "milestones": [
+        10000
+      ],
+      "min_lr": 0.005,
+      "model_name": "sa_sdlora",
+      "optimizer": "sgd",
+      "prefix": "cub_historical_signal_seed1_t10_i4_bs128_2gpu",
+      "sa_adaptive_a_crossfit_interval": 4,
+      "sa_adaptive_a_enabled": true,
+      "sa_adaptive_a_eps": 1e-08,
+      "sa_adaptive_a_gate_floor": 0.05,
+      "sa_adaptive_a_gate_momentum": 0.9,
+      "sa_adaptive_a_stability_weight": 1.0,
+      "sa_adaptive_a_strategy": "function_safe_pareto",
+      "sa_coordinate_stable_transport": true,
+      "sa_coordinate_transport_min_gain": 0.0,
+      "sa_coordinate_transport_rank": 10,
+      "sa_coordinate_transport_reg": 0.0001,
+      "sa_cumulative_merge": "live_a_aggregate_b",
+      "sa_cumulative_state": true,
+      "sa_delete_per_task_files": false,
+      "sa_deterministic_training": true,
+      "sa_dual_head": false,
+      "sa_functional_conflict_cosine": 0.05,
+      "sa_functional_diagnostics_interval": 0,
+      "sa_functional_student_scope": "historical",
+      "sa_functional_temperature": 2.0,
+      "sa_hbd_enabled": false,
+      "sa_live_a_absorb_mode": "bounded_norm_calibrated_absorb",
+      "sa_live_a_coordinate_align": true,
+      "sa_live_a_history_groups": 1,
+      "sa_resume": false,
+      "sa_shared_a_orthogonal": true,
+      "sa_train_a_all_tasks": true,
+      "sa_use_prototype_classifier": true,
+      "scheduler": "constant",
+      "seed": [
+        1
+      ],
+      "shuffle": true,
+      "tuned_epoch": 20,
+      "weight_decay": 0.0002
+    },
+    "inr": {
+      "backbone_type": "vit_base_patch16_224",
+      "batch_size": 64,
+      "dataset": "imagenetr",
+      "device": [
+        "0",
+        "1"
+      ],
+      "dist_backend": "nccl",
+      "epochs": 20,
+      "filepath": "./INR_HISTORICAL_SIGNAL_SEED1_T10_I4_BS128_2GPU/",
+      "fixed_memory": false,
+      "increment": 20,
+      "init_cls": 20,
+      "init_epoch": 20,
+      "init_lr": 0.01,
+      "init_lr_decay": 0,
+      "init_milestones": [
+        10000
+      ],
+      "init_weight_decay": 0.0005,
+      "lora_rank": 10,
+      "lrate": 0.01,
+      "lrate_decay": 0,
+      "max_tasks": 10,
+      "memory_per_class": 0,
+      "memory_size": 0,
+      "milestones": [
+        10000
+      ],
+      "model_name": "sa_sdlora",
+      "optimizer": "sgd",
+      "prefix": "inr_historical_signal_seed1_t10_i4_bs128_2gpu",
+      "sa_adaptive_a_crossfit_interval": 4,
+      "sa_adaptive_a_enabled": true,
+      "sa_adaptive_a_eps": 1e-08,
+      "sa_adaptive_a_gate_floor": 0.05,
+      "sa_adaptive_a_gate_momentum": 0.9,
+      "sa_adaptive_a_stability_weight": 1.0,
+      "sa_adaptive_a_strategy": "function_safe_pareto",
+      "sa_coordinate_stable_transport": true,
+      "sa_coordinate_transport_min_gain": 0.0,
+      "sa_coordinate_transport_rank": 10,
+      "sa_coordinate_transport_reg": 0.0001,
+      "sa_cumulative_merge": "live_a_aggregate_b",
+      "sa_cumulative_state": true,
+      "sa_delete_per_task_files": false,
+      "sa_deterministic_training": true,
+      "sa_dual_head": false,
+      "sa_functional_conflict_cosine": 0.05,
+      "sa_functional_diagnostics_interval": 0,
+      "sa_functional_student_scope": "historical",
+      "sa_functional_temperature": 2.0,
+      "sa_hbd_enabled": false,
+      "sa_live_a_absorb_mode": "bounded_norm_calibrated_absorb",
+      "sa_live_a_coordinate_align": true,
+      "sa_live_a_history_groups": 1,
+      "sa_resume": false,
+      "sa_shared_a_orthogonal": true,
+      "sa_train_a_all_tasks": true,
+      "sa_use_prototype_classifier": true,
+      "scheduler": "constant",
+      "seed": [
+        1
+      ],
+      "shuffle": true,
+      "weight_decay": 0.0002
+    }
+  },
+  "world_size": 2
+}

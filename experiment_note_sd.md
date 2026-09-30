@@ -1193,3 +1193,5 @@
 - 2026-09-30 15:56--16:04：用户报告停止。确认三个首发seed4均rank1 NCCL scalar ALLREDUCE超时600秒，队列失败退出而非训练完成；未派发seeds5--13。systemd日志有明确exit1，无服务器重启证据。原九条完整记录未改动。
 - 排查判断：C100在15:01:53 prototype sync后执行main-rank-only eval/hash，直到15:10:41仍在hash验证，15:11:53 rank1超时；这不能仅凭NCCL文本断言卡坏。现场96CPU报告频率约137MHz、配置最低1GHz，RAM充足且OOM/swap为0，45秒PyTorch导入探针超时，优先怀疑系统级严重性能退化。CPU温度50--58C，内核日志读取权限不足，供电/BMC/外部限频具体原因仍未证实。
 - 下一步边界：当前只做诊断与记录，不修改算法、预算、seed、batch或训练代码，不盲目增大NCCL timeout。先由管理员核对CPU限频/硬件状态并恢复持续运算能力；再做长于原短测的DDP与评估检查，归档失败项后从Task0重跑，不把失败曲线纳入正式结果。
+- 2026-09-30 20:24--20:29：用户明确要求重启。CPU报告频率回到约1GHz，torch导入1.321秒、CUDA小测试0.306秒；三组双卡fresh NCCL通信均通过。源码/30配置SHA及原九条完整结果保持一致，不改算法与通信timeout。
+- 20:28:47：队列重新派发三数据集seed4，自动归档三个旧失败log/result目录，全部从Task0重跑。确认状态running后才启动monitor，避免读取旧failed状态提前退出。首批C100/INR epoch1、CUB epoch7，无Traceback/OOM/NCCL异常；后续仍需观察持续运行与rank0任务末评估，不能用短测替代长期稳定性验证。

@@ -52,3 +52,11 @@ Report Final, AAA and Forgetting. Keep raw logged Forgetting separately; recompu
 - C100 rank1 waited while rank0 performed prototype/eval/hash work: prototype sync 15:01:53, RNG check 15:05:54, tensor invariance 15:10:41, rank1 timeout 15:11:53. This demonstrates a long rank0-only interval; logs alone do not prove a collective-order bug or a faulty GPU.
 - Host observations at 15:57--16:04: memory availability about242GiB, swap0, user cgroup oom/oom_kill0. Sysfs reported all96 CPU frequencies around116--172MHz, below configured minimum1000MHz; CPU temperatures about50--58C. A 45-second PyTorch-import probe timed out before reaching CUDA allocation. These support severe host-performance degradation as a leading hypothesis, not a confirmed PSU/thermal diagnosis. Kernel/BMC logs require administrator access.
 - No algorithm/config changes or automatic restart during this read-only diagnosis. Preserve failed logs/artifacts; recover the host and validate sustained CPU/CUDA/DDP progress before restarting failed seed4 jobs from Task0. Do not count partial accuracy curves as Final/AAA.
+
+## Restart: 2026-09-30 20:28
+
+- User explicitly requested restart. CPU sysfs frequencies now report about 1000MHz; PyTorch import took 1.321s and a small CUDA matmul/allocation check 0.306s. This is recovery evidence for the earlier short-probe slowdown, not proof of long-run hardware stability.
+- All three slots 0/1, 2/5, 6/7 passed fresh NCCL all_reduce and barrier checks with correct summed value 3. Source remains clean at `c68e12a`; all 30 config checksums match, original nine full runs and three earlier data smokes remain verified. No method, optimizer, batch, LR or timeout changes.
+- Formal queue restarted at 20:28:47 with 30 pending jobs. The three failed seed4 log/result pairs were archived under `archive/<job>_20260930_202847_*/`; each restarts from Task0, without partial resume.
+- Same nohup/user-systemd formal and monitor services are active. Monitoring resumed only after queue state changed from `failed` to `running`, avoiding an immediate exit against the stale failure status.
+- At 20:29, C100/INR seed4 had completed Task0 epoch1 and CUB seed4 reached epoch7, with no startup exceptions. Continue immediate slot refill for the remaining seeds5--13; long-duration stability and task-boundary evaluation remain to be verified.

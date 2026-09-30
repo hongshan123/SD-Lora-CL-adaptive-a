@@ -1111,3 +1111,5 @@
 - 14:36启动三数据集seed4 Task0/1一epoch smoke；CUB于14:38正常status0并通过artifact验收，C100/INR仍执行Task1。短测不进入正式性能表，正式队列只在三条短测全部通过后启动。
 - 指标：记录Final、AAA、完整old/new/Top1曲线；F从原始CNN字典按数值类段重算，CSV同时保留原日志F与修正F。任何中断/失败项归档后从Task0重跑，不以部分曲线作最终结果。
 - 启动核验：三数据集短测均完整status0且24分支artifact/provenance通过，短测队列于14:40:55结束。14:41:55正式30条及独立30分钟monitor启动；14:42首批C100/INR seed4完成Task0 epoch1，CUB seed4到epoch7，两服务active，GPU3/4保持空闲。正式结果尚未完成。
+- 故障核验：首批三个seed4全部发生rank1 NCCL ALLREDUCE 600秒超时，CUB/C100/INR分别于15:08/15:13/15:26退出。队列按stop_on_failure停止派发并退出1，监控检测failed后退出。新增完整结果0、失败3、未启动27；原九条完整结果保留。C100停在Task0末评估，INR停在Task1，CUB停在Task2 epoch10，部分曲线禁止用于正式Final/AAA。
+- 环境风险：现场CPU sysfs频率约116--172MHz而配置最低1000MHz，无swap或用户cgroup OOM；45秒检查未完成PyTorch导入。C100主rank单独评估/hash时间超过另一个rank的等待容限，支持服务器性能退化假设；尚无管理员内核/BMC证据，不能直接确定供电故障或归咎显卡。此次只记录诊断，未改算法/超参、未自动重启。

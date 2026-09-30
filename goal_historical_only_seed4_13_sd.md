@@ -43,3 +43,12 @@ Report Final, AAA and Forgetting. Keep raw logged Forgetting separately; recompu
 - Reports: `formal_results.json`, `formal_results.csv`; full summary withheld until complete.
 - Queue log: `formal_queue.log`; periodic checks: `monitor_queue.log`.
 - Launch via `bash run_historical_only_seed4_13_queue.sh formal` and independent `monitor` service after smoke passes.
+
+## Failure Audit: 2026-09-30
+
+- Formal queue stopped with status1 after all three first-wave seed4 processes hit rank1 NCCL ALLREDUCE watchdog timeout (`600000 ms`). CUB exited at 15:08:11, C100 at 15:13:02, INR at 15:26:26; systemd recorded queue exit1 at 15:27:40.
+- Last progress: C100 Task0 trained all20 epochs but final evaluation/hash work did not finish; INR Task1; CUB Task2 epoch10. No new run completed the ten-task sequence; remaining27 jobs never started. Existing nine seeds1--3 records remain complete.
+- Dispatcher intentionally uses stop_on_failure; monitor later exits on failed queue state. Missing collected transient systemd units are a consequence of completed/failed services, not evidence of a reboot or SSH termination.
+- C100 rank1 waited while rank0 performed prototype/eval/hash work: prototype sync 15:01:53, RNG check 15:05:54, tensor invariance 15:10:41, rank1 timeout 15:11:53. This demonstrates a long rank0-only interval; logs alone do not prove a collective-order bug or a faulty GPU.
+- Host observations at 15:57--16:04: memory availability about242GiB, swap0, user cgroup oom/oom_kill0. Sysfs reported all96 CPU frequencies around116--172MHz, below configured minimum1000MHz; CPU temperatures about50--58C. A 45-second PyTorch-import probe timed out before reaching CUDA allocation. These support severe host-performance degradation as a leading hypothesis, not a confirmed PSU/thermal diagnosis. Kernel/BMC logs require administrator access.
+- No algorithm/config changes or automatic restart during this read-only diagnosis. Preserve failed logs/artifacts; recover the host and validate sustained CPU/CUDA/DDP progress before restarting failed seed4 jobs from Task0. Do not count partial accuracy curves as Final/AAA.

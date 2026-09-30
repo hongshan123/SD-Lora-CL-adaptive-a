@@ -1190,3 +1190,6 @@
 - 运行保障：全部nohup+user-systemd；启用用户linger；注册缓存预训练文件SHA并使用HF离线缓存。三条seed4 Task0/1 smoke先检验本次双卡与恢复路径，短测与正式结果隔离。
 - 14:38：CUB smoke status0并通过artifact检查，C100/INR已经进入Task1且无异常。观察到原型、RNG/tensor只读评估校验正常；暂不把一epoch短测指标解释为方法性能。待三条通过后启动正式30条及30分钟独立监控。
 - 14:41--14:42：三条真实Task0/1 smoke全部通过。正式队列登记30条seeds4--13，并于14:41:55启动，独立monitor同期开启；C100/INR首批已完成epoch1，CUB到epoch7。核对每卡64、20epoch、historical scope和slot分配，无Traceback/OOM/NCCL异常；物理3/4空闲。后续统计须合并原1--3与全部新增4--13，不按照中途表现调整算法或挑seed。
+- 2026-09-30 15:56--16:04：用户报告停止。确认三个首发seed4均rank1 NCCL scalar ALLREDUCE超时600秒，队列失败退出而非训练完成；未派发seeds5--13。systemd日志有明确exit1，无服务器重启证据。原九条完整记录未改动。
+- 排查判断：C100在15:01:53 prototype sync后执行main-rank-only eval/hash，直到15:10:41仍在hash验证，15:11:53 rank1超时；这不能仅凭NCCL文本断言卡坏。现场96CPU报告频率约137MHz、配置最低1GHz，RAM充足且OOM/swap为0，45秒PyTorch导入探针超时，优先怀疑系统级严重性能退化。CPU温度50--58C，内核日志读取权限不足，供电/BMC/外部限频具体原因仍未证实。
+- 下一步边界：当前只做诊断与记录，不修改算法、预算、seed、batch或训练代码，不盲目增大NCCL timeout。先由管理员核对CPU限频/硬件状态并恢复持续运算能力；再做长于原短测的DDP与评估检查，归档失败项后从Task0重跑，不把失败曲线纳入正式结果。

@@ -32,8 +32,14 @@ Report Final, AAA and Forgetting. Keep raw logged Forgetting separately; recompu
 
 ## Status
 
-- Preparation: in progress. Existing seeds1--3 will not be overwritten or scheduled.
+- Preparation complete: all nine existing seeds1--3 records verified; none scheduled or overwritten.
+- Implementation/config commits: `d32c8fa` / `67311d7`; 21 focused tests passed.
+- Real-data Task0/1 smoke: all three seed4 runs status0, finite 24-branch artifacts and training/config provenance verified. Finished at 14:40:55 on 2026-09-30; short-test scores excluded from formal results.
+- Formal queue launched 2026-09-30 14:41:55 with 30 jobs. At 14:42, C100/INR seed4 completed Task0 epoch1 and CUB seed4 reached epoch7; no startup exceptions.
+- Formal service: `historical-only-formal-.runtime-historical-only-seed4-13-20260930.service`.
+- Monitor service: `historical-only-monitor-.runtime-historical-only-seed4-13-20260930.service`; 1800-second interval. User linger enabled.
 - Runtime: `.runtime_historical_only_seed4_13_20260930/`.
 - Logs: `logs/<dataset>_historical_only_formal_seed<seed>_t10_i4_bs128.log`.
 - Reports: `formal_results.json`, `formal_results.csv`; full summary withheld until complete.
+- Queue log: `formal_queue.log`; periodic checks: `monitor_queue.log`.
 - Launch via `bash run_historical_only_seed4_13_queue.sh formal` and independent `monitor` service after smoke passes.

@@ -1184,3 +1184,9 @@
 - 2026-09-30 10:44：队列已于昨日18:42正常结束，20/20条status0；本轮200份任务快照经只读checksum核验，monitor也正常退出。两版训练核心逐文件无diff；原训练日志、artifact及自动报告未修改。
 - 重新按数值类段身份计算F：新十对Frozen/Live均值 `10.7892/12.6621`，合并十三对 `10.6891/12.6980`；不能引用自动CSV/JSON中的原始F。新十对Live-Frozen配对Final `-0.4930 pp`、AAA `-0.2792 pp`，合并十三对为 `-0.5008/-0.2113 pp`。
 - 判断：Live在13/13配对的Task1--9平均新类准确率上均领先，但旧类仅1/13领先，说明A更新有条件性的塑性价值，却不足以在该协议下胜过Frozen的全局Final/AAA。严格保留所有seed，不用个别胜出seed代表总体；后续若论文主张Live普遍优于Frozen，需另有预注册且跨数据集的证据。
+
+- 2026-09-30 14:36：用户将Historical-only新增范围改为seeds4--13，不重复1--3。原九条均通过完整日志、code/config provenance和有限24分支artifact检查；旧训练commit为c68e12a，当前开发HEAD已变化，因此本轮用独立detached clone固定旧版本。正式配置只改变seed/身份/输出目录。
+- 调度判断：复用现有dynamic dispatcher和报告辅助函数，新增30条seed-major/数据集交错队列，槽位0/1、2/5、6/7；明确继承最新GPU3/4排除要求。测试先红后绿，定向21 passed，未修改训练核心。
+- 运行保障：全部nohup+user-systemd；启用用户linger；注册缓存预训练文件SHA并使用HF离线缓存。三条seed4 Task0/1 smoke先检验本次双卡与恢复路径，短测与正式结果隔离。
+- 14:38：CUB smoke status0并通过artifact检查，C100/INR已经进入Task1且无异常。观察到原型、RNG/tensor只读评估校验正常；暂不把一epoch短测指标解释为方法性能。待三条通过后启动正式30条及30分钟独立监控。
+- 14:41--14:42：三条真实Task0/1 smoke全部通过。正式队列登记30条seeds4--13，并于14:41:55启动，独立monitor同期开启；C100/INR首批已完成epoch1，CUB到epoch7。核对每卡64、20epoch、historical scope和slot分配，无Traceback/OOM/NCCL异常；物理3/4空闲。后续统计须合并原1--3与全部新增4--13，不按照中途表现调整算法或挑seed。

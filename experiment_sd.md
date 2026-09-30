@@ -1098,3 +1098,16 @@
 - 合并原三对后的13对：Frozen `Final 63.0269±0.5074 / AAA 71.1805±1.4024 / F 10.6891±0.7635`；Live `62.5262±0.3617 / 70.9692±1.3578 / 12.6980±0.9286`。配对差Final `-0.5008±0.5940`、AAA `-0.2113±0.2404`、F `+2.0089±1.1967 pp`。Live胜Final `3/13`、AAA `2/13`。
 - Task1--9新类等权平均准确率Live在新十对中高 `1.2737 pp`，旧类低 `0.6434 pp`；合并13对为新类 `+1.3873`、旧类 `-0.5771 pp`。新类提升在13对均出现；这与Final/AAA下降并不矛盾，说明塑性收益被稳定性代价抵消。
 - F从每任务`CNN`类别区间按数值任务身份重新计算；自动生成的JSON/CSV和原训练日志仍保留错误的字符串排序F，不可直接作为遗忘率引用。结论只适用于本地ImageNet-A划分、固定rank/超参及共同开启的alignment/transport/NormCap；不基于获胜seed筛选论文结论，不把A策略差异归因于任一补偿模块。
+
+## 2026-09-30：Historical-only 新增 Seeds 4–13
+
+- 用户最终指定保留已有 seeds1–3，新增 seeds4–13；C100/INR/CUB 共30条正式训练，不重跑原九条结果。完整结论基于各数据集全部13个种子，不筛选表现较好的seed。
+- 本轮是已有方法的稳定性验证，不添加算法或新的论文贡献。训练代码固定为原九条实验的 `c68e12a557bef0b197841a0a8ecb9a308c4b83cf`；独立 detached clone 避免其他 Agent 的当前代码修改影响正在训练的版本。
+- Historical-only 配置：`function_safe_pareto`、`sa_functional_student_scope=historical`、cross-fit interval4。保留 LS alignment、bounded NormCap absorption、prototype transport 和原 prototype classifier，Dual-B/HBD 关闭。
+- 严格继承原 per-dataset seed1 配置，正式项只改变 seed、prefix 和 filepath；T10、rank10、20epoch、SGD、每卡batch64/有效128，LR/scheduler/类别顺序生成规则与各原协议不变。
+- GPU排除3、4；三组双卡 `0,1 / 2,5 / 6,7`。动态填槽，无整批等待；nohup + user-systemd 运行，独立1800秒监控。启用当前用户 linger，避免退出SSH后用户服务被关闭。
+- 运行登记：`historical_only_seed4_13_registration.json` 包含全部配置、SHA256、原结果路径、训练版本、预训练权重hash和环境；新增输出位于 `.runtime_historical_only_seed4_13_20260930/`，不覆盖旧日志/artifact。
+- 已核验：原九条日志均完整status0，来源commit/config SHA一致，最终24个Q/V分支形状/有限值通过；21项定向测试和shell语法检查通过。实现commit `d32c8fa`、配置封存commit `67311d7`。
+- 14:36启动三数据集seed4 Task0/1一epoch smoke；CUB于14:38正常status0并通过artifact验收，C100/INR仍执行Task1。短测不进入正式性能表，正式队列只在三条短测全部通过后启动。
+- 指标：记录Final、AAA、完整old/new/Top1曲线；F从原始CNN字典按数值类段重算，CSV同时保留原日志F与修正F。任何中断/失败项归档后从Task0重跑，不以部分曲线作最终结果。
+- 启动核验：三数据集短测均完整status0且24分支artifact/provenance通过，短测队列于14:40:55结束。14:41:55正式30条及独立30分钟monitor启动；14:42首批C100/INR seed4完成Task0 epoch1，CUB seed4到epoch7，两服务active，GPU3/4保持空闲。正式结果尚未完成。

@@ -94,3 +94,27 @@ Accumulated complete results only (mean +/- sample standard deviation; NOT a com
 - Attempted the existing `bash run_historical_only_seed4_13_queue.sh formal` launcher. It exited1 before creating a service: `Failed to connect to bus: Operation not permitted`. Current sandbox also cannot directly access GPUs or inspect host processes. No training was started and queue state remains `failed`.
 - Run the same launcher from an ordinary host terminal. It preserves the two completed runs and archives/restarts incomplete ones from Task0, using the registered dual-GPU slots and batch64. Start the monitor only after a NEW `QUEUE START phase=formal jobs=28` entry and running status appear, not against the stale failed status.
 - No sandbox bypass, algorithm/config changes or artifact modifications were attempted.
+
+## Per-Seed Results: 2026-10-01 14:21 CST
+
+Freshly inspected all 39 registered/reused logs and verified the eleven complete artifacts. Cells below are `Final / AAA / corrected Forgetting`; incomplete runs have no final metrics.
+
+| Seed | CIFAR-100 | ImageNet-R | CUB-200 |
+|---:|---|---|---|
+| 1 | 87.55 / 92.122 / 7.177778 | 78.52 / 83.090 / 5.977778 | 84.31 / 89.582 / 6.320000 |
+| 2 | 88.38 / 91.830 / 5.466667 | 78.52 / 81.604 / 5.626667 | 83.50 / 88.556 / 7.492222 |
+| 3 | 87.62 / 91.688 / 7.244444 | 78.07 / 82.504 / 6.463333 | 83.90 / 88.388 / 7.133333 |
+| 4 | Running: Task1 epoch2/20 | Running: Task1 epoch10/20 | 83.26 / 90.077 / 8.095556 |
+| 5 | 87.31 / 90.354 / 6.922222 | Running: Task1 epoch10/20 | Pending |
+| 6 | Pending | Pending | Pending |
+| 7 | Pending | Pending | Pending |
+| 8 | Pending | Pending | Pending |
+| 9 | Pending | Pending | Pending |
+| 10 | Pending | Pending | Pending |
+| 11 | Pending | Pending | Pending |
+| 12 | Pending | Pending | Pending |
+| 13 | Pending | Pending | Pending |
+
+- Persisted queue log shows restart at14:10:02, `jobs=28`, state `running`. The agent's earlier sandbox-blocked attempt did not start it; the new host-side start is established from logs, not attributed to that blocked command.
+- Current new-run coverage: 2 complete, 3 active with recent progress, 25 pending. The two previous failed seed4 attempts have been archived and replaced by fresh Task0 runs. No additional full sequence has completed since the preceding results audit.
+- Aggregate means/sample standard deviations remain the 4/3/4-seed figures above. This is not a completed 13-seed comparison, and no partial Final/AAA values enter the table.

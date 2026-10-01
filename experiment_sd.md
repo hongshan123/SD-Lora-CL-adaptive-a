@@ -1132,3 +1132,5 @@
 - 当前会话GPU/systemd直接查询受权限限制，不能将查询失败解释为驱动损坏；运行结束和失败状态依据已落盘队列/监控日志。完整曲线与统计见`goal_historical_only_seed4_13_sd.md`。
 - 随后用户要求拉起未完成队列：重新核验封存训练源码、30配置、基础权重hash、原九条结果和三个smoke全部通过，未完成28条，完整的CUB seed4/C100 seed5会自动跳过。
 - 实际尝试原formal启动脚本，但user-systemd连接被会话权限拒绝（`Operation not permitted`），未创建服务、未启动训练，队列仍failed。不得把这次权限阻断写成训练失败或驱动故障。普通服务器终端可执行原formal脚本；待新一轮running/QUEUE START记录出现后再启动1800秒monitor。
+- 14:21逐seed复核：队列日志新增14:10:02主机端重启记录，28条未完成项进入running；这不是此前被沙箱拦截的启动成功。C100 seed4在Task1 epoch2/20，INR seeds4/5在Task1 epoch10/20；三条有新进度，另25条等待，完整新增仍2条。
+- 重新检查全部39条登记/复用日志，11条完整记录的artifact与来源全部通过；完整逐seed Final/AAA/修正F以及seeds1--13运行状态已写入`goal_historical_only_seed4_13_sd.md`。汇总仍为C100四seed、INR三seed、CUB四seed；训练中结果不用于完整序列统计。

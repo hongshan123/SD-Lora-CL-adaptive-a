@@ -1195,3 +1195,7 @@
 - 下一步边界：当前只做诊断与记录，不修改算法、预算、seed、batch或训练代码，不盲目增大NCCL timeout。先由管理员核对CPU限频/硬件状态并恢复持续运算能力；再做长于原短测的DDP与评估检查，归档失败项后从Task0重跑，不把失败曲线纳入正式结果。
 - 2026-09-30 20:24--20:29：用户明确要求重启。CPU报告频率回到约1GHz，torch导入1.321秒、CUDA小测试0.306秒；三组双卡fresh NCCL通信均通过。源码/30配置SHA及原九条完整结果保持一致，不改算法与通信timeout。
 - 20:28:47：队列重新派发三数据集seed4，自动归档三个旧失败log/result目录，全部从Task0重跑。确认状态running后才启动monitor，避免读取旧failed状态提前退出。首批C100/INR epoch1、CUB epoch7，无Traceback/OOM/NCCL异常；后续仍需观察持续运行与rank0任务末评估，不能用短测替代长期稳定性验证。
+- 2026-10-01 午后结果核验：只读核验重启后的日志/artifact，新增完整结果为CUB seed4（Final83.26/AAA90.077/修正F8.095556）和C100 seed5（87.31/90.354/6.922222）。两者均通过来源、十任务曲线及24分支持久状态核验。CUB完成后即派发C100 seed5，动态填槽没有整批等待。
+- 队列判断：C100 seed4在Task4 epoch15、INR seed4在Task5 epoch5再次600秒NCCL ALLREDUCE超时。stop_on_failure禁止继续派发，但已活跃C100 seed5继续执行到08:24，随后队列退出1；目前2完整/2失败/26未启动。未自动重启，不以失败项部分曲线补齐seed。
+- 性能判断：新增CUB seed的较高AAA伴随较低Final与较高F，C100 seed5也没有重复原三seed均值；均须纳入统计，不能筛选有利seed。当前覆盖C100四seed、INR三seed、CUB四seed，不支持新增十seed的总体稳定性结论，更不能缺少同seedFrozen/Live对照就宣称方法优越。
+- 环境风险：当前权限收紧，GPU/NVML与user-systemd直接查询不可用。此查询现象本身不是主机驱动损坏证据；只依据持久日志报告队列已结束，硬件根因仍需独立诊断。本轮仅追加研究记录，不修改训练源码、配置或artifact。

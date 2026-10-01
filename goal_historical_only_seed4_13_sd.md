@@ -60,3 +60,30 @@ Report Final, AAA and Forgetting. Keep raw logged Forgetting separately; recompu
 - Formal queue restarted at 20:28:47 with 30 pending jobs. The three failed seed4 log/result pairs were archived under `archive/<job>_20260930_202847_*/`; each restarts from Task0, without partial resume.
 - Same nohup/user-systemd formal and monitor services are active. Monitoring resumed only after queue state changed from `failed` to `running`, avoiding an immediate exit against the stale failure status.
 - At 20:29, C100/INR seed4 had completed Task0 epoch1 and CUB seed4 reached epoch7, with no startup exceptions. Continue immediate slot refill for the remaining seeds5--13; long-duration stability and task-boundary evaluation remain to be verified.
+
+## Results Audit: 2026-10-01
+
+- Restart outcome: 2 complete, 2 failed, 26 not started out of 30 registered new runs. Queue ended with status1 at 08:24:23 after its last active job completed; monitor detected failed state at 08:32. No automatic restart in this audit.
+- CUB seed4 finished at 2026-09-30 22:07:04; C100 seed5 was immediately dispatched to its freed GPU6/7 slot and finished at 2026-10-01 08:24:23. Both have ten evaluations, verified provenance and finite 24-branch artifacts.
+
+| Dataset | Seed | Final | AAA | Corrected Forgetting |
+|---|---:|---:|---:|---:|
+| CUB-200 | 4 | 83.26 | 90.077 | 8.095556 |
+| CIFAR-100 | 5 | 87.31 | 90.354 | 6.922222 |
+
+- CUB seed4 Top1: `[98.98, 96.09, 93.40, 91.21, 89.83, 88.69, 87.81, 86.07, 85.43, 83.26]`.
+- C100 seed5 Top1: `[94.20, 93.65, 93.57, 91.90, 89.92, 88.92, 88.19, 87.99, 87.89, 87.31]`.
+- C100 seed4 failed at Task4 epoch15, exit23:02:22; INR seed4 failed at Task5 epoch5, exit23:10:00. Both again report rank1 scalar ALLREDUCE timeout600000ms, with severe epoch slowdown preceding the timeout. Root cause is not established by these logs; partial curves are excluded.
+- Corrected CUB seed4 F is8.095556, not raw logged7.311111. The original task-range string-sort issue persists in the sealed training version; reporting remains read-only.
+
+Accumulated complete results only (mean +/- sample standard deviation; NOT a completed 13-seed table):
+
+| Dataset | Complete Seeds | Final | AAA | Corrected Forgetting |
+|---|---|---:|---:|---:|
+| CIFAR-100 | 1,2,3,5 | 87.715 +/- 0.463 | 91.499 +/- 0.784 | 6.703 +/- 0.836 |
+| ImageNet-R | 1,2,3 | 78.370 +/- 0.260 | 82.399 +/- 0.749 | 6.023 +/- 0.420 |
+| CUB-200 | 1,2,3,4 | 83.743 +/- 0.461 | 89.151 +/- 0.812 | 7.260 +/- 0.742 |
+
+- New CUB seed4 has higher AAA but lower Final than the previous three-seed mean; C100 seed5 lowers both pooled Final and AAA. These are cross-seed observations, not paired evidence of algorithm improvement or deterioration.
+- Direct host GPU and user-systemd checks are unavailable under this session's restricted permissions. Do not interpret NVML/systemd access failures as a confirmed driver fault. Queue status above is established from persisted logs and validated artifacts.
+- No algorithm, configuration, training source or runtime artifact was changed during this results audit.

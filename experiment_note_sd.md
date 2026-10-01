@@ -1199,3 +1199,5 @@
 - 队列判断：C100 seed4在Task4 epoch15、INR seed4在Task5 epoch5再次600秒NCCL ALLREDUCE超时。stop_on_failure禁止继续派发，但已活跃C100 seed5继续执行到08:24，随后队列退出1；目前2完整/2失败/26未启动。未自动重启，不以失败项部分曲线补齐seed。
 - 性能判断：新增CUB seed的较高AAA伴随较低Final与较高F，C100 seed5也没有重复原三seed均值；均须纳入统计，不能筛选有利seed。当前覆盖C100四seed、INR三seed、CUB四seed，不支持新增十seed的总体稳定性结论，更不能缺少同seedFrozen/Live对照就宣称方法优越。
 - 环境风险：当前权限收紧，GPU/NVML与user-systemd直接查询不可用。此查询现象本身不是主机驱动损坏证据；只依据持久日志报告队列已结束，硬件根因仍需独立诊断。本轮仅追加研究记录，不修改训练源码、配置或artifact。
+- 2026-10-01 14:05后重启请求：执行原formal脚本，systemd用户bus返回Operation not permitted，启动被拦截。源码/config/weight完整性、三个smoke和原九条结果重新核验通过；30条新增中2完整、28未完成。不绕过沙箱或把failed状态改成running，不改模型/超参，不归档任何结果，交付普通主机终端的原启动命令。
+- monitor须等formal新的running状态再启动；直接读取旧failed会立即退出。已有自动跳过、归档和动态填槽逻辑足够，不为权限阻断另造训练实现。

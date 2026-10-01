@@ -87,3 +87,10 @@ Accumulated complete results only (mean +/- sample standard deviation; NOT a com
 - New CUB seed4 has higher AAA but lower Final than the previous three-seed mean; C100 seed5 lowers both pooled Final and AAA. These are cross-seed observations, not paired evidence of algorithm improvement or deterioration.
 - Direct host GPU and user-systemd checks are unavailable under this session's restricted permissions. Do not interpret NVML/systemd access failures as a confirmed driver fault. Queue status above is established from persisted logs and validated artifacts.
 - No algorithm, configuration, training source or runtime artifact was changed during this results audit.
+
+## Restart Request Blocked: 2026-10-01
+
+- User requested the unfinished queue. Fresh read-only validation confirms 28 pending/incomplete jobs, with CUB seed4 and C100 seed5 complete; prior nine runs and three smokes are valid, and sealed source/config/weight hashes remain unchanged.
+- Attempted the existing `bash run_historical_only_seed4_13_queue.sh formal` launcher. It exited1 before creating a service: `Failed to connect to bus: Operation not permitted`. Current sandbox also cannot directly access GPUs or inspect host processes. No training was started and queue state remains `failed`.
+- Run the same launcher from an ordinary host terminal. It preserves the two completed runs and archives/restarts incomplete ones from Task0, using the registered dual-GPU slots and batch64. Start the monitor only after a NEW `QUEUE START phase=formal jobs=28` entry and running status appear, not against the stale failed status.
+- No sandbox bypass, algorithm/config changes or artifact modifications were attempted.

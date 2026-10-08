@@ -43,6 +43,8 @@ all old-class **training** images' S0 layer-input tokens, divided by the
 historical response energy. These are offline diagnostics only; old images
 are never replayed into training or used to build prototypes. Both metrics
 are single-operator proxies, not classification-accuracy bounds.
+Adjacent S0–S5 effective-operator Frobenius differences are recorded per
+branch as mechanism diagnostics, not accuracy bounds.
 
 `scripts/summarize_live_frozen_diagnostics.py` writes all seed×task results,
 paired Live−Frozen differences, per-seed final metrics, and descriptive

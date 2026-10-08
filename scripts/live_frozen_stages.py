@@ -79,14 +79,19 @@ def build_stage_factors(previous, pre):
         for name, (down, up) in factors.items():
             states[name]["shared_a"].append(down)
             states[name]["merged_b"].append(up)
+        operators = {name: effective_operator(states[name], index)
+                     for name in factors}
+        stage_differences = {
+            f"{before.lower()}_{after.lower()}_operator_fro": float(
+                torch.linalg.vector_norm(operators[after] - operators[before]))
+            for before, after in (("S0", "S1"), ("S1", "S2"), ("S2", "S3"),
+                                  ("S3", "S4"), ("S4", "S5"))
+        }
         diagnostics.append({
             **recoverability_diagnostics(old_g, old_a, a),
+            **stage_differences,
             "ls_relative_error": ls["after_relative_error"],
             "normcap_gain": normcap["consolidation_gain"],
-            "s3_s4_operator_max_abs": float((effective_operator(states["S3"], index)
-                                               - effective_operator(states["S4"], index)).abs().max()),
-            "s4_s5_operator_fro": float(torch.linalg.vector_norm(
-                effective_operator(states["S4"], index)
-                - effective_operator(states["S5"], index))),
+            "s3_s4_operator_max_abs": float((operators["S3"] - operators["S4"]).abs().max()),
         })
     return states, diagnostics

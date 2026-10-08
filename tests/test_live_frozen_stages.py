@@ -28,6 +28,11 @@ def test_stage_factors_separate_a_alignment_exact_absorb_and_normcap():
     assert torch.allclose(actual["S5"], torch.tensor([[1., 1.], [2**-1.5, 2**-1.5]]))
     assert torch.allclose(actual["H_LS"], torch.tensor([[1., 1.], [0., 0.]]))
     assert abs(diagnostics[0]["normcap_gain"] - 2**-0.5) < 1e-6
+    for before, after in (("S0", "S1"), ("S1", "S2"), ("S2", "S3"),
+                          ("S3", "S4"), ("S4", "S5")):
+        name = f"{before.lower()}_{after.lower()}_operator_fro"
+        expected = float(torch.linalg.vector_norm(actual[after] - actual[before]))
+        assert abs(diagnostics[0][name] - expected) < 1e-6
 
 
 def test_recoverability_uses_historical_operator_and_old_layer_inputs():

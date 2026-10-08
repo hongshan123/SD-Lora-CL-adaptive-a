@@ -1134,3 +1134,11 @@
 - 实际尝试原formal启动脚本，但user-systemd连接被会话权限拒绝（`Operation not permitted`），未创建服务、未启动训练，队列仍failed。不得把这次权限阻断写成训练失败或驱动故障。普通服务器终端可执行原formal脚本；待新一轮running/QUEUE START记录出现后再启动1800秒monitor。
 - 14:21逐seed复核：队列日志新增14:10:02主机端重启记录，28条未完成项进入running；这不是此前被沙箱拦截的启动成功。C100 seed4在Task1 epoch2/20，INR seeds4/5在Task1 epoch10/20；三条有新进度，另25条等待，完整新增仍2条。
 - 重新检查全部39条登记/复用日志，11条完整记录的artifact与来源全部通过；完整逐seed Final/AAA/修正F以及seeds1--13运行状态已写入`goal_historical_only_seed4_13_sd.md`。汇总仍为C100四seed、INR三seed、CUB四seed；训练中结果不用于完整序列统计。
+
+## 2026-10-08：Historical-only Seeds 1--13 完整验收
+
+- 延续2026-09-30预注册方法和协议，不改变训练代码。正式队列在2026-10-02 08:20:15以status0结束；新增30/30完整，加原先9/9完整，共39条；每条十任务曲线与24个Q/V分支最终artifact通过来源和有限值审计。
+- 全13seed均值±样本标准差：C100 Final `87.918±0.430`、AAA `91.848±0.808`、修正F `6.385±0.644`；INR `78.374±0.244 / 82.222±0.933 / 5.546±0.449`；CUB `83.674±0.642 / 88.926±0.523 / 7.437±0.835`。全部39条逐seed数值见`goal_historical_only_seed4_13_sd.md`。
+- 方法判断：C100 Final波动范围87.26--88.64，INR77.88--78.73，CUB82.29--84.50。没有删除表现偏低的INR seed13或CUB seed10；13seed均值与先前三seed均值不完全相同，后续论文必须采用完整注册集合。
+- 指标口径：INR/CUB原训练日志F仍有任务类别字符串排序错误，本次用数值任务类别身份重算；自动结果文件同时保留原F，引用应使用修正F。Final和AAA不受这一排序问题影响。
+- 边界：本轮扩展的是Historical-only单臂，不构成13seed与Frozen-A/Live-A的配对性能对比；三路开发seed结果只用于方法筛选，不得替代严格多seed对照。

@@ -118,3 +118,37 @@ Freshly inspected all 39 registered/reused logs and verified the eleven complete
 - Persisted queue log shows restart at14:10:02, `jobs=28`, state `running`. The agent's earlier sandbox-blocked attempt did not start it; the new host-side start is established from logs, not attributed to that blocked command.
 - Current new-run coverage: 2 complete, 3 active with recent progress, 25 pending. The two previous failed seed4 attempts have been archived and replaced by fresh Task0 runs. No additional full sequence has completed since the preceding results audit.
 - Aggregate means/sample standard deviations remain the 4/3/4-seed figures above. This is not a completed 13-seed comparison, and no partial Final/AAA values enter the table.
+
+## Final 13-Seed Audit: 2026-10-08
+
+- The host-side queue of 28 remaining jobs finished at 2026-10-02 08:20:15 with `QUEUE END phase=formal status=0`; `formal_queue_status.json` is `complete`. All 30 new seeds4--13 and nine reused seeds1--3 pass the log, provenance, ten-task, and final 24-branch artifact checks: 39/39 complete.
+- Entries are `Final / AAA / corrected Forgetting`, in percentage points. The earlier running/pending table is retained above as a dated snapshot; this table supersedes it for completed results.
+
+| Seed | CIFAR-100 | ImageNet-R | CUB-200 |
+|---:|---|---|---|
+| 1 | 87.55 / 92.122 / 7.178 | 78.52 / 83.090 / 5.978 | 84.31 / 89.582 / 6.320 |
+| 2 | 88.38 / 91.830 / 5.467 | 78.52 / 81.604 / 5.627 | 83.50 / 88.556 / 7.492 |
+| 3 | 87.62 / 91.688 / 7.244 | 78.07 / 82.504 / 6.463 | 83.90 / 88.388 / 7.133 |
+| 4 | 87.26 / 90.851 / 6.811 | 78.35 / 82.066 / 5.629 | 83.26 / 90.077 / 8.096 |
+| 5 | 87.31 / 90.354 / 6.922 | 78.38 / 82.634 / 5.371 | 84.45 / 88.747 / 6.592 |
+| 6 | 88.64 / 92.358 / 5.400 | 78.57 / 82.033 / 5.352 | 84.50 / 89.244 / 6.354 |
+| 7 | 88.12 / 91.635 / 5.933 | 78.17 / 83.194 / 6.146 | 84.00 / 88.841 / 6.782 |
+| 8 | 88.17 / 91.085 / 6.078 | 78.53 / 82.150 / 5.777 | 82.93 / 88.684 / 8.412 |
+| 9 | 88.31 / 93.164 / 6.089 | 77.88 / 81.927 / 4.884 | 83.62 / 89.187 / 7.083 |
+| 10 | 87.65 / 91.836 / 7.000 | 78.73 / 81.564 / 5.278 | 82.29 / 88.815 / 9.088 |
+| 11 | 87.91 / 92.564 / 5.744 | 78.35 / 82.987 / 5.254 | 83.14 / 89.001 / 8.052 |
+| 12 | 88.25 / 92.986 / 6.367 | 78.62 / 83.309 / 5.061 | 84.00 / 88.887 / 7.560 |
+| 13 | 87.77 / 91.555 / 6.767 | 78.17 / 79.820 / 5.281 | 83.86 / 88.027 / 7.714 |
+
+Mean +/- sample standard deviation over all 13 registered seeds:
+
+| Dataset | Final | AAA | Corrected Forgetting |
+|---|---:|---:|---:|
+| CIFAR-100 | 87.918 +/- 0.430 | 91.848 +/- 0.808 | 6.385 +/- 0.644 |
+| ImageNet-R | 78.374 +/- 0.244 | 82.222 +/- 0.933 | 5.546 +/- 0.449 |
+| CUB-200 | 83.674 +/- 0.642 | 88.926 +/- 0.523 | 7.437 +/- 0.835 |
+
+- C100 Final ranges87.26--88.64, INR77.88--78.73, CUB82.29--84.50. INR seed13 AAA79.820 and CUB seed10 Final82.29 are retained, as required by the sealed seed protocol.
+- The original trainer string-sort bug affects reported Forgetting for INR/CUB. The table uses `corrected_forgetting` from numeric task class ranges; raw logged F is preserved in the JSON/CSV and must not replace these corrected values. Final and AAA are unaffected.
+- The older `monitor_queue.log` ends with the previous failed attempt; formal queue status and validated per-run logs establish final completion. This does not verify that the independent 30-minute monitor was relaunched for the successful attempt.
+- The full 13-seed Historical-only result supports its own stability estimate. A claim of superiority over Frozen-A/Live-A still requires matching same-seed, same-protocol baselines; single-seed development comparisons do not establish that claim.

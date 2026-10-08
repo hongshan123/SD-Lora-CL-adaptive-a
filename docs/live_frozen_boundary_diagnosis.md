@@ -30,7 +30,10 @@ same test order, the script evaluates S0 (previous deployment), S1 (current A,
 no B), S2 (trained pre-merge), S3 (LS-aligned history plus B), S4 (exact B
 absorption without NormCap), S5 (NormCap deployment), and H_LS (LS-aligned
 history, no B). S6 replaces only old prototypes with transported versions.
-The final new prototypes stored by the training run are a separate head change.
+The final new prototypes are independently recomputed from the current task's
+training split with test preprocessing under S5, then checked against the
+training artifact within maximum absolute difference `1e-4`. They form a
+separate head change after S6.
 S3/S4 and S5/reconstructed deployment logits must agree within max absolute
 `1e-4` and relative L2 `1e-5`.
 

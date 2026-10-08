@@ -39,6 +39,21 @@ def mean_prototypes(features, labels, class_ids):
     return result
 
 
+def verify_formal_prototypes(recomputed, saved, tolerance=1e-4):
+    if set(recomputed) != set(saved):
+        raise RuntimeError("formal new prototype class IDs differ from training artifact")
+    differences = []
+    for class_id in sorted(saved):
+        current, expected = recomputed[class_id], saved[class_id]
+        if current.shape != expected.shape or not torch.isfinite(current).all():
+            raise RuntimeError(f"formal new prototype {class_id} has invalid shape or values")
+        differences.append(float((current.cpu() - expected.cpu()).abs().max()))
+    maximum = max(differences, default=0.0)
+    if maximum > tolerance:
+        raise RuntimeError(f"formal new prototype mismatch: max_abs={maximum}")
+    return maximum
+
+
 def fixed_head(old_prototypes, new_prototypes, total_classes):
     if set(old_prototypes) | set(new_prototypes) != set(range(total_classes)):
         raise ValueError("prototype class IDs do not cover the evaluation space")
@@ -207,9 +222,6 @@ def run_boundary(run_dir, task, output_dir, device, batch_size=32):
     fixed = fixed_head(old_proto, new_proto, total).to(device)
     transported_old = {index: official_proto[index] for index in range(old_count)}
     transported = fixed_head(transported_old, new_proto, total).to(device)
-    formal = fixed_head(transported_old,
-                        {index: official_proto[index] for index in range(old_count, total)},
-                        total).to(device)
     logits = {}
     metrics = {}
     identity = None
@@ -234,6 +246,14 @@ def run_boundary(run_dir, task, output_dir, device, batch_size=32):
         if comparison["max_abs"] > 1e-4 or comparison["relative_l2"] > 1e-5:
             raise RuntimeError(f"{label} logits differ: {comparison}")
     set_stage(model, stages["S5"])
+    formal_features, formal_labels = _features(model, train_new, device)
+    formal_new_proto = mean_prototypes(formal_features, formal_labels,
+                                       range(old_count, total))
+    formal_new_difference = verify_formal_prototypes(
+        formal_new_proto,
+        {index: official_proto[index] for index in range(old_count, total)},
+    )
+    formal = fixed_head(transported_old, formal_new_proto, total).to(device)
     for name, head in (("S6", transported), ("formal_new_prototypes", formal)):
         ids, labels, scores = _logits(model, test, head, device)
         if not (torch.equal(ids, identity[0]) and torch.equal(labels, identity[1])):
@@ -257,6 +277,7 @@ def run_boundary(run_dir, task, output_dir, device, batch_size=32):
     artifact = output_dir / f"task_{task:03d}.pt"
     torch.save({"sample_ids": identity[0], "labels": identity[1], "logits": logits,
                 "temporary_new_prototypes": new_proto,
+                "recomputed_formal_new_prototypes": formal_new_proto,
                 "old_prototypes_before_transport": old_proto,
                 "old_prototypes_after_transport": transported_old,
                 "official_new_prototypes": {index: official_proto[index]
@@ -266,6 +287,7 @@ def run_boundary(run_dir, task, output_dir, device, batch_size=32):
         "known_classes": old_count, "total_classes": total,
         "sample_count": len(identity[0]),
         "temporary_new_prototype_source": "current task train split, test preprocessing, S2 features",
+        "formal_new_prototype_source": "current task train split, test preprocessing, S5 features",
         "weighted_input_source": "old class train split, test preprocessing, S0 Q/V inputs, all tokens",
         "prototype_hashes": {
             "fixed": hash_named_tensors({str(index): fixed[index].cpu()
@@ -276,7 +298,8 @@ def run_boundary(run_dir, task, output_dir, device, batch_size=32):
                                           for index in range(total)}),
         },
         "checks": {"s3_s4_logits": exact, "s5_deployed_logits": reconstruction,
-                   "s5_deployed_operator_max_abs": max(operator_differences)},
+                   "s5_deployed_operator_max_abs": max(operator_differences),
+                   "formal_new_prototype_max_abs": formal_new_difference},
         "aggregate": {"r_rec": total_lost / max(total_history, 1e-12),
                       "r_weighted": weighted_lost / max(weighted_history, 1e-12)},
         "branches": branch_diagnostics,

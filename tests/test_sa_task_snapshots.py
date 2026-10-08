@@ -195,6 +195,33 @@ def test_audit_detects_corrupted_snapshot(tmp_path):
         raise AssertionError("corrupted snapshot passed checksum audit")
 
 
+def test_proto_only_snapshot_does_not_require_unused_fc_artifacts(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    for name in ("sa_state.pt", "sa_prototypes.pt", "sa_merged_lora.pt"):
+        (run_dir / name).write_bytes(name.encode())
+    directory = run_dir / "task_snapshots" / "task_000"
+    directory.mkdir(parents=True)
+    (directory / "pre_merge.pt").write_bytes(b"pre")
+    save_post_merge(run_dir, 0, {"sa_dual_head": False,
+                                 "sa_use_prototype_classifier": True})
+    assert audit_snapshot(directory)["verified"]
+    assert not (directory / "CLs_weight0.pt").exists()
+
+
+def test_snapshot_rejects_only_one_fc_artifact(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    for name in ("sa_state.pt", "sa_prototypes.pt", "sa_merged_lora.pt",
+                 "CLs_weight0.pt"):
+        (run_dir / name).write_bytes(name.encode())
+    directory = run_dir / "task_snapshots" / "task_000"
+    directory.mkdir(parents=True)
+    (directory / "pre_merge.pt").write_bytes(b"pre")
+    with pytest.raises(FileNotFoundError, match="CLs_bias0.pt"):
+        save_post_merge(run_dir, 0, {"sa_dual_head": False})
+
+
 def test_intrusion_metric_counts_old_to_new_errors_with_fixed_head():
     labels = torch.tensor([0, 1, 2])
     historical = torch.tensor([[4., 1., 0.], [0., 4., 1.], [0., 1., 4.]])

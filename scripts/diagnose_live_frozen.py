@@ -51,6 +51,15 @@ def fixed_head(old_prototypes, new_prototypes, total_classes):
     return F.normalize(torch.stack(vectors).float(), p=2, dim=1)
 
 
+def build_stage_backbone(base, state):
+    # _MergedQKV stores nn.Parameters directly; clone to keep offline states immutable on CPU.
+    detached = {
+        "shared_a": [tensor.detach().clone() for tensor in state["shared_a"]],
+        "merged_b": [tensor.detach().clone() for tensor in state["merged_b"]],
+    }
+    return build_merged_backbone(base, detached)
+
+
 def set_stage(model, state):
     if len(state["shared_a"]) != 2 * len(model.blocks):
         raise ValueError("Q/V branch count differs from backbone depth")
@@ -191,7 +200,7 @@ def run_boundary(run_dir, task, output_dir, device, batch_size=32):
     test = _loader(manager.get_dataset(np.arange(total), source="test", mode="test"),
                    batch_size)
     base = timm.create_model("vit_base_patch16_224", pretrained=True, num_classes=0)
-    model = build_merged_backbone(base, stages["S0"]).to(device).eval()
+    model = build_stage_backbone(base, stages["S0"]).to(device).eval()
     set_stage(model, stages["S2"])
     new_features, new_labels = _features(model, train_new, device)
     new_proto = mean_prototypes(new_features, new_labels, range(old_count, total))

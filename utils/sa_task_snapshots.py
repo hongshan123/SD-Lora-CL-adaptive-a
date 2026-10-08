@@ -23,13 +23,26 @@ def _sha256(path):
     return digest.hexdigest()
 
 
+def _fc_files(directory, task_id, required=False):
+    names = (f"CLs_weight{task_id}.pt", f"CLs_bias{task_id}.pt")
+    present = [(Path(directory) / name).is_file() for name in names]
+    if required or any(present):
+        missing = [name for name, exists in zip(names, present) if not exists]
+        if missing:
+            raise FileNotFoundError(f"task snapshot requires {Path(directory) / missing[0]}")
+        return names
+    return ()
+
+
 def audit_snapshot(directory, finalize=False):
     directory = Path(directory)
     task_id = int(directory.name.removeprefix("task_"))
+    config_path = directory / "config.json"
+    config = json.loads(config_path.read_text()) if config_path.is_file() else {}
     required = (
         "pre_merge.pt", "config.json", "sa_state.pt", "sa_merged_lora.pt",
-        "sa_prototypes.pt", f"CLs_weight{task_id}.pt", f"CLs_bias{task_id}.pt",
-    )
+        "sa_prototypes.pt",
+    ) + _fc_files(directory, task_id, required=bool(config.get("sa_dual_head", False)))
     missing = [name for name in required if not (directory / name).is_file()]
     if missing:
         raise FileNotFoundError(f"incomplete snapshot {directory}: {missing}")
@@ -149,8 +162,7 @@ def save_post_merge(run_dir, task_id, config):
     directory.mkdir(parents=True, exist_ok=True)
     files = (
         "sa_state.pt", "sa_merged_lora.pt", "sa_prototypes.pt",
-        f"CLs_weight{task_id}.pt", f"CLs_bias{task_id}.pt",
-    )
+    ) + _fc_files(run_dir, task_id, required=bool(config.get("sa_dual_head", False)))
     if (run_dir / "run_manifest.json").is_file():
         files += ("run_manifest.json",)
     for name in files:

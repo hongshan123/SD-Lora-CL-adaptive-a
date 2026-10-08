@@ -11,10 +11,10 @@ from pathlib import Path
 
 
 def parse_curve(log_text):
-    match = re.search(r"CNN top1 curve:\s*(\[[^\n]*\])", log_text)
-    if match is None:
+    matches = re.findall(r"CNN top1 curve:\s*(\[[^\n]*\])", log_text)
+    if not matches:
         raise ValueError("completed CNN top1 curve is absent")
-    literal = match.group(1).replace("np.float64(", "(")
+    literal = matches[-1].replace("np.float64(", "(")
     curve = ast.literal_eval(literal)
     if not isinstance(curve, list):
         raise ValueError("CNN top1 curve must be a list")
@@ -31,7 +31,13 @@ def audit_pair(off_dir, on_dir, off_log, on_log):
         for task in range(10):
             for key in ("post_train_model_hash", "post_train_rng_hash",
                         "post_eval_model_hash", "post_eval_rng_hash"):
-                if off[str(task)].get(key) != on[str(task)].get(key):
+                if (not isinstance(off[str(task)].get(key), str)
+                        or not off[str(task)][key]
+                        or not isinstance(on[str(task)].get(key), str)
+                        or not on[str(task)][key]):
+                    first = f"task {task} {key} missing"
+                    break
+                if off[str(task)][key] != on[str(task)][key]:
                     first = f"task {task} {key}"
                     break
             if first is not None:

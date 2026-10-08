@@ -2,6 +2,7 @@ import torch
 from torch import nn
 
 from scripts.diagnose_live_frozen import (
+    build_stage_backbone,
     fixed_head,
     mean_prototypes,
     set_stage,
@@ -33,12 +34,14 @@ def test_stage_switch_changes_qv_operator_without_changing_base_qkv():
            "merged_b": [torch.tensor([[1.], [0.]]), torch.tensor([[0.], [1.]])]}
     new = {"shared_a": [torch.tensor([[0., 1.]]), torch.tensor([[0., 1.]])],
            "merged_b": [torch.tensor([[2.], [0.]]), torch.tensor([[0.], [2.]])]}
-    model = build_merged_backbone(base, old)
+    model = build_stage_backbone(base, old)
     weight_before = model.blocks[0].attn.qkv.qkv.weight.detach().clone()
     set_stage(model, new)
     wrapper = model.blocks[0].attn.qkv
     assert torch.allclose(wrapper.b_q @ wrapper.a_q, torch.tensor([[0., 2.], [0., 0.]]))
     assert torch.equal(wrapper.qkv.weight, weight_before)
+    assert torch.equal(old["shared_a"][0], torch.tensor([[1., 0.]]))
+    assert torch.equal(old["merged_b"][0], torch.tensor([[1.], [0.]]))
 
 
 def test_stage_summary_counts_global_old_new_and_flips():

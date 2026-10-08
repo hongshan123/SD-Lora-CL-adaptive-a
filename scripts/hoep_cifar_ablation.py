@@ -107,6 +107,8 @@ def generate_manifest(project_root, runtime_root, previous_root, run_tag):
     source = json.loads((project_root / "exps/hoep_c100_seed1993_t10.json").read_text())
     config_root = runtime_root / "configs"
     config_root.mkdir(parents=True, exist_ok=True)
+    (runtime_root / "results").mkdir(parents=True, exist_ok=True)
+    (runtime_root / "preflight").mkdir(parents=True, exist_ok=True)
     old_runtime = previous_root / f".runtime_hoep_p3_{OLD_TAG}_no23"
     reused = []
     for method in ("frozen", "live", "hoep"):

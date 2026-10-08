@@ -63,3 +63,7 @@ every direction. Full training trajectories differ after intervention.
 - Final full suite: 394 passed in 35.39s. Review fix-pass found no blocker;
   source/config hashes are also rechecked after any GPU-idle wait.
 - Formal queue: pending; four real T2/E1 smoke runs precede the 15 full runs.
+- First real preflight stopped before training because the queue generator
+  omitted the output parent directories required by the existing run guard.
+  Added a real run-guard regression (RED), then created both parent roots.
+  Failed logs are preserved in the first runtime; restart uses a fresh runtime.

@@ -45,6 +45,16 @@ def test_manifest_runs_only_missing_fifteen_cells_with_shared_protocol(tmp_path)
                 assert reference == str(Path(dependency["output"]) / "hoep_partition_schedule.json")
 
 
+def test_generated_output_parents_allow_trainer_to_create_run_guard(tmp_path):
+    from utils.run_guard import acquire_run_guard
+    root = Path(__file__).resolve().parents[1]
+    data = module().generate_manifest(root, tmp_path / "runtime", tmp_path / "previous", "test")
+    for entry in (data["jobs"][0], data["preflight"][0]):
+        output = Path(entry["output"])
+        handle = acquire_run_guard(output)
+        handle.close()
+
+
 def test_incomplete_log_cannot_be_reported_as_completed(tmp_path):
     log = tmp_path / "partial.log"
     log.write_text("CNN top1 curve: [90., 89.]\n")

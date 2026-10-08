@@ -17,6 +17,7 @@ INR_*/
 CUB_*/
 seed_1995_*/
 .runtime_*/
+/data
 
 # python caches
 __pycache__/

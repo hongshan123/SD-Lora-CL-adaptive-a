@@ -10,6 +10,7 @@ which reproduces the exact forward of the per-task bank at evaluation time.
 """
 
 import math
+import json
 import copy
 import os
 from collections.abc import Sequence
@@ -34,6 +35,7 @@ from backbone.operator_energy_partition import (
     retract_partitioned_coordinates,
     rotate_operator_coordinates,
     select_global_low_energy_partition,
+    select_matched_energy_partition,
 )
 from backbone.recoverability import (
     accessibility_candidates,
@@ -1763,6 +1765,9 @@ class SharedALoRA_ViT_timm(nn.Module):
         recoverability_gammas=(0.0, 0.25, 0.5, 0.75, 1.0),
         hoep_energy_budget=0.05,
         hoep_eigenvalue_rtol=1e-6,
+        hoep_partition_policy="low",
+        hoep_reference_counts_path="",
+        hoep_partition_seed=0,
         functional_conflict_tol=1e-12,
         functional_conflict_cosine=0.05,
         functional_normal_tol=1e-12,
@@ -1853,6 +1858,13 @@ class SharedALoRA_ViT_timm(nn.Module):
         )
         self.hoep_energy_budget = float(hoep_energy_budget)
         self.hoep_eigenvalue_rtol = float(hoep_eigenvalue_rtol)
+        self.hoep_partition_policy = str(hoep_partition_policy)
+        self.hoep_reference_counts_path = str(hoep_reference_counts_path)
+        self.hoep_partition_seed = int(hoep_partition_seed)
+        if self.hoep_partition_policy not in ("low", "random", "high", "all"):
+            raise ValueError("hoep_partition_policy must be low, random, high, or all")
+        if self.hoep_partition_policy in ("random", "high") and not self.hoep_reference_counts_path:
+            raise ValueError("direction controls require hoep_reference_counts_path")
         self.functional_conflict_tol = float(functional_conflict_tol)
         self.functional_conflict_cosine = float(functional_conflict_cosine)
         self.functional_normal_tol = float(functional_normal_tol)
@@ -2600,6 +2612,8 @@ class SharedALoRA_ViT_timm(nn.Module):
             self._hoep_partition_diagnostics = {
                 "strategy": "operator_energy_partition",
                 "task_zero_skipped": True,
+                "partition_policy": self.hoep_partition_policy,
+                "branch_counts": [self.rank] * len(self.w_As),
                 "energy_budget": self.hoep_energy_budget,
                 "selected_directions": self.rank * len(self.w_As),
                 "total_directions": self.rank * len(self.w_As),
@@ -2684,6 +2698,21 @@ class SharedALoRA_ViT_timm(nn.Module):
                 self.hoep_eigenvalue_rtol,
                 self.adaptive_a_eps,
             )
+            if self.hoep_partition_policy != "low":
+                counts = None
+                if self.hoep_partition_policy in ("random", "high"):
+                    with open(self.hoep_reference_counts_path, encoding="utf-8") as stream:
+                        reference = json.load(stream)
+                    if reference.get("version") != 1 or reference.get("seed") != self.hoep_partition_seed:
+                        raise ValueError("HOEP reference counts version/seed mismatch")
+                    counts = reference.get("tasks", {}).get(str(self.task_id))
+                    if counts is None:
+                        raise ValueError(f"HOEP reference counts missing task {self.task_id}")
+                partition = select_matched_energy_partition(
+                    spectra, counts, self.hoep_partition_policy,
+                    seed=self.hoep_partition_seed + 1000003 * self.task_id,
+                    tie_relative_tolerance=self.hoep_eigenvalue_rtol,
+                )
             canonical_aggregate = []
             self._hoep_plastic_masks = []
             self._hoep_anchor_a = []
@@ -2720,6 +2749,11 @@ class SharedALoRA_ViT_timm(nn.Module):
             self._hoep_partition_diagnostics = {
                 "strategy": "operator_energy_partition",
                 "task_zero_skipped": False,
+                "partition_policy": self.hoep_partition_policy,
+                "reference_counts_path": self.hoep_reference_counts_path,
+                "branch_counts": [int(mask.sum()) for mask in partition.plastic_masks],
+                "branch_masks": [mask.detach().cpu().tolist() for mask in partition.plastic_masks],
+                "branch_spectra": [values.detach().cpu().tolist() for values in spectra],
                 "energy_budget": self.hoep_energy_budget,
                 "total_energy": partition.total_energy,
                 "selected_energy": partition.selected_energy,
@@ -4771,7 +4805,8 @@ class SharedALoRA_ViT_timm(nn.Module):
                     / max(old_operator_energy, self.adaptive_a_eps)
                 ),
                 "predicted_energy_budget": (
-                    self.hoep_energy_budget
+                    (self.hoep_energy_budget if self.hoep_partition_policy == "low"
+                     else self._hoep_partition_diagnostics["selected_energy_ratio"])
                     if self.adaptive_a_strategy
                     == "operator_energy_partition"
                     else None
@@ -4785,7 +4820,8 @@ class SharedALoRA_ViT_timm(nn.Module):
                 "max_condition": 0.0,
                 "global_squared_residual_ratio": 0.0,
                 "predicted_energy_budget": (
-                    self.hoep_energy_budget
+                    (self.hoep_energy_budget if self.hoep_partition_policy == "low"
+                     else self._hoep_partition_diagnostics["selected_energy_ratio"])
                     if self.adaptive_a_strategy
                     == "operator_energy_partition"
                     else None

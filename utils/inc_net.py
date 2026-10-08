@@ -111,6 +111,9 @@ def get_backbone(args, pretrained=False):
                     (0.0, 0.25, 0.5, 0.75, 1.0),
                 ),
                 hoep_energy_budget=args.get("sa_hoep_energy_budget", 0.05),
+                hoep_partition_policy=args.get("sa_hoep_partition_policy", "low"),
+                hoep_reference_counts_path=args.get("sa_hoep_reference_counts_path", ""),
+                hoep_partition_seed=args.get("sa_hoep_partition_seed", 0),
                 hoep_eigenvalue_rtol=args.get(
                     "sa_hoep_eigenvalue_rtol", 1e-6
                 ),

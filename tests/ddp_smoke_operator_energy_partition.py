@@ -1,6 +1,7 @@
 """Two-rank NCCL smoke for HOEP-A partition, retraction, and rebuild."""
 
 import hashlib
+import json
 import os
 import shutil
 import sys
@@ -43,6 +44,13 @@ class _TinyViT(nn.Module):
 
 def _model(run_dir, task):
     torch.manual_seed(731)
+    policy = os.environ.get("HOEP_SMOKE_POLICY", "low")
+    reference = run_dir / "reference_counts.json"
+    if policy in ("random", "high"):
+        if dist.get_rank() == 0:
+            reference.write_text(json.dumps({"version": 1, "seed": 731,
+                                             "tasks": {"1": [1, 1], "2": [1, 1]}}))
+        dist.barrier()
     return SharedALoRA_ViT_timm(
         _TinyViT(),
         r=3,
@@ -56,6 +64,9 @@ def _model(run_dir, task):
         adaptive_a_enabled=True,
         adaptive_a_strategy="operator_energy_partition",
         hoep_energy_budget=0.5,
+        hoep_partition_policy=policy,
+        hoep_reference_counts_path=str(reference) if policy in ("random", "high") else "",
+        hoep_partition_seed=731,
     )
 
 
@@ -120,6 +131,8 @@ def main():
         dist.barrier()
 
         model = _model(run_dir, 1).to(device)
+        if os.environ.get("HOEP_SMOKE_POLICY", "low") in ("random", "high"):
+            assert [int(m.sum()) for m in model._hoep_plastic_masks] == [1, 1]
         distributed = DDP(model, device_ids=[local_rank])
         optimizer = torch.optim.SGD(
             [parameter for parameter in distributed.parameters() if parameter.requires_grad],

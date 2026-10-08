@@ -151,7 +151,22 @@ def validate_adaptive_a_config(args):
         "hoep_eigenvalue_rtol": float(
             args.get("sa_hoep_eigenvalue_rtol", 1e-6)
         ),
+        "hoep_partition_policy": str(args.get("sa_hoep_partition_policy", "low")),
+        "hoep_reference_counts_path": str(args.get("sa_hoep_reference_counts_path", "")),
+        "hoep_partition_seed": args.get("sa_hoep_partition_seed", 0),
     }
+    if settings["hoep_partition_policy"] not in ("low", "random", "high", "all"):
+        raise ValueError("sa_hoep_partition_policy must be low, random, high, or all")
+    if settings["hoep_partition_policy"] != "low" and (
+        not settings["adaptive_a_enabled"]
+        or settings["adaptive_a_strategy"] != "operator_energy_partition"
+    ):
+        raise ValueError("direction controls require enabled operator_energy_partition")
+    if settings["hoep_partition_policy"] in ("random", "high") and not settings["hoep_reference_counts_path"]:
+        raise ValueError("random/high controls require sa_hoep_reference_counts_path")
+    partition_seed = settings["hoep_partition_seed"]
+    if isinstance(partition_seed, bool) or not isinstance(partition_seed, Integral) or partition_seed < 0:
+        raise ValueError("sa_hoep_partition_seed must be a nonnegative integer")
     functional_conflict_tol = float(args.get("sa_functional_conflict_tol", 1e-12))
     functional_normal_tol = float(args.get("sa_functional_normal_tol", 1e-12))
     functional_min_normal_fraction = float(
@@ -1652,11 +1667,26 @@ class Learner(SDLoraLearner):
         return folds
 
     def _log_adaptive_a_diagnostics(self):
-        """Log task-local Adaptive-A aggregates without serializing them."""
+        """Log task aggregates and save HOEP diagnostic counts outside adapter state."""
         diagnostics = self._raw_network().backbone.adaptive_a_diagnostics()
         if diagnostics is None:
             return
         if diagnostics.get("strategy") == "operator_energy_partition":
+            schedule_path = os.path.join(self.args["filepath"], "hoep_partition_schedule.json")
+            schedule = {"version": 1, "seed": int(self.args["seed"]), "tasks": {}, "diagnostics": {}}
+            if os.path.isfile(schedule_path):
+                with open(schedule_path, encoding="utf-8") as stream:
+                    schedule = json.load(stream)
+            schedule["tasks"][str(self._cur_task)] = diagnostics["branch_counts"]
+            schedule["diagnostics"][str(self._cur_task)] = diagnostics
+            os.makedirs(self.args["filepath"], exist_ok=True)
+            with open(schedule_path + ".tmp", "w", encoding="utf-8") as stream:
+                json.dump(schedule, stream, indent=2)
+            os.replace(schedule_path + ".tmp", schedule_path)
+            if diagnostics["partition_policy"] != "low":
+                logging.info("[HOEP-Control] task %d: policy=%s counts=%s selected_energy_ratio=%.6e; no 5%% cap",
+                             self._cur_task, diagnostics["partition_policy"],
+                             diagnostics["branch_counts"], diagnostics["selected_energy_ratio"])
             logging.info(
                 "[HOEP-A] task %d: budget=%.6f selected=%d/%d "
                 "energy_ratio=%.6e steps=%d init_equiv=%.6e "

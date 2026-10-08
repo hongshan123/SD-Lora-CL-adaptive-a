@@ -8,6 +8,8 @@ projection ``G``, and current up projection ``B``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import product
+from numbers import Integral
 from typing import Sequence
 
 import torch
@@ -131,6 +133,67 @@ def _tie_groups(values: Tensor, relative_tolerance: float) -> list[tuple[int, ..
         else:
             groups.append([index])
     return [tuple(group) for group in groups]
+
+
+def select_matched_energy_partition(
+    spectra: Sequence[Tensor],
+    branch_counts: Sequence[int] | None,
+    policy: str,
+    seed: int,
+    tie_relative_tolerance: float = 1e-6,
+) -> EnergyPartition:
+    """Select count-matched control masks, preserving whole spectral ties.
+
+    Random is uniform over feasible masks in each branch, using an isolated
+    CPU generator. High maximizes selected energy among feasible masks.
+    These controls have no 5% energy cap. Intended for the rank10 ablation.
+    """
+    if policy not in ("random", "high", "all"):
+        raise ValueError("control policy must be random, high, or all")
+    if policy != "all" and (branch_counts is None or len(branch_counts) != len(spectra)):
+        raise ValueError("reference counts must match the number of branches")
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    masks = []
+    total_energy = selected_energy = 0.0
+    total_directions = selected_directions = tie_groups = 0
+    for index, values in enumerate(spectra):
+        clean = values.detach().cpu().double()
+        if clean.ndim != 1 or not bool(torch.isfinite(clean).all()) or bool((clean < 0).any()):
+            raise ValueError("spectrum must be finite, nonnegative and one-dimensional")
+        if bool((clean[1:] < clean[:-1]).any()):
+            raise ValueError("spectrum must be ascending")
+        groups = _tie_groups(clean, tie_relative_tolerance)
+        tie_groups += len(groups)
+        count = clean.numel() if policy == "all" else branch_counts[index]
+        if isinstance(count, bool) or not isinstance(count, Integral) or not 0 <= count <= clean.numel():
+            raise ValueError("reference count must be an integer within branch rank")
+        if policy == "all" or count == clean.numel():
+            chosen = tuple(range(clean.numel()))
+        elif count == 0:
+            chosen = ()
+        else:
+            if len(groups) > 16:
+                raise ValueError("matched-mask enumeration supports at most 16 tie groups")
+            candidates = []
+            for flags in product((False, True), repeat=len(groups)):
+                chosen_groups = [group for group, flag in zip(groups, flags) if flag]
+                if sum(map(len, chosen_groups)) == count:
+                    candidates.append(tuple(row for group in chosen_groups for row in group))
+            if not candidates:
+                raise ValueError(f"branch {index}: count {count} cannot preserve complete tie groups")
+            if policy == "random":
+                chosen = candidates[int(torch.randint(len(candidates), (), generator=generator))]
+            else:
+                chosen = max(candidates, key=lambda rows: float(clean[list(rows)].sum()))
+        mask = torch.zeros_like(values, dtype=torch.bool)
+        mask[list(chosen)] = True
+        masks.append(mask)
+        total_energy += float(clean.sum())
+        selected_energy += float(clean[list(chosen)].sum())
+        total_directions += clean.numel()
+        selected_directions += int(count)
+    return EnergyPartition(tuple(masks), total_energy, selected_energy,
+                           total_energy, selected_directions, total_directions, tie_groups)
 
 
 def select_global_low_energy_partition(

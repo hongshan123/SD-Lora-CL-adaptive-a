@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import copy
 import sys
 
 import pytest
@@ -106,3 +107,41 @@ def test_control_survives_training_boundary_and_preserves_stable_rows(tmp_path, 
     model.save_lora_parameters(str(tmp_path), 1)
     diag = model._last_live_a_coordinate_diagnostics
     assert diag["global_squared_residual_ratio"] <= diag["predicted_energy_budget"] + 1e-6
+
+
+@pytest.mark.parametrize("policy", ["low", "random", "high", "all"])
+def test_eval_rebuild_uses_saved_operator_without_next_task_partition(tmp_path, policy):
+    common = dict(train_a_all_tasks=True, cumulative_state=True,
+                  cumulative_merge="live_a_aggregate_b", live_a_coordinate_align=True,
+                  live_a_absorb_mode="operator_preserving_absorb", adaptive_a_enabled=True,
+                  adaptive_a_strategy="operator_energy_partition")
+    previous = SharedALoRA_ViT_timm(_TinyViT(), r=2, filepath=str(tmp_path),
+                                 cur_task_index=0, **common)
+    with torch.no_grad():
+        for b in previous.w_Bs:
+            b.weight.normal_()
+    previous.save_lora_parameters(str(tmp_path), 0)
+    # Task10 means ten absorbed tasks when constructing the final evaluation
+    # model. There is no Task10 training partition or matching count schedule.
+    state_path = tmp_path / 'sa_state.pt'
+    state = torch.load(state_path, weights_only=True)
+    state['task_id'] = 10
+    torch.save(state, state_path)
+    base = _TinyViT()
+    original_qkv = copy.deepcopy(base.blocks[0].attn.qkv)
+    rebuilt = SharedALoRA_ViT_timm(
+        base, r=2, filepath=str(tmp_path), cur_task_index=10, index=False,
+        hoep_partition_policy=policy,
+        hoep_reference_counts_path=str(tmp_path / 'no_task10_reference.json'),
+        hoep_partition_seed=1993, **common)
+    for actual, saved in zip(rebuilt.w_As, state['shared_a']):
+        assert torch.equal(actual.weight, saved)
+    assert all(torch.equal(a, b) for a, b in zip(rebuilt.aggregate_up, state['aggregate_up']))
+    inputs = torch.randn(3, 2, 4)
+    expected = original_qkv(inputs)
+    for branch, sl in [(0, slice(0, 4)), (1, slice(-4, None))]:
+        a, g = state['shared_a'][branch], state['aggregate_up'][branch]
+        expected[:, :, sl] += torch.nn.functional.linear(
+            torch.nn.functional.linear(inputs, a), g / (a.norm() + 1e-8))
+    torch.testing.assert_close(rebuilt(inputs), expected, atol=2e-6, rtol=2e-6)
+    assert not rebuilt._hoep_plastic_masks

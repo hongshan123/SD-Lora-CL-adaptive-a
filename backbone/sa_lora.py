@@ -2555,7 +2555,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         elif (
             self.adaptive_a_enabled
             and self.adaptive_a_strategy == "operator_energy_partition"
+            and index
         ):
+            # index=False rebuilds the saved deployment state. task_id then
+            # counts absorbed tasks; it is not a task awaiting training.
             self._initialize_operator_energy_partition()
 
     def _recoverability_wrappers(self):

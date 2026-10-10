@@ -5,6 +5,8 @@
 
 ## 当前研究入口
 
+- [最新实验结果：三数据集完整诊断与 HOEP 10 seed 进度](reports/experiment_results_20261010_0912.md)
+- [HOEP 10 seed 扩展与实验恢复记录](reports/hoep_10seed_resume_20261009.md)
 - [HOEP-A 方法设计与公式](reports/hoep_adaptive_a_method_design_20261009.md)
 - [Adaptive-A 三数据集结果核查](reports/adaptive_a_proximity_20261008.md)
 - [Live-A / Frozen-A 三 seed 进度与协议](reports/cuda6_live_frozen_progress_20261009_1146.md)

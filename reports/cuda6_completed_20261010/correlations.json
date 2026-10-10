@@ -1,0 +1,386 @@
+[
+  {
+    "dataset": "cifar224",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": -0.3858256814794646
+  },
+  {
+    "dataset": "cifar224",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.3318577355104235
+  },
+  {
+    "dataset": "cifar224",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": -0.2529403517537583
+  },
+  {
+    "dataset": "cifar224",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.16058617192132732
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1993,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": -0.48333333333333334
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1993,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.5833333333333334
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1993,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": -0.21666666666666667
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1993,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": 0.03333333333333333
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1994,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": -0.2928895930645031
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1994,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.19999999999999998
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1994,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": -0.050209644525343385
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1994,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": 0.13333333333333333
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1995,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": -0.33333333333333337
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1995,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.17573375583870182
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1995,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": -0.25
+  },
+  {
+    "dataset": "cifar224",
+    "seed": 1995,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.34309923758984645
+  },
+  {
+    "dataset": "cub",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": 0.336996336996337
+  },
+  {
+    "dataset": "cub",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": 0.4126984126984126
+  },
+  {
+    "dataset": "cub",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": 0.30830280830280826
+  },
+  {
+    "dataset": "cub",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": 0.27289377289377287
+  },
+  {
+    "dataset": "cub",
+    "seed": 1,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": 0.016666666666666666
+  },
+  {
+    "dataset": "cub",
+    "seed": 1,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": 0.2833333333333333
+  },
+  {
+    "dataset": "cub",
+    "seed": 1,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": 0.03333333333333333
+  },
+  {
+    "dataset": "cub",
+    "seed": 1,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": 0.33333333333333337
+  },
+  {
+    "dataset": "cub",
+    "seed": 2,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": -0.16666666666666669
+  },
+  {
+    "dataset": "cub",
+    "seed": 2,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": 0.5
+  },
+  {
+    "dataset": "cub",
+    "seed": 2,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": 0.0
+  },
+  {
+    "dataset": "cub",
+    "seed": 2,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.5
+  },
+  {
+    "dataset": "cub",
+    "seed": 3,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": 0.6166666666666666
+  },
+  {
+    "dataset": "cub",
+    "seed": 3,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": 0.39999999999999997
+  },
+  {
+    "dataset": "cub",
+    "seed": 3,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": 0.5666666666666667
+  },
+  {
+    "dataset": "cub",
+    "seed": 3,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": 0.48333333333333334
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": -0.10929629191603646
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.25457875457875456
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": -0.38986414742116915
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": null,
+    "n_boundaries": 27,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.09218559218559218
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1995,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": -0.6166666666666666
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1995,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.33333333333333337
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1995,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": -0.6833333333333333
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1995,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": 0.0
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1996,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": -0.03333333333333333
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1996,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.5666666666666667
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1996,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": -0.5166666666666667
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1996,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.39999999999999997
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1997,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_hls",
+    "spearman": -0.11666666666666665
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1997,
+    "n_boundaries": 9,
+    "residual": "r_rec",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.2833333333333333
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1997,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_hls",
+    "spearman": -0.016666666666666666
+  },
+  {
+    "dataset": "imagenetr",
+    "seed": 1997,
+    "n_boundaries": 9,
+    "residual": "r_weighted",
+    "outcome": "old_drop_deploy",
+    "spearman": -0.19999999999999998
+  }
+]

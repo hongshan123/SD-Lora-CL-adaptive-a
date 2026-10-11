@@ -114,7 +114,9 @@ def recover(entry, completed_reference=False):
     learner.args = config
     learner._cur_task, learner._known_classes, learner._total_classes = 9, 90, 100
     learner._device, learner.topk = config['device'][0], 5
-    backbone = learner.update_network(index=False, task_index=10).to(learner._device).eval()
+    backbone = learner.update_network(
+        index=False, task_index=10, initialize_training_partition=False,
+    ).to(learner._device).eval()
     network = torch.nn.Module()
     network.backbone = backbone
     prototypes = learner._compute_prototypes(manager, network)

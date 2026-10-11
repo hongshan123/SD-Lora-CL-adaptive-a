@@ -1774,6 +1774,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         functional_min_normal_fraction=1e-4,
         functional_temperature=2.0,
         resume=False,
+        initialize_training_partition=True,
     ):
         super().__init__()
         assert r > 0
@@ -2555,10 +2556,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         elif (
             self.adaptive_a_enabled
             and self.adaptive_a_strategy == "operator_energy_partition"
-            and index
+            and initialize_training_partition
         ):
-            # index=False rebuilds the saved deployment state. task_id then
-            # counts absorbed tasks; it is not a task awaiting training.
+            # index=False is also used to construct later training tasks.
+            # Only an explicit deployment rebuild skips training partitioning.
             self._initialize_operator_energy_partition()
 
     def _recoverability_wrappers(self):

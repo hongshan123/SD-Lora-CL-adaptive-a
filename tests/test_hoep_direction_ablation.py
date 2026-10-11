@@ -90,7 +90,7 @@ def test_control_survives_training_boundary_and_preserves_stable_rows(tmp_path, 
     reference = tmp_path / "reference.json"
     reference.write_text(json.dumps({"version": 1, "seed": 1993, "tasks": {"1": [1, 1]}}))
     model = SharedALoRA_ViT_timm(_TinyViT(), r=2, filepath=str(tmp_path),
-                               cur_task_index=1, hoep_partition_policy=policy,
+                               cur_task_index=1, index=False, hoep_partition_policy=policy,
                                hoep_reference_counts_path=str(reference),
                                hoep_partition_seed=1993, **common)
     wanted_counts = [2, 2] if policy == "all" else [1, 1]
@@ -131,6 +131,7 @@ def test_eval_rebuild_uses_saved_operator_without_next_task_partition(tmp_path, 
     original_qkv = copy.deepcopy(base.blocks[0].attn.qkv)
     rebuilt = SharedALoRA_ViT_timm(
         base, r=2, filepath=str(tmp_path), cur_task_index=10, index=False,
+        initialize_training_partition=False,
         hoep_partition_policy=policy,
         hoep_reference_counts_path=str(tmp_path / 'no_task10_reference.json'),
         hoep_partition_seed=1993, **common)
@@ -145,3 +146,48 @@ def test_eval_rebuild_uses_saved_operator_without_next_task_partition(tmp_path, 
             torch.nn.functional.linear(inputs, a), g / (a.norm() + 1e-8))
     torch.testing.assert_close(rebuilt(inputs), expected, atol=2e-6, rtol=2e-6)
     assert not rebuilt._hoep_plastic_masks
+
+@pytest.mark.parametrize('deployment', [False, True])
+def test_learner_training_and_deployment_rebuild_use_distinct_partitions(tmp_path, monkeypatch, deployment):
+    from torch import nn
+    from models.sa_sdlora import Learner
+    import models.sa_sdlora as learner_module
+    common = dict(train_a_all_tasks=True, cumulative_state=True,
+                  cumulative_merge='live_a_aggregate_b', live_a_coordinate_align=True,
+                  live_a_absorb_mode='operator_preserving_absorb', adaptive_a_enabled=True,
+                  adaptive_a_strategy='operator_energy_partition')
+    initial = SharedALoRA_ViT_timm(_TinyViT(), r=2, filepath=str(tmp_path), cur_task_index=0, **common)
+    with torch.no_grad():
+        for b in initial.w_Bs:
+            b.weight.normal_()
+    initial.save_lora_parameters(str(tmp_path), 0)
+    state = torch.load(tmp_path / 'sa_state.pt', weights_only=True)
+    reference = tmp_path / 'reference.json'
+    reference.write_text(json.dumps({'version':1, 'seed':1993, 'tasks':{'1':[1,1]}}))
+    learner = Learner.__new__(Learner)
+    learner.args = {'increment':10, 'filepath':str(tmp_path), 'lora_rank':2,
+                    **{'sa_'+key:value for key,value in common.items()},
+                    'sa_hoep_partition_policy':'high',
+                    'sa_hoep_reference_counts_path':str(reference), 'sa_hoep_partition_seed':1993}
+    learner._device = torch.device('cpu')
+    learner._network = nn.Module()
+    learner._network.backbone = initial
+    # Replace only the external pretrained model download with a real tiny
+    # module. Both production construction paths and partition logic run.
+    monkeypatch.setattr(learner_module.timm, 'create_model', lambda *a, **kw: _TinyViT())
+    if deployment:
+        learner._cur_task = 0
+        learner._rebuild_eval_backbone()
+        model = learner._network.backbone
+        assert not model._hoep_plastic_masks
+        assert all(torch.equal(a.weight, b) for a,b in zip(model.w_As,state['shared_a']))
+        assert all(torch.equal(a,b) for a,b in zip(model.aggregate_up,state['aggregate_up']))
+    else:
+        learner._cur_task = 1
+        model = learner.update_network(index=False)
+        assert [int(mask.sum()) for mask in model._hoep_plastic_masks] == [1,1]
+        optimizer = torch.optim.SGD(model.parameters(), lr=.01, momentum=.9)
+        model(torch.randn(2,3,4)).square().mean().backward()
+        model.apply_operator_energy_partition_gradients(optimizer)
+        optimizer.step()
+        model.apply_operator_energy_partition_step(optimizer)

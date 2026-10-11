@@ -42,7 +42,7 @@ class _TinyViT(nn.Module):
         return inputs
 
 
-def _model(run_dir, task):
+def _model(run_dir, task, deployment=False):
     torch.manual_seed(731)
     policy = os.environ.get("HOEP_SMOKE_POLICY", "low")
     reference = run_dir / "reference_counts.json"
@@ -56,6 +56,8 @@ def _model(run_dir, task):
         r=3,
         filepath=str(run_dir),
         cur_task_index=task,
+        index=False,
+        initialize_training_partition=not deployment,
         train_a_all_tasks=True,
         cumulative_state=True,
         cumulative_merge="live_a_aggregate_b",
@@ -155,7 +157,8 @@ def main():
         if rank == 0:
             model.save_lora_parameters(str(run_dir), 1)
         dist.barrier()
-        rebuilt = _model(run_dir, 2).to(device)
+        rebuilt = _model(run_dir, 2, deployment=True).to(device)
+        assert not rebuilt._hoep_plastic_masks
         _assert_rank_equal(_hash_state(rebuilt))
         if rank == 0:
             print(

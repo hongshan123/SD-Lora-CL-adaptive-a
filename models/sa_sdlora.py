@@ -984,7 +984,7 @@ class Learner(SDLoraLearner):
                 "Shared-A state (route closed; use gauge residual diagnostics)"
             )
 
-    def update_network(self, index=True, task_index=None):
+    def update_network(self, index=True, task_index=None, initialize_training_partition=True):
         model = timm.create_model(
             "vit_base_patch16_224", pretrained=True, num_classes=0
         )
@@ -998,6 +998,7 @@ class Learner(SDLoraLearner):
             increment=self.args["increment"],
             filepath=self.args["filepath"],
             cur_task_index=cur_task_index,
+            initialize_training_partition=initialize_training_partition,
             shared_a_orthogonal=self.args.get("sa_shared_a_orthogonal", True),
             train_a_all_tasks=self.args.get("sa_train_a_all_tasks", False),
             delete_per_task_files=self.args.get("sa_delete_per_task_files", False),
@@ -3251,7 +3252,8 @@ class Learner(SDLoraLearner):
         """Rebuild the backbone from saved artifacts so each task counts once."""
         self._unwrap_network()
         self._network.backbone = self.update_network(
-            index=False, task_index=self._cur_task + 1
+            index=False, task_index=self._cur_task + 1,
+            initialize_training_partition=False,
         )
         self._network.to(self._device)
 

@@ -83,14 +83,14 @@ def ready_jobs(jobs, completed, active):
             if providers.get(job["seed"]) not in completed:
                 continue
         ready.append(job)
-    return sorted(ready, key=lambda job: (PRIORITY[job["method"]], job["seed"]))
+    return sorted(ready, key=lambda job: (job.get("dispatch_priority", PRIORITY[job["method"]]), job["seed"]))
 
 
-def validate_reference(path, seed):
+def validate_reference(path, seed, expected_tasks=10):
     data = json.loads(Path(path).read_text())
     if data.get("version") != 1 or data.get("seed") != seed:
         raise ValueError("HOEP reference version/seed mismatch")
-    for task in range(1, 10):
+    for task in range(1, expected_tasks):
         counts = data.get("tasks", {}).get(str(task))
         if not isinstance(counts, list) or len(counts) != 24:
             raise ValueError(f"HOEP reference missing complete task {task}")
@@ -102,17 +102,33 @@ def validate_reference(path, seed):
 def validated_result(entry, proof):
     if proof.get("phase") != "complete" or proof.get("returncode") != 0:
         raise ValueError("training did not have a verified zero exit status")
-    metrics = read_metrics(entry["log"])
+    config_path = Path(entry["config"])
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+    expected_tasks = config.get("max_tasks", entry.get("tasks", 10))
+    if isinstance(expected_tasks, bool) or not isinstance(expected_tasks, int) or expected_tasks <= 0:
+        raise ValueError("expected task count must be a positive integer")
+    metrics = read_metrics(entry["log"], expected_tasks)
     if "within_bound=False" in Path(entry["log"]).read_text(errors="replace"):
         raise ValueError("operator residual bound failed")
     if entry["method"] == "hoep":
-        validate_reference(Path(entry["output"]) / "hoep_partition_schedule.json", entry["seed"])
+        validate_reference(Path(entry["output"]) / "hoep_partition_schedule.json", entry["seed"], expected_tasks)
     if entry["method"] in ("random", "high"):
         config = json.loads(Path(entry["config"]).read_text())
-        reference = validate_reference(config["sa_hoep_reference_counts_path"], entry["seed"])
-        actual = validate_reference(Path(entry["output"]) / "hoep_partition_schedule.json", entry["seed"])
-        if any(actual["tasks"][str(t)] != reference["tasks"][str(t)] for t in range(1, 10)):
+        reference = validate_reference(config["sa_hoep_reference_counts_path"], entry["seed"], expected_tasks)
+        actual = validate_reference(Path(entry["output"]) / "hoep_partition_schedule.json", entry["seed"], expected_tasks)
+        if any(actual["tasks"][str(t)] != reference["tasks"][str(t)] for t in range(1, expected_tasks)):
             raise ValueError("actual direction counts differ from the paired HOEP")
+    if config.get("sa_coordinate_stable_transport", False):
+        path = Path(entry["output"]) / "sa_coordinate_diagnostics.json"
+        if not path.is_file():
+            raise ValueError("prototype transport diagnostics are missing")
+        records = json.loads(path.read_text())
+        if [record.get("task_id") for record in records] != list(range(1, expected_tasks)):
+            raise ValueError("prototype transport boundary coverage is incomplete")
+        increments = config.get("task_increments") or [config["init_cls"]] + [config["increment"]] * (expected_tasks-1)
+        for record in records:
+            if record.get("num_prototypes") != sum(increments[:record["task_id"]]):
+                raise ValueError("transport prototype count differs from old class set")
     return {**entry, **metrics, "gpu_pair": proof.get("gpu_pair"),
             "completion_proof": proof.get("proof_path"),
             "log_sha256": hashlib.sha256(Path(entry["log"]).read_bytes()).hexdigest()}

@@ -176,7 +176,8 @@ def run(root, runtime):
     try:
         for entry in jobs:
             name = entry['name']
-            metrics = completed_run_metrics(entry, runtime / 'events.jsonl')
+            cfg = json.loads(Path(entry['config']).read_text())
+            metrics = completed_run_metrics(entry, runtime / 'events.jsonl', cfg.get('max_tasks', 10))
             if metrics is not None:
                 completed[name] = {**entry, **metrics}
             proof_path = work / 'job_results' / (name + '.json')

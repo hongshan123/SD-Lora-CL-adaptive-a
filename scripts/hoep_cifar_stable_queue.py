@@ -28,16 +28,6 @@ PAIRS = ((0, 1), (2, 5), (6, 7))
 PATH_SETTINGS = {"prefix", "filepath", "sa_hoep_reference_counts_path"}
 
 
-def pair_can_dispatch(pair, active, readings, max_jobs=1, reserved_mb=11000, budget_mb=23000):
-    """Admit a second owned model only with enough measured/reserved memory."""
-    count = sum(tuple(item['gpu_pair']) == tuple(pair) for item in active.values())
-    if count >= max_jobs:
-        return False
-    if count == 0:
-        return all(readings[g][0] <= 64 and readings[g][1] <= 5 for g in pair)
-    return all(max(readings[g][0], count * reserved_mb) + reserved_mb <= budget_mb for g in pair)
-
-
 def boot_id():
     return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 
@@ -157,9 +147,6 @@ def run(root, runtime):
     manifest = json.loads((runtime / 'manifest.json').read_text())
     assert tuple(map(tuple, manifest['gpu_pairs'])) == PAIRS
     jobs = manifest['jobs']
-    max_jobs = manifest.get('max_jobs_per_pair', 1)
-    if isinstance(max_jobs, bool) or max_jobs not in (1, 2):
-        raise ValueError('max_jobs_per_pair must be 1 or 2')
     lock = (work / 'queue.lock').open('a')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     completed, active, failures, children = {}, {}, [], {}
@@ -178,7 +165,6 @@ def run(root, runtime):
         state = {'phase': phase, 'scheduler': 'three_stable_pairs', 'formal_total': len(jobs),
                  'reused': len(manifest['reused']), 'completed': list(completed),
                  'active': list(active.values()), 'gpu_pairs': PAIRS, 'excluded_gpus': [3, 4],
-                 'max_jobs_per_pair': max_jobs,
                  'pending': [j['name'] for j in jobs if j['name'] not in completed and j['name'] not in active],
                  'failures': failures, 'boot_id': current_boot,
                  'updated_at': datetime.now(timezone.utc).isoformat()}
@@ -240,11 +226,13 @@ def run(root, runtime):
                 del active[name]
             if not failures:
                 readings = gpu_measurements()
+                occupied = {tuple(a['gpu_pair']) for a in active.values()}
                 ready = ready_jobs(jobs, set(completed), set(active))
                 for pair in PAIRS:
-                    idle = pair_can_dispatch(pair, active, readings, max_jobs,
-                                manifest.get('reserved_gpu_mb_per_job', 11000),
-                                manifest.get('gpu_memory_budget_mb', 23000))
+                    if pair in occupied:
+                        streak[pair] = 0
+                        continue
+                    idle = all(readings[g][0] <= 64 and readings[g][1] <= 5 for g in pair)
                     streak[pair] = streak[pair] + 1 if idle else 0
                     if streak[pair] < 2 or not ready:
                         continue

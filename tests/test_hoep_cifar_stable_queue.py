@@ -19,23 +19,6 @@ def test_all_lanes_exclude_unstable_cards():
     assert set(g for pair in implementation().PAIRS for g in pair) == {0, 1, 2, 5, 6, 7}
 
 
-def test_second_model_requires_memory_reservation_and_capacity():
-    f=implementation().pair_can_dispatch
-    pair=(0,1); readings={0:(9000,100),1:(8900,90)}
-    active={'job':{'gpu_pair':pair}}
-    assert not f(pair,active,readings,max_jobs=1)
-    assert f(pair,active,readings,max_jobs=2,reserved_mb=11000,budget_mb=23000)
-    assert not f(pair,active,{0:(13000,100),1:(8900,90)},max_jobs=2,reserved_mb=11000,budget_mb=23000)
-    assert not f(pair,{'a':{'gpu_pair':pair},'b':{'gpu_pair':pair}},readings,max_jobs=2)
-
-
-def test_empty_pair_must_be_idle_even_if_memory_budget_would_fit():
-    f=implementation().pair_can_dispatch
-    assert f((0,1),{}, {0:(1,0),1:(1,0)},max_jobs=2)
-    assert not f((0,1),{}, {0:(9000,0),1:(1,0)},max_jobs=2)
-    assert not f((0,1),{}, {0:(1,60),1:(1,0)},max_jobs=2)
-
-
 def test_relocating_config_preserves_all_scientific_settings(tmp_path):
     old = {'prefix': 'old', 'filepath': '/old/', 'seed': [1994],
            'batch_size': 64, 'epochs': 20, 'device': ['0', '1'],

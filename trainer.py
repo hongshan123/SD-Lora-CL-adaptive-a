@@ -2,6 +2,9 @@ import sys
 import logging
 import copy
 import random
+import faulthandler
+from datetime import timedelta
+from pathlib import Path
 import torch
 import torch.distributed as dist
 from utils import factory
@@ -33,13 +36,17 @@ def train(args):
     for seed in seed_list:
         args["seed"] = seed
         args["device"] = device
-        _train(args)
+        try:
+            _train(args)
+        finally:
+            stop_stack_diagnostics(args.pop("_stack_trace_stream", None))
 
 
 def _train(args):
 
     _init_distributed(args)
     _acquire_p0_run_guard(args)
+    args["_stack_trace_stream"] = start_stack_diagnostics(args)
     init_cls = 0 if args ["init_cls"] == args["increment"] else args["init_cls"]
     logs_name = "logs/{}/{}/{}/{}".format(args["model_name"],args["dataset"], init_cls, args['increment'])
     
@@ -106,6 +113,9 @@ def _train(args):
         else:
             cnn_accy, nme_accy = None, None
         model.after_task()
+        if _is_main_process(args) and hasattr(data_manager, "_eval_input_cache"):
+            cache = data_manager._eval_input_cache
+            logging.info("[EvalInputCache] task=%d hits=%d misses=%d bytes=%d", task, cache.hits, cache.misses, cache.bytes_used)
 
         if not _is_main_process(args):
             _distributed_barrier(args)
@@ -189,6 +199,30 @@ def _train(args):
         dist.destroy_process_group()
 
 
+def distributed_timeout(args):
+    seconds = args.get("dist_timeout_seconds", 600)
+    if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
+        raise ValueError("dist_timeout_seconds must be a positive integer")
+    return timedelta(seconds=seconds)
+
+
+def start_stack_diagnostics(args):
+    seconds = args.get("sa_stack_trace_seconds", 0)
+    if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds < 0:
+        raise ValueError("sa_stack_trace_seconds must be a nonnegative integer")
+    if not seconds:
+        return None
+    stream = (Path(args["filepath"]) / f"rank{args.get('rank', 0)}_stacks.log").open("a")
+    faulthandler.dump_traceback_later(seconds, repeat=True, file=stream)
+    return stream
+
+
+def stop_stack_diagnostics(stream):
+    if stream is not None:
+        faulthandler.cancel_dump_traceback_later()
+        stream.close()
+
+
 def _init_distributed(args):
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
@@ -202,6 +236,7 @@ def _init_distributed(args):
         dist.init_process_group(
             backend=args.get("dist_backend", "nccl"),
             init_method="env://",
+            timeout=distributed_timeout(args),
         )
 
 

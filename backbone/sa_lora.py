@@ -1768,6 +1768,7 @@ class SharedALoRA_ViT_timm(nn.Module):
         hoep_partition_policy="low",
         hoep_reference_counts_path="",
         hoep_partition_seed=0,
+        hoep_diagnostics_interval=1,
         functional_conflict_tol=1e-12,
         functional_conflict_cosine=0.05,
         functional_normal_tol=1e-12,
@@ -2328,6 +2329,10 @@ class SharedALoRA_ViT_timm(nn.Module):
         self._hoep_anchor_a = []
         self._hoep_partition_diagnostics = None
         self._hoep_step_count = 0
+        if isinstance(hoep_diagnostics_interval, bool) or not isinstance(hoep_diagnostics_interval, int) or hoep_diagnostics_interval < 1:
+            raise ValueError("hoep_diagnostics_interval must be a positive integer")
+        self.hoep_diagnostics_interval = hoep_diagnostics_interval
+        self._hoep_operator_diagnostic_steps = 0
         self._hoep_step_maxima = {
             "max_orthogonality_error": 0.0,
             "max_rowspace_reconstruction_error": 0.0,
@@ -2841,6 +2846,7 @@ class SharedALoRA_ViT_timm(nn.Module):
             )
         ]
         step_stats = []
+        check_operators = self._hoep_step_count % self.hoep_diagnostics_interval == 0
         with torch.no_grad():
             for index, ((a_module, b_module, aggregate), mask, anchor) in enumerate(
                 zip(branches, self._hoep_plastic_masks, self._hoep_anchor_a)
@@ -2853,6 +2859,7 @@ class SharedALoRA_ViT_timm(nn.Module):
                         b_module.weight,
                         mask,
                         self.adaptive_a_eps,
+                        compute_operator_diagnostics=check_operators,
                     )
                 )
                 a_module.weight.copy_(new_a)
@@ -2888,15 +2895,16 @@ class SharedALoRA_ViT_timm(nn.Module):
                 default=0.0,
             ),
             "max_historical_operator_error": max(
-                (item["historical_operator_error"] for item in step_stats),
+                (item["historical_operator_error"] for item in step_stats if item["historical_operator_error"] is not None),
                 default=0.0,
             ),
             "max_current_operator_error": max(
-                (item["current_operator_error"] for item in step_stats),
+                (item["current_operator_error"] for item in step_stats if item["current_operator_error"] is not None),
                 default=0.0,
             ),
         }
         self._hoep_step_count += 1
+        self._hoep_operator_diagnostic_steps += int(check_operators)
         for key, value in summary.items():
             self._hoep_step_maxima[key] = max(
                 self._hoep_step_maxima[key], value
@@ -3938,6 +3946,8 @@ class SharedALoRA_ViT_timm(nn.Module):
                 return None
             diagnostics = dict(self._hoep_partition_diagnostics)
             diagnostics["steps"] = self._hoep_step_count
+            diagnostics["operator_diagnostic_steps"] = self._hoep_operator_diagnostic_steps
+            diagnostics["operator_diagnostics_interval"] = self.hoep_diagnostics_interval
             diagnostics.update(self._hoep_step_maxima)
             return diagnostics
         if self.adaptive_a_strategy == "recoverability":

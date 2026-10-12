@@ -63,3 +63,11 @@ def test_explicit_priority_can_start_one_cell_per_dataset():
             dict(name='inr', method='hoep', seed=1995, dispatch_priority=1),
             dict(name='cub', method='hoep', seed=1, dispatch_priority=2)]
     assert [j['name'] for j in ready_jobs(jobs, set(), set())] == ['cifar', 'inr', 'cub']
+
+
+def test_normcap_phase_waits_for_all_three_recovery_jobs():
+    jobs=[dict(name=n,method='hoep',seed=1) for n in ('retry_cifar','retry_inr','cub5')]
+    jobs.append(dict(name='normcap',method='hoep',seed=1,
+                     depends_on=['retry_cifar','retry_inr','cub5']))
+    assert 'normcap' not in [j['name'] for j in ready_jobs(jobs,{'retry_cifar','cub5'},set())]
+    assert [j['name'] for j in ready_jobs(jobs,{'retry_cifar','retry_inr','cub5'},set())]==['normcap']

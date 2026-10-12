@@ -92,11 +92,20 @@ class DataManager(object):
             targets.append(appendent_targets)
 
         data, targets = np.concatenate(data), np.concatenate(targets)
-
+        input_cache = None
+        if mode == "test" and self.args.get("sa_cache_eval_inputs", False):
+            if self.dataset_name.lower() not in ("cifar224", "imagenetr", "cub"):
+                raise ValueError("evaluation input cache is validated only for CIFAR224, ImageNet-R and CUB")
+            if not hasattr(self, "_eval_input_cache"):
+                from utils.eval_input_cache import EvalInputCache
+                self._eval_input_cache = EvalInputCache(int(float(self.args.get("sa_eval_cache_gib", 16)) * 1024**3))
+            input_cache = self._eval_input_cache
+        dataset = DummyDataset(data, targets, trsf, self.use_path,
+                               input_cache=input_cache, cache_namespace=source)
         if ret_data:
-            return data, targets, DummyDataset(data, targets, trsf, self.use_path)
+            return data, targets, dataset
         else:
-            return DummyDataset(data, targets, trsf, self.use_path)
+            return dataset
 
     def get_dataset_with_split(
         self, indices, source, mode, appendent=None, val_samples_per_class=0
@@ -207,22 +216,32 @@ class DataManager(object):
 
 
 class DummyDataset(Dataset):
-    def __init__(self, images, labels, trsf, use_path=False):
+    def __init__(self, images, labels, trsf, use_path=False, input_cache=None, cache_namespace=None):
         assert len(images) == len(labels), "Data size error!"
         self.images = images
         self.labels = labels
         self.trsf = trsf
         self.use_path = use_path
+        self.input_cache = input_cache
+        self.cache_namespace = cache_namespace
 
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, idx):
+        key = None
+        if self.input_cache is not None:
+            key = (self.cache_namespace, str(self.images[idx]) if self.use_path else self.images[idx].tobytes())
+            image = self.input_cache.get(key)
+            if image is not None:
+                return idx, image, self.labels[idx]
         if self.use_path:
             image = self.trsf(pil_loader(self.images[idx]))
         else:
             image = self.trsf(Image.fromarray(self.images[idx]))
         label = self.labels[idx]
+        if self.input_cache is not None:
+            self.input_cache.put(key, image)
 
         return idx, image, label
 

@@ -154,6 +154,7 @@ def validate_adaptive_a_config(args):
         "hoep_partition_policy": str(args.get("sa_hoep_partition_policy", "low")),
         "hoep_reference_counts_path": str(args.get("sa_hoep_reference_counts_path", "")),
         "hoep_partition_seed": args.get("sa_hoep_partition_seed", 0),
+        "hoep_diagnostics_interval": args.get("sa_hoep_diagnostics_interval", 1),
     }
     if settings["hoep_partition_policy"] not in ("low", "random", "high", "all"):
         raise ValueError("sa_hoep_partition_policy must be low, random, high, or all")
@@ -165,6 +166,9 @@ def validate_adaptive_a_config(args):
     if settings["hoep_partition_policy"] in ("random", "high") and not settings["hoep_reference_counts_path"]:
         raise ValueError("random/high controls require sa_hoep_reference_counts_path")
     partition_seed = settings["hoep_partition_seed"]
+    interval = settings["hoep_diagnostics_interval"]
+    if isinstance(interval, bool) or not isinstance(interval, Integral) or interval < 1:
+        raise ValueError("sa_hoep_diagnostics_interval must be a positive integer")
     if isinstance(partition_seed, bool) or not isinstance(partition_seed, Integral) or partition_seed < 0:
         raise ValueError("sa_hoep_partition_seed must be a nonnegative integer")
     functional_conflict_tol = float(args.get("sa_functional_conflict_tol", 1e-12))
@@ -374,10 +378,10 @@ def validate_adaptive_a_config(args):
     if settings["adaptive_a_strategy"] == "operator_energy_partition":
         if args.get(
             "sa_live_a_absorb_mode", "operator_preserving_absorb"
-        ) != "operator_preserving_absorb":
+        ) not in ("operator_preserving_absorb", "bounded_norm_calibrated_absorb"):
             raise ValueError(
                 "operator_energy_partition requires "
-                "sa_live_a_absorb_mode=operator_preserving_absorb"
+                "sa_live_a_absorb_mode=operator_preserving_absorb or bounded_norm_calibrated_absorb"
             )
         if args.get("sa_normalize_current_branch", False):
             raise ValueError(
@@ -1705,6 +1709,8 @@ class Learner(SDLoraLearner):
                 diagnostics["max_historical_operator_error"],
                 diagnostics["max_current_operator_error"],
             )
+            logging.info("[HOEP-Performance] task=%d full_operator_diagnostic_steps=%d interval=%d; operator maxima cover sampled steps",
+                         self._cur_task, diagnostics["operator_diagnostic_steps"], diagnostics["operator_diagnostics_interval"])
             return
         if diagnostics.get("strategy") == "recoverability":
             logging.info(

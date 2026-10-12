@@ -321,7 +321,8 @@ class Learner(BaseLearner):
             correct, total = 0, 0
             num_batches = 0
             for i, (_, inputs, targets) in enumerate(train_loader):
-                inputs, targets = inputs.to(self._device), targets.to(self._device)
+                asynchronous = bool(self.args.get("sa_async_device_copy", False))
+                inputs, targets = inputs.to(self._device, non_blocking=asynchronous), targets.to(self._device, non_blocking=asynchronous)
                 out = self._network(inputs)
                 logits = out["logits"]
                 features = out.get("features", None)
@@ -405,7 +406,8 @@ class Learner(BaseLearner):
             correct, total = 0, 0
             num_batches = 0
             for i, (_, inputs, targets) in enumerate(train_loader):
-                inputs, targets = inputs.to(self._device), targets.to(self._device)
+                asynchronous = bool(self.args.get("sa_async_device_copy", False))
+                inputs, targets = inputs.to(self._device, non_blocking=asynchronous), targets.to(self._device, non_blocking=asynchronous)
                 if i == 0 and epoch == 0:
                     raw_network = self._raw_network()
                     backbone = raw_network.backbone

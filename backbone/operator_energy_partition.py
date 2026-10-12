@@ -293,7 +293,8 @@ def retract_partitioned_coordinates(
     current_up: Tensor,
     plastic_mask: Tensor,
     eps: float = 1e-8,
-) -> tuple[Tensor, Tensor, Tensor, Tensor, dict[str, float]]:
+    compute_operator_diagnostics: bool = True,
+) -> tuple[Tensor, Tensor, Tensor, Tensor, dict[str, float | None]]:
     """Retract A and preserve both post-step effective operators exactly.
 
     Stable rows are restored from ``stable_anchor_a``.  Plastic rows are
@@ -355,21 +356,23 @@ def retract_partitioned_coordinates(
     new_aggregate = aggregate @ coordinate_map * (norm_after / norm_before)
     new_current = current @ coordinate_map
 
-    historical_before = aggregate @ work / norm_before
-    historical_after = new_aggregate @ retracted / norm_after
-    current_before = current @ work
-    current_after = new_current @ retracted
-    historical_error = torch.linalg.matrix_norm(
-        historical_after - historical_before
-    ) / torch.linalg.matrix_norm(historical_before).clamp_min(eps)
-    current_error = torch.linalg.matrix_norm(
-        current_after - current_before
-    ) / torch.linalg.matrix_norm(current_before).clamp_min(eps)
+    historical_error = current_error = None
+    if compute_operator_diagnostics:
+        historical_before = aggregate @ work / norm_before
+        historical_after = new_aggregate @ retracted / norm_after
+        current_before = current @ work
+        current_after = new_current @ retracted
+        historical_error = float(torch.linalg.matrix_norm(
+            historical_after - historical_before
+        ) / torch.linalg.matrix_norm(historical_before).clamp_min(eps))
+        current_error = float(torch.linalg.matrix_norm(
+            current_after - current_before
+        ) / torch.linalg.matrix_norm(current_before).clamp_min(eps))
     diagnostics = {
         "orthogonality_error": float(orthogonality_error),
         "rowspace_reconstruction_error": float(reconstruction_error),
-        "historical_operator_error": float(historical_error),
-        "current_operator_error": float(current_error),
+        "historical_operator_error": historical_error,
+        "current_operator_error": current_error,
     }
     return (
         retracted.to(candidate_a),

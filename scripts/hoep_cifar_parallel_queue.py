@@ -79,6 +79,8 @@ def ready_jobs(jobs, completed, active):
     for job in jobs:
         if job["name"] in completed or job["name"] in active:
             continue
+        if not set(job.get("depends_on", [])).issubset(completed):
+            continue
         if job["method"] in ("random", "high") and job["seed"] != 1993:
             if providers.get(job["seed"]) not in completed:
                 continue

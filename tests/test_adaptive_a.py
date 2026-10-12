@@ -1419,6 +1419,7 @@ def test_adaptive_a_defaults_and_factory_forwarding(tmp_path, monkeypatch):
         "hoep_partition_policy": "low",
         "hoep_reference_counts_path": "",
         "hoep_partition_seed": 0,
+        "hoep_diagnostics_interval": 1,
     }
 
     monkeypatch.setattr(

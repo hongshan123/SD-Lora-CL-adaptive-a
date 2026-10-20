@@ -20,6 +20,8 @@ import torch.distributed as dist
 
 import os
 
+from utils.diagnostic_microbatch import microbatch_backward
+
 num_workers = 8
 
 class Learner(BaseLearner):
@@ -307,6 +309,28 @@ class Learner(BaseLearner):
 
 
 
+    def _diagnostic_accumulated_batch(self, inputs, targets, optimizer, initial):
+        def forward_loss(xx, yy):
+            if initial:
+                out = self._network(xx)
+            else:
+                out, _ = self._network(xx, ortho_loss=True)
+            logits = out["logits"]
+            loss = F.cross_entropy(logits if initial else logits[:, self._known_classes:],
+                                   yy if initial else yy-self._known_classes)
+            extras = self._additional_training_losses(xx, yy, features=out.get("features"))
+            for value in extras.values():
+                if value.ndim != 0: raise ValueError("additional losses must be scalar")
+                loss = loss + value
+            return logits, loss, extras
+        optimizer.zero_grad()
+        logits, value, extras = microbatch_backward(
+            forward_loss, inputs, targets, int(self.args["sa_train_microbatch"]))
+        self._after_backward(inputs, targets, optimizer)
+        optimizer.step()
+        self._after_optimizer_step(inputs, targets, optimizer)
+        return logits, value, extras
+
     def _init_train(self, train_loader, test_loader, optimizer, scheduler):
         prog_bar = tqdm(
             range(self.args["init_epoch"]),
@@ -323,26 +347,31 @@ class Learner(BaseLearner):
             for i, (_, inputs, targets) in enumerate(train_loader):
                 asynchronous = bool(self.args.get("sa_async_device_copy", False))
                 inputs, targets = inputs.to(self._device, non_blocking=asynchronous), targets.to(self._device, non_blocking=asynchronous)
-                out = self._network(inputs)
-                logits = out["logits"]
-                features = out.get("features", None)
-                loss = F.cross_entropy(logits, targets)
-                extra_losses = self._additional_training_losses(
-                    inputs, targets, features=features
-                )
-                for name, extra_loss in extra_losses.items():
-                    if extra_loss.ndim != 0:
-                        raise ValueError("additional training losses must be scalar")
-                    loss = loss + extra_loss
-                    extra_loss_sums[name] = (
-                        extra_loss_sums.get(name, 0.0) + extra_loss.detach().item()
+                if self.args.get("sa_train_microbatch"):
+                    logits, batch_loss, extra = self._diagnostic_accumulated_batch(inputs, targets, optimizer, True)
+                    losses += batch_loss
+                    for name, value in extra.items(): extra_loss_sums[name] = extra_loss_sums.get(name, 0.) + value
+                else:
+                    out = self._network(inputs)
+                    logits = out["logits"]
+                    features = out.get("features", None)
+                    loss = F.cross_entropy(logits, targets)
+                    extra_losses = self._additional_training_losses(
+                        inputs, targets, features=features
                     )
-                optimizer.zero_grad()
-                loss.backward()
-                self._after_backward(inputs, targets, optimizer)
-                optimizer.step()
-                self._after_optimizer_step(inputs, targets, optimizer)
-                losses += loss.item()
+                    for name, extra_loss in extra_losses.items():
+                        if extra_loss.ndim != 0:
+                            raise ValueError("additional training losses must be scalar")
+                        loss = loss + extra_loss
+                        extra_loss_sums[name] = (
+                            extra_loss_sums.get(name, 0.0) + extra_loss.detach().item()
+                        )
+                    optimizer.zero_grad()
+                    loss.backward()
+                    self._after_backward(inputs, targets, optimizer)
+                    optimizer.step()
+                    self._after_optimizer_step(inputs, targets, optimizer)
+                    losses += loss.item()
                 num_batches += 1
 
                 _, preds = torch.max(logits, dim=1)
@@ -432,36 +461,41 @@ class Learner(BaseLearner):
                             live_diag["mean_B_norm"],
                             live_diag["scale"],
                         )
-                # logits = self._network(inputs)["logits"]
-                logits, ortho_loss = self._network(inputs, ortho_loss=True)
-                features = logits.get("features", None)
-                logits = logits['logits'] 
-                
-
-                fake_targets = targets - self._known_classes
-                loss_clf = F.cross_entropy(
-                    logits[:, self._known_classes :], fake_targets
-                )
-                # print('@@@@@@@@@@@@@@loss2', loss_clf, torch.mean(ortho_loss))
-
-                loss = loss_clf
-                extra_losses = self._additional_training_losses(
-                    inputs, targets, features=features
-                )
-                for name, extra_loss in extra_losses.items():
-                    if extra_loss.ndim != 0:
-                        raise ValueError("additional training losses must be scalar")
-                    loss = loss + extra_loss
-                    extra_loss_sums[name] = (
-                        extra_loss_sums.get(name, 0.0) + extra_loss.detach().item()
+                if self.args.get("sa_train_microbatch"):
+                    logits, batch_loss, extra = self._diagnostic_accumulated_batch(inputs, targets, optimizer, False)
+                    losses += batch_loss
+                    for name, value in extra.items(): extra_loss_sums[name] = extra_loss_sums.get(name, 0.) + value
+                else:
+                    # logits = self._network(inputs)["logits"]
+                    logits, ortho_loss = self._network(inputs, ortho_loss=True)
+                    features = logits.get("features", None)
+                    logits = logits['logits'] 
+                    
+    
+                    fake_targets = targets - self._known_classes
+                    loss_clf = F.cross_entropy(
+                        logits[:, self._known_classes :], fake_targets
                     )
-
-                optimizer.zero_grad()
-                loss.backward()
-                self._after_backward(inputs, targets, optimizer)
-                optimizer.step()
-                self._after_optimizer_step(inputs, targets, optimizer)
-                losses += loss.item()
+                    # print('@@@@@@@@@@@@@@loss2', loss_clf, torch.mean(ortho_loss))
+    
+                    loss = loss_clf
+                    extra_losses = self._additional_training_losses(
+                        inputs, targets, features=features
+                    )
+                    for name, extra_loss in extra_losses.items():
+                        if extra_loss.ndim != 0:
+                            raise ValueError("additional training losses must be scalar")
+                        loss = loss + extra_loss
+                        extra_loss_sums[name] = (
+                            extra_loss_sums.get(name, 0.0) + extra_loss.detach().item()
+                        )
+    
+                    optimizer.zero_grad()
+                    loss.backward()
+                    self._after_backward(inputs, targets, optimizer)
+                    optimizer.step()
+                    self._after_optimizer_step(inputs, targets, optimizer)
+                    losses += loss.item()
                 num_batches += 1
 
                 _, preds = torch.max(logits, dim=1)

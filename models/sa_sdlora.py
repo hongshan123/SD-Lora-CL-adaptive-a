@@ -1900,6 +1900,9 @@ class Learner(SDLoraLearner):
 
     def _before_task_save(self, raw_network, train_loader):
         """Run CUO's all-rank eval-preprocessed calibration before persistence."""
+        if self.args.get("sa_boundary_snapshots", False):
+            from utils.hoep_snapshots import capture
+            capture(self, raw_network)
         backbone = raw_network.backbone
         if backbone.cumulative_merge != "cuo_lowrank":
             return None
@@ -2279,6 +2282,9 @@ class Learner(SDLoraLearner):
                 )
         if self._dual_head:
             self._prepare_dual_head(data_manager, self._raw_network())
+        if self.args.get("sa_boundary_snapshots", False):
+            from utils.hoep_snapshots import finalize
+            finalize(self, self._raw_network())
 
     def _p0_hash_store(self):
         """JSON file holding per-task tensor/RNG hashes for cross-run audits."""

@@ -1,0 +1,5 @@
+{
+  "passed": true,
+  "reference": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-hoep-normcap-speed-20261012/.runtime_hoep_t50_diagnosis_20261020/results/hoep_cifar1993_t50_nc0_diag_smoke_on_20261020/diagnosis/task_001.json",
+  "new": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-hoep-normcap-speed-20261012/.runtime_hoep_t50_diagnosis_gpu67_20261020/verification/optimized_diagnostic/task_001.json"
+}

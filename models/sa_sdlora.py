@@ -994,7 +994,9 @@ class Learner(SDLoraLearner):
         )
         cur_task_index = self._cur_task if task_index is None else task_index
         adaptive_a_settings = validate_adaptive_a_config(self.args)
-        model = SharedALoRA_ViT_timm(
+        from backbone.structure_ablation import make_structure_backbone
+        model = make_structure_backbone(
+            structure_mode=self.args.get("sa_structure_mode", "default"),
             vit_model=model.eval(),
             r=self.args.get("lora_rank", 10),
             num_classes=10,
@@ -1263,6 +1265,8 @@ class Learner(SDLoraLearner):
         return output["logits"] if isinstance(output, dict) else output
 
     def _after_optimizer_step(self, inputs=None, targets=None, optimizer=None):
+        if not self._sa_adaptive_a_enabled:
+            return None
         backbone = self._raw_network().backbone
         if getattr(self, "_sa_adaptive_a_strategy", None) == "recoverability":
             backbone.apply_recoverability_step(optimizer)
@@ -2214,11 +2218,11 @@ class Learner(SDLoraLearner):
                             operator_drift,
                             self._sa_operator_stability_lambda,
                         )
-            if self._coordinate_stable_transport:
+            if self._coordinate_stable_transport or self.args.get("sa_structure_mode"):
                 self._rebuild_eval_backbone()
                 logging.info(
                     "[CoordinateStable] rebuilt task %d deployment state "
-                    "before prototype transport",
+                    "before prototype construction",
                     self._cur_task,
                 )
             elif self._cur_task == data_manager.nb_tasks - 1:

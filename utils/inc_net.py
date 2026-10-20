@@ -42,9 +42,10 @@ def get_backbone(args, pretrained=False):
                 cur_task_index=0,
             )
         elif routed_model_name == "sa_sdlora":
-            from backbone.sa_lora import SharedALoRA_ViT_timm
+            from backbone.structure_ablation import make_structure_backbone
 
-            model = SharedALoRA_ViT_timm(
+            model = make_structure_backbone(
+                structure_mode=args.get("sa_structure_mode", "default"),
                 vit_model=model.eval(),
                 r=args.get("lora_rank", 10),
                 num_classes=10,

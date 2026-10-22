@@ -89,7 +89,7 @@ torchrun --standalone --nproc_per_node=4 main.py \
 
 ## 6. Package Contents
 
-The code archive includes source code, configs, scripts, README, paper notes, and small project metadata.
+The code archive includes source code, configs, scripts and usage documentation.
 It excludes generated outputs, logs, caches, and datasets.
 
 The data runtime archive includes processed runtime datasets only.

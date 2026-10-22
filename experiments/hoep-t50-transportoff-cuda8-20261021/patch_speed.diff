@@ -1,0 +1,12 @@
+--- original/models/sa_sdlora.py
++++ transport_off/models/sa_sdlora.py
+@@ -2211,7 +2211,8 @@
+                             operator_drift,
+                             self._sa_operator_stability_lambda,
+                         )
+-            if self._coordinate_stable_transport:
++            if (self._coordinate_stable_transport
++                    or self.args.get("sa_rebuild_eval_every_task", False)):
+                 self._rebuild_eval_backbone()
+                 logging.info(
+                     "[CoordinateStable] rebuilt task %d deployment state "

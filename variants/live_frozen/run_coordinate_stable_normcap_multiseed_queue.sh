@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="/home/zhaoyang/SD-Lora-CL-coordinate"
+CONDA_SH="/home/zhaoyang/miniconda3/etc/profile.d/conda.sh"
+GPU_IDS="${GPU_IDS:-0,1,2,3}"
+NPROC="${NPROC:-4}"
+HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}"
+ABSORB_MODE="bounded_norm_calibrated_absorb"
+
+cd "$PROJECT_ROOT"
+source "$CONDA_SH"
+conda activate sdlora
+export HF_ENDPOINT CUDA_VISIBLE_DEVICES="$GPU_IDS" PYTHONUNBUFFERED=1
+export CUBLAS_WORKSPACE_CONFIG=:4096:8 TORCH_DETERMINISTIC=1
+
+make_config() {
+  local base="$1" seed="$2" prefix="$3" filepath="$4" output="$5"
+  jq --arg prefix "$prefix" \
+    --arg filepath "$filepath" \
+    --arg mode "$ABSORB_MODE" \
+    --argjson seed "$seed" '
+      .prefix = $prefix
+      | .seed = [$seed]
+      | .filepath = $filepath
+      | .device = ["0"]
+      | .dist_backend = "nccl"
+      | .sa_live_a_absorb_mode = $mode
+      | .sa_resume = false
+    ' "$base" > "$output"
+}
+
+preflight_one() {
+  local dataset="$1" seed="$2"
+  local prefix="${dataset}_coordinate_stable_normcap_seed${seed}_nccl"
+  local output_dir="$PROJECT_ROOT/${dataset^^}_COORDINATE_STABLE_NORMCAP_SEED${seed}_NCCL"
+  if [ -e "$output_dir" ] || [ -e "$PROJECT_ROOT/${prefix}.log" ]; then
+    echo "preflight FAIL: output or log exists for $prefix"
+    return 1
+  fi
+}
+
+for dataset in c100 inr cub; do
+  for seed in 1 2 3; do
+    preflight_one "$dataset" "$seed"
+  done
+done
+echo "bounded norm-calibrated multi-seed queue preflight PASS"
+
+run_one() {
+  local dataset="$1" seed="$2" base="$3"
+  local prefix="${dataset}_coordinate_stable_normcap_seed${seed}_nccl"
+  local filepath="./${dataset^^}_COORDINATE_STABLE_NORMCAP_SEED${seed}_NCCL/"
+  local config
+  local status
+  config="$(mktemp "/tmp/${prefix}.XXXXXX.json")"
+  make_config "$base" "$seed" "$prefix" "$filepath" "$config"
+
+  echo "===== $(date '+%F %T') START $prefix ====="
+  echo "commit=$(git rev-parse HEAD) config_sha=$(sha256sum "$config" | awk '{print $1}')"
+  if torchrun --standalone --nproc_per_node="$NPROC" main.py \
+    --config="$config" > "${prefix}.log" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f "$config"
+  echo "===== $(date '+%F %T') END $prefix status=$status ====="
+  return "$status"
+}
+
+for seed in 1 2 3; do
+  run_one c100 "$seed" \
+    exps/c100_coordinate_stable_opabsorb_seed1993_nccl.json
+  sleep 5
+done
+
+for seed in 1 2 3; do
+  run_one inr "$seed" \
+    exps/inr_coordinate_stable_opabsorb_seed1995_nccl.json
+  sleep 5
+done
+
+for seed in 1 2 3; do
+  run_one cub "$seed" \
+    exps/cub_coordinate_stable_opabsorb_seed1_nccl.json
+  sleep 5
+done
+
+echo "===== $(date '+%F %T') BOUNDED NORM-CALIBRATED MULTISEED DONE ====="

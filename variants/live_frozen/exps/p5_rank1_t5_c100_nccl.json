@@ -1,0 +1,47 @@
+{
+    "prefix": "p5_rank1_t5_c100_nccl",
+    "dataset": "cifar224",
+    "memory_size": 0,
+    "memory_per_class": 0,
+    "fixed_memory": false,
+    "shuffle": true,
+    "init_cls": 20,
+    "increment": 20,
+    "model_name": "sdlora_dual_b",
+    "backbone_type": "vit_base_patch16_224",
+    "device": [
+        "0"
+    ],
+    "seed": [
+        1993
+    ],
+    "optimizer": "sgd",
+    "scheduler": "cosine",
+    "min_lr": 0.005,
+    "tuned_epoch": 20,
+    "dist_backend": "nccl",
+    "filepath": "./C100_P5_RANK1_SEED1993_T5_NCCL/",
+    "init_epoch": 20,
+    "init_lr": 0.008,
+    "init_milestones": [
+        60,
+        120,
+        170
+    ],
+    "init_lr_decay": 0.1,
+    "init_weight_decay": 0.0005,
+    "epochs": 20,
+    "lrate": 0.008,
+    "milestones": [
+        40,
+        70
+    ],
+    "lrate_decay": 0,
+    "batch_size": 32,
+    "weight_decay": 0.0002,
+    "sa_deterministic_training": true,
+    "lora_rank": 1,
+    "sa_use_prototype_classifier": true,
+    "sa_dual_head": true,
+    "sa_dual_head_schedule": "B"
+}

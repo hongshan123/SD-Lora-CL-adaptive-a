@@ -1,0 +1,304 @@
+"""Low-Rank Prototype Transport (LRPT).
+
+Given paired features of the *current* task before and after the shared-A
+LoRA update, estimate a low-rank transport
+
+    p' = p + U (V^T p),      U, V in R^{d x r},
+
+so that p' approximates where an old prototype p (computed in the previous
+feature space) would live in the updated feature space.  The transport rank is
+tied to the LoRA rank r of the shared down-projection A, and the fit is a
+closed-form rank-r least-squares problem:
+
+    W* = argmin_W ||Y - X - W X||_F^2 + reg * ||W||_F^2
+    W  = rank-r SVD truncation of W*
+
+No old-task data is read, saved, or replayed: X and Y are extracted from the
+current task's own training data at the two model states.
+"""
+
+from __future__ import annotations
+
+import torch
+from torch.nn import functional as F
+
+
+def fit_affine_map(
+    z_old: torch.Tensor,
+    z_new: torch.Tensor,
+    reg: float = 1e-2,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Fit the unconstrained affine map p' = p + b + W p by ridge regression.
+
+    Returns (W, b) with W in R^{d x d} and b in R^d. This is the generic
+    empirical map that LoRA-aware variants constrain to a drift subspace.
+    """
+    if z_old.shape != z_new.shape:
+        raise ValueError("z_old and z_new must have the same shape")
+    if z_old.ndim != 2:
+        raise ValueError("expected 2D feature matrices (N, d)")
+    n, d = z_old.shape
+    if n < 1:
+        raise ValueError("need at least one paired sample")
+
+    drift = z_new.to(torch.float64) - z_old.to(torch.float64)
+    bias = drift.mean(dim=0)
+    residual = drift - bias
+    x = z_old.to(torch.float64).t().contiguous()  # (d, N)
+    r = residual.t().contiguous()  # (d, N)
+    cov = x @ x.t() + max(reg, 0.0) * torch.eye(d, dtype=torch.float64)
+    w = r @ x.t() @ torch.linalg.inv(cov)  # (d, d)
+    return w.to(torch.float32), bias.to(torch.float32)
+
+
+def low_rank_factors(
+    w: torch.Tensor,
+    rank: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Rank-r SVD factorization W ≈ U V^T (p' = p + U (V^T p))."""
+    d = w.shape[0]
+    if rank <= 0 or rank > d:
+        raise ValueError("rank must satisfy 0 < rank <= d")
+    u, s, vh = torch.linalg.svd(w.to(torch.float64), full_matrices=False)
+    sqrt_s = torch.sqrt(s[:rank].clamp_min(0.0))
+    u_r = u[:, :rank] * sqrt_s
+    v_r = vh.t()[:, :rank] * sqrt_s
+    return u_r.to(torch.float32), v_r.to(torch.float32)
+
+
+def project_map_to_basis(
+    w: torch.Tensor,
+    basis: torch.Tensor,
+) -> torch.Tensor:
+    """Project the empirical map W onto the drift subspace spanned by basis
+    columns (orthonormal): W_proj = B B^T W. The basis comes from real LoRA
+    residuals, so no free SVD of the full feature map is used."""
+    basis64 = basis.to(torch.float64)
+    w64 = w.to(torch.float64)
+    return (basis64 @ (basis64.t() @ w64)).to(torch.float32)
+
+
+def fit_layerwise_weights(
+    z_old: torch.Tensor,
+    z_new: torch.Tensor,
+    layer_maps: list[torch.Tensor],
+    reg: float = 1e-2,
+    fit_rows: int = 512,
+) -> torch.Tensor:
+    """Fit non-negative layer weights alpha_l minimizing
+    ||Y - X - sum_l alpha_l (X W_l^T)||_F via scipy nnls."""
+    import numpy as np
+    from scipy.optimize import nnls
+
+    n = min(fit_rows, z_old.shape[0])
+    x = z_old[:n].to(torch.float64)
+    drift = (z_new[:n] - z_old[:n]).to(torch.float64)
+    a = np.stack(
+        [
+            (x @ w_l.t().to(torch.float64)).reshape(-1).numpy()
+            for w_l in layer_maps
+        ],
+        axis=1,
+    )
+    b = drift.reshape(-1).numpy()
+    alpha, _ = nnls(a, b)
+    return torch.tensor(alpha, dtype=torch.float32)
+
+
+def fit_low_rank_transport(
+    z_old: torch.Tensor,
+    z_new: torch.Tensor,
+    rank: int,
+    reg: float = 1e-2,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Fit p' = p + U (V^T p) from paired rows (N, d) of pre/post features.
+
+    Args:
+        z_old: (N, d) features extracted with the model state before update.
+        z_new: (N, d) features of the same inputs after update.
+        rank: rank of the transport; should be tied to the LoRA rank.
+        reg: ridge regularizer on the unconstrained least-squares map.
+
+    Returns:
+        U, V: (d, rank) tensors such that p' = p + U @ (V^T @ p).
+    """
+    if z_old.shape != z_new.shape:
+        raise ValueError("z_old and z_new must have the same shape")
+    if z_old.ndim != 2:
+        raise ValueError("expected 2D feature matrices (N, d)")
+    n, d = z_old.shape
+    if rank <= 0 or rank > d:
+        raise ValueError("rank must satisfy 0 < rank <= d")
+    if n < 1:
+        raise ValueError("need at least one paired sample")
+
+    x = z_old.to(torch.float64).t().contiguous()  # (d, N)
+    y = z_new.to(torch.float64).t().contiguous()  # (d, N)
+    residual = y - x
+    cov = x @ x.t() + max(reg, 0.0) * torch.eye(d, dtype=torch.float64)
+    w = residual @ x.t() @ torch.linalg.inv(cov)  # (d, d)
+
+    u, s, vh = torch.linalg.svd(w, full_matrices=False)
+    sqrt_s = torch.sqrt(s[:rank].clamp_min(0.0))
+    u_r = u[:, :rank] * sqrt_s
+    v_r = vh.t()[:, :rank] * sqrt_s
+    return u_r.to(torch.float32), v_r.to(torch.float32)
+
+
+def fit_affine_low_rank_transport(
+    z_old: torch.Tensor,
+    z_new: torch.Tensor,
+    rank: int,
+    reg: float = 1e-2,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Fit p' = p + b + U (V^T p), where b is the global mean drift and U,V
+    are the rank-r low-rank part (closed-form least squares + SVD truncation).
+
+    The bias captures the common semantic shift shared by all classes; the
+    low-rank part captures LoRA-induced per-class drift. Both are discarded
+    after being applied to stored prototypes (no persistent parameters).
+    """
+    if z_old.shape != z_new.shape:
+        raise ValueError("z_old and z_new must have the same shape")
+    if z_old.ndim != 2:
+        raise ValueError("expected 2D feature matrices (N, d)")
+    n, d = z_old.shape
+    if rank <= 0 or rank > d:
+        raise ValueError("rank must satisfy 0 < rank <= d")
+    if n < 1:
+        raise ValueError("need at least one paired sample")
+
+    w, bias = fit_affine_map(z_old, z_new, reg=reg)
+    u, v = low_rank_factors(w, rank=rank)
+    return u, v, bias
+
+
+def apply_transport(
+    prototypes: dict[int, torch.Tensor],
+    u: torch.Tensor,
+    v: torch.Tensor,
+    bias: torch.Tensor | None = None,
+    damping: float = 1.0,
+) -> dict[int, torch.Tensor]:
+    """Apply p' = normalize(p + λ(b + U (V^T p))) to every stored prototype.
+
+    damping λ ∈ [0,1] scales the drift compensation; λ=1 is the full fit,
+    smaller values reduce over-correction from a noisy transport.
+    """
+    u64 = u.to(torch.float64)
+    v64 = v.to(torch.float64)
+    b64 = bias.to(torch.float64).reshape(-1) if bias is not None else None
+    lam = float(damping)
+    moved = {}
+    for class_id, proto in prototypes.items():
+        p = proto.detach().to(torch.float64).reshape(-1)
+        p_new = p + lam * (u64 @ (v64.t() @ p))
+        if b64 is not None:
+            p_new = p_new + lam * b64
+        moved[int(class_id)] = F.normalize(p_new.to(torch.float32), p=2, dim=0)
+    return moved
+
+
+def apply_transport_adaptive(
+    prototypes: dict[int, torch.Tensor],
+    u: torch.Tensor,
+    v: torch.Tensor,
+    bias: torch.Tensor | None = None,
+) -> dict[int, torch.Tensor]:
+    """Per-prototype adaptive transport strength.
+
+    Prototypes whose projection onto the LoRA drift basis is small are likely
+    less affected by the update, so they receive weaker compensation; strongly
+    aligned prototypes receive the full transport. This avoids a uniform
+    damping that over-corrects some historical tasks.
+    """
+    class_ids = sorted(prototypes.keys())
+    matrix = torch.stack([prototypes[c].detach().float() for c in class_ids])
+    proj = matrix @ v.float()  # (C, r)
+    proj_norm = torch.linalg.norm(proj, dim=1)
+    med = proj_norm.median()
+    scale = proj_norm / (proj_norm + med + 1e-8)
+    strength = 0.5 + 0.5 * scale  # in [0.5, 1.0]
+
+    u64 = u.to(torch.float64)
+    v64 = v.to(torch.float64)
+    b64 = bias.to(torch.float64).reshape(-1) if bias is not None else None
+    moved = {}
+    for idx, class_id in enumerate(class_ids):
+        p = prototypes[class_id].detach().to(torch.float64).reshape(-1)
+        lam = float(strength[idx])
+        p_new = p + lam * (u64 @ (v64.t() @ p))
+        if b64 is not None:
+            p_new = p_new + lam * b64
+        moved[int(class_id)] = F.normalize(p_new.to(torch.float32), p=2, dim=0)
+    return moved
+
+
+def transport_prediction_error(
+    z_old: torch.Tensor,
+    z_new: torch.Tensor,
+    u: torch.Tensor,
+    v: torch.Tensor,
+    bias: torch.Tensor | None = None,
+) -> tuple[float, float]:
+    """Relative residual of the fitted transport on the fitting features."""
+    pred = z_old + (z_old @ v) @ u.t()
+    if bias is not None:
+        pred = pred + bias
+    drift = z_new - z_old
+    residual = z_new - pred
+    denom = torch.linalg.norm(drift.double())
+    if denom <= 0:
+        return 0.0, 0.0
+    rel = float(torch.linalg.norm(residual.double()) / denom)
+    frac = float(torch.linalg.norm(pred.double()) / torch.linalg.norm(z_new.double()))
+    return rel, frac
+
+
+def fit_rank_residuals(
+    z_old: torch.Tensor,
+    z_new: torch.Tensor,
+    ranks: tuple[int, ...],
+    reg: float = 1e-2,
+) -> dict[int, float]:
+    """Relative drift residual after fitting a rank-r transport for each rank."""
+    out = {}
+    for rank in ranks:
+        if rank <= 0 or rank > z_old.shape[1]:
+            continue
+        u, v = fit_low_rank_transport(z_old, z_new, rank=rank, reg=reg)
+        rel, _ = transport_prediction_error(z_old, z_new, u, v)
+        out[rank] = rel
+    return out
+
+
+def fit_affine_rank_residuals(
+    z_old: torch.Tensor,
+    z_new: torch.Tensor,
+    ranks: tuple[int, ...],
+    reg: float = 1e-2,
+) -> dict[int, float]:
+    """Relative drift residual after fitting affine rank-r transport."""
+    out = {}
+    for rank in ranks:
+        if rank <= 0 or rank > z_old.shape[1]:
+            continue
+        u, v, b = fit_affine_low_rank_transport(
+            z_old, z_new, rank=rank, reg=reg
+        )
+        rel, _ = transport_prediction_error(z_old, z_new, u, v, bias=b)
+        out[rank] = rel
+    return out
+
+
+def bias_relative_error(
+    z_old: torch.Tensor,
+    z_new: torch.Tensor,
+) -> float:
+    """Relative drift residual after subtracting only the global mean shift."""
+    drift = z_new - z_old
+    denom = torch.linalg.norm(drift.double())
+    if denom <= 0:
+        return 0.0
+    centered = drift - drift.mean(dim=0, keepdim=True)
+    return float(torch.linalg.norm(centered.double()) / denom)

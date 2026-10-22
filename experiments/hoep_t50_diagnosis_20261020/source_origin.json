@@ -1,5 +1,0 @@
-{
-  "source_repo": "/home/hongzhijun/hongshan/SD-lora-cl_2/SD-Lora-CL-hoep-normcap-speed-20261012",
-  "commit": "2569a223e2ea8cd734fcda26303919eff71e01b9",
-  "protocol": "single GPU effective batch128; microbatch64; no NormCap; HOEP5%+LS+Transport; CIFAR1993 T50"
-}

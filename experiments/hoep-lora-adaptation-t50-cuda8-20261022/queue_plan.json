@@ -1,0 +1,141 @@
+{
+  "protocol": {
+    "task_count": 50,
+    "rank": 10,
+    "epochs": 20,
+    "single_gpu_batch": 128,
+    "accumulation_steps": 1,
+    "normcap": false,
+    "transport": true,
+    "hoep_energy_budget": 0.05,
+    "history_weight": 1.0,
+    "prototype_weight": 0.1,
+    "prototype_temperature": 0.05,
+    "prototype_ema": 0.1,
+    "task0_interventions": false,
+    "history_moments": "full input second moments at task-end; each current training set only; pooled by token count; 12 layers, shared Q/V inputs; float64 persistent, fixed 54 MiB",
+    "seed_selection": "prespecified CIFAR1993 ImageNetR1995; no test-based tuning"
+  },
+  "jobs": [
+    {
+      "name": "cifar100_seed1993_t50_original_smoke",
+      "phase": "smoke",
+      "dataset": "cifar100",
+      "seed": 1993,
+      "arm": "original",
+      "gpu": 0
+    },
+    {
+      "name": "cifar100_seed1993_t50_baseline_smoke",
+      "phase": "smoke",
+      "dataset": "cifar100",
+      "seed": 1993,
+      "arm": "baseline",
+      "gpu": 0
+    },
+    {
+      "name": "cifar100_seed1993_t50_history_smoke",
+      "phase": "smoke",
+      "dataset": "cifar100",
+      "seed": 1993,
+      "arm": "history",
+      "gpu": 1
+    },
+    {
+      "name": "cifar100_seed1993_t50_prototype_smoke",
+      "phase": "smoke",
+      "dataset": "cifar100",
+      "seed": 1993,
+      "arm": "prototype",
+      "gpu": 2
+    },
+    {
+      "name": "cifar100_seed1993_t50_combined_smoke",
+      "phase": "smoke",
+      "dataset": "cifar100",
+      "seed": 1993,
+      "arm": "combined",
+      "gpu": 3
+    },
+    {
+      "name": "imagenetr_seed1995_t50_baseline_smoke",
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "baseline",
+      "gpu": 0
+    },
+    {
+      "name": "imagenetr_seed1995_t50_combined_smoke",
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "combined",
+      "gpu": 3
+    },
+    {
+      "name": "cifar100_seed1993_t50_baseline_formal",
+      "phase": "formal",
+      "dataset": "cifar100",
+      "seed": 1993,
+      "arm": "baseline",
+      "gpu": 0
+    },
+    {
+      "name": "cifar100_seed1993_t50_history_formal",
+      "phase": "formal",
+      "dataset": "cifar100",
+      "seed": 1993,
+      "arm": "history",
+      "gpu": 1
+    },
+    {
+      "name": "cifar100_seed1993_t50_prototype_formal",
+      "phase": "formal",
+      "dataset": "cifar100",
+      "seed": 1993,
+      "arm": "prototype",
+      "gpu": 2
+    },
+    {
+      "name": "cifar100_seed1993_t50_combined_formal",
+      "phase": "formal",
+      "dataset": "cifar100",
+      "seed": 1993,
+      "arm": "combined",
+      "gpu": 3
+    },
+    {
+      "name": "imagenetr_seed1995_t50_baseline_formal",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "baseline",
+      "gpu": 0
+    },
+    {
+      "name": "imagenetr_seed1995_t50_history_formal",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "history",
+      "gpu": 1
+    },
+    {
+      "name": "imagenetr_seed1995_t50_prototype_formal",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "prototype",
+      "gpu": 2
+    },
+    {
+      "name": "imagenetr_seed1995_t50_combined_formal",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "combined",
+      "gpu": 3
+    }
+  ]
+}

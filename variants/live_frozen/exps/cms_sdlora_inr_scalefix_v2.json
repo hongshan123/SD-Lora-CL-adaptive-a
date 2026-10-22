@@ -1,0 +1,40 @@
+{
+    "prefix": "cms_sdlora_inr_scalefix_v2",
+    "dataset": "imagenetr",
+    "memory_size": 0,
+    "memory_per_class": 0,
+    "fixed_memory": false,
+    "shuffle": true,
+    "init_cls": 20,
+    "increment": 20,
+    "model_name": "cms_sdlora",
+    "backbone_type": "vit_base_patch16_224",
+    "device": [
+        "0"
+    ],
+    "seed": [
+        1993
+    ],
+    "optimizer": "adam",
+    "scheduler": "constant",
+    "filepath": "./ImageNetR_CMS_SCALEFIX_V2/",
+    "init_epoch": 20,
+    "init_lr": 0.01,
+    "init_milestones": [
+        10000
+    ],
+    "init_lr_decay": 0,
+    "init_weight_decay": 0.0005,
+    "epochs": 20,
+    "lrate": 0.01,
+    "milestones": [
+        10000
+    ],
+    "lrate_decay": 0,
+    "batch_size": 32,
+    "weight_decay": 0.0002,
+    "lora_rank": 10,
+    "cms_recent_tasks": 2,
+    "cms_low_rank": 10,
+    "cms_low_scale_init": 1.0
+}

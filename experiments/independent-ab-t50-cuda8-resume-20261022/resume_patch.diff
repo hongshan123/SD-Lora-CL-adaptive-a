@@ -1,0 +1,43 @@
+--- original/trainer.py
++++ resume/trainer.py
+@@ -93,12 +93,27 @@
+     
+     args["nb_classes"] = data_manager.nb_classes # update args
+     args["nb_tasks"] = data_manager.nb_tasks
+-    model = factory.get_model(args["model_name"], args)
++    resume_metadata = None
++    if args.get("sa_resume_boundary_from"):
++        from utils.structure_bank_resume import restore
++        model, resume_metadata = restore(args, data_manager)
++        if args.get("sa_resume_validate_only", False):
++            return
++    else:
++        model = factory.get_model(args["model_name"], args)
+ 
+     cnn_curve, nme_curve = {"top1": [], "top5": []}, {"top1": [], "top5": []}
+     cnn_matrix, nme_matrix = [], []
+ 
+-    for task in range(task_count_to_run(args, data_manager.nb_tasks)):
++    start_task = 0
++    if resume_metadata is not None:
++        cnn_curve = resume_metadata["cnn_curve"]
++        nme_curve = resume_metadata["nme_curve"]
++        cnn_matrix = resume_metadata["cnn_matrix"]
++        nme_matrix = resume_metadata["nme_matrix"]
++        start_task = resume_metadata["tasks_completed"]
++
++    for task in range(start_task, task_count_to_run(args, data_manager.nb_tasks)):
+         # task = 9
+         if _is_main_process(args):
+             print('task',task)
+@@ -171,6 +186,10 @@
+             logging.info("Average Accuracy (CNN): {} \n".format(sum(cnn_curve["top1"])/len(cnn_curve["top1"])))
+ 
+         _distributed_barrier(args)
++        if args.get("sa_boundary_checkpoint_root") and _is_main_process(args):
++            from utils.structure_bank_resume import checkpoint
++            checkpoint(model, data_manager, args, task,
++                       cnn_curve, nme_curve, cnn_matrix, nme_matrix)
+ 
+     if _is_main_process(args) and len(cnn_matrix) > 0:
+         np_acctable = np.zeros([task + 1, task + 1])

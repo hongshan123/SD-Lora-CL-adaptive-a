@@ -1,0 +1,52 @@
+{
+    "prefix": "sbgc_p2_cuo_r10_cub_seed1_t10",
+    "dataset": "cub",
+    "memory_size": 0,
+    "memory_per_class": 0,
+    "fixed_memory": false,
+    "shuffle": true,
+    "init_cls": 20,
+    "increment": 20,
+    "model_name": "sa_sdlora",
+    "backbone_type": "vit_base_patch16_224",
+    "device": [
+        "6",
+        "7"
+    ],
+    "seed": [
+        1
+    ],
+    "optimizer": "sgd",
+    "scheduler": "constant",
+    "min_lr": 0.005,
+    "tuned_epoch": 20,
+    "dist_backend": "nccl",
+    "filepath": "./SBGC_P2_CUO_R10_CUB_SEED1_T10_20260922/",
+    "init_epoch": 20,
+    "init_lr": 0.01,
+    "init_milestones": [
+        10000
+    ],
+    "init_lr_decay": 0,
+    "init_weight_decay": 0.0005,
+    "epochs": 20,
+    "lrate": 0.01,
+    "milestones": [
+        10000
+    ],
+    "lrate_decay": 0,
+    "batch_size": 64,
+    "weight_decay": 0.0002,
+    "lora_rank": 10,
+    "sa_shared_a_orthogonal": true,
+    "sa_train_a_all_tasks": true,
+    "sa_delete_per_task_files": false,
+    "sa_use_prototype_classifier": true,
+    "sa_cumulative_state": true,
+    "sa_cumulative_merge": "cuo_lowrank",
+    "sa_cumulative_rank": 10,
+    "sa_cuo_lambda": 0.00001,
+    "sa_deterministic_training": true,
+    "sa_resume": false,
+    "max_tasks": 10
+}

@@ -2,7 +2,7 @@
 
 These configs are copied into the official clones under `external_baselines/`
 by `run_external_baselines_c100.sh` (and future INR launchers).  The clones
-themselves are gitignored; the configs here are the reproducible record.
+themselves are gitignored; the configs here are reproducible inputs.
 
 Layout:
 
@@ -15,5 +15,5 @@ Layout:
 
 Protocol notes: task splits match this project (CIFAR-100: 10 tasks x 10
 classes; ImageNet-R: 10 tasks x 20 classes); all other hyper-parameters are
-the official defaults of each implementation.  Results are reported in
-separate columns from published values (see `strong_baselines_sd.md`).
+the official defaults of each implementation. Keep locally reproduced metrics
+separate from published values when reporting results.

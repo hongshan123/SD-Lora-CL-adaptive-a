@@ -1,0 +1,346 @@
+import sys
+import logging
+import copy
+import random
+import faulthandler
+from datetime import timedelta
+from pathlib import Path
+import torch
+import torch.distributed as dist
+from utils import factory
+from utils.data_manager import DataManager
+from utils.toolkit import count_parameters
+import os
+import numpy as np
+
+
+def task_count_to_run(args, available_tasks):
+    """Return the task count for a run, optionally truncating calibration jobs."""
+    if available_tasks < 0:
+        raise ValueError("available_tasks must be non-negative")
+    max_tasks = args.get("max_tasks")
+    if max_tasks is None:
+        return available_tasks
+    if isinstance(max_tasks, bool):
+        raise ValueError("max_tasks must be a positive integer")
+    max_tasks = int(max_tasks)
+    if max_tasks <= 0:
+        raise ValueError("max_tasks must be a positive integer")
+    return min(max_tasks, available_tasks)
+
+
+def train(args):
+    seed_list = copy.deepcopy(args["seed"])
+    device = copy.deepcopy(args["device"])
+
+    for seed in seed_list:
+        args["seed"] = seed
+        args["device"] = device
+        try:
+            _train(args)
+        finally:
+            stop_stack_diagnostics(args.pop("_stack_trace_stream", None))
+
+
+def _train(args):
+
+    _init_distributed(args)
+    _acquire_p0_run_guard(args)
+    args["_stack_trace_stream"] = start_stack_diagnostics(args)
+    init_cls = 0 if args ["init_cls"] == args["increment"] else args["init_cls"]
+    logs_name = "logs/{}/{}/{}/{}".format(args["model_name"],args["dataset"], init_cls, args['increment'])
+    
+    if _is_main_process(args) and not os.path.exists(logs_name):
+        os.makedirs(logs_name)
+    _distributed_barrier(args)
+
+    logfilename = "logs/{}/{}/{}/{}/{}_{}_{}".format(
+        args["model_name"],
+        args["dataset"],
+        init_cls,
+        args["increment"],
+        args["prefix"],
+        args["seed"],
+        args["backbone_type"],
+    )
+    if _is_main_process(args):
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(filename)s] => %(message)s",
+            handlers=[
+                logging.FileHandler(filename=logfilename + ".log"),
+                logging.StreamHandler(sys.stdout),
+            ],
+            force=True,
+        )
+    else:
+        logging.basicConfig(handlers=[logging.NullHandler()], force=True)
+
+    _set_random(args["seed"], args)
+    _set_deterministic_backend(args)
+    _set_device(args)
+    if _is_main_process(args):
+        print_args(args)
+
+    data_manager = DataManager(
+        args["dataset"],
+        args["shuffle"],
+        args["seed"],
+        args["init_cls"],
+        args["increment"],
+        args,
+    )
+    
+    args["nb_classes"] = data_manager.nb_classes # update args
+    args["nb_tasks"] = data_manager.nb_tasks
+    resume_metadata = None
+    if args.get("sa_resume_boundary_from"):
+        from utils.structure_bank_resume import restore
+        model, resume_metadata = restore(args, data_manager)
+        if args.get("sa_resume_validate_only", False):
+            return
+    else:
+        model = factory.get_model(args["model_name"], args)
+
+    cnn_curve, nme_curve = {"top1": [], "top5": []}, {"top1": [], "top5": []}
+    cnn_matrix, nme_matrix = [], []
+
+    start_task = 0
+    if resume_metadata is not None:
+        cnn_curve = resume_metadata["cnn_curve"]
+        nme_curve = resume_metadata["nme_curve"]
+        cnn_matrix = resume_metadata["cnn_matrix"]
+        nme_matrix = resume_metadata["nme_matrix"]
+        start_task = resume_metadata["tasks_completed"]
+
+    for task in range(start_task, task_count_to_run(args, data_manager.nb_tasks)):
+        # task = 9
+        if _is_main_process(args):
+            print('task',task)
+            logging.info("All params: {}".format(count_parameters(model._network)))
+            logging.info(
+                "Trainable params: {}".format(count_parameters(model._network, True))
+            )
+        model.incremental_train(data_manager)
+        _distributed_barrier(args)
+        if _is_main_process(args):
+            cnn_accy, nme_accy = model.eval_task()
+        else:
+            cnn_accy, nme_accy = None, None
+        model.after_task()
+        if _is_main_process(args) and hasattr(data_manager, "_eval_input_cache"):
+            cache = data_manager._eval_input_cache
+            logging.info("[EvalInputCache] task=%d hits=%d misses=%d bytes=%d", task, cache.hits, cache.misses, cache.bytes_used)
+
+        if not _is_main_process(args):
+            _distributed_barrier(args)
+            continue
+
+        if nme_accy is not None:
+            logging.info("CNN: {}".format(cnn_accy["grouped"]))
+            logging.info("NME: {}".format(nme_accy["grouped"]))
+
+            cnn_keys = [key for key in cnn_accy["grouped"].keys() if '-' in key]
+            cnn_keys_sorted = sorted(cnn_keys)
+            cnn_values = [cnn_accy["grouped"][key] for key in cnn_keys_sorted]
+            cnn_matrix.append(cnn_values)
+
+            nme_keys = [key for key in nme_accy["grouped"].keys() if '-' in key]
+            nme_keys_sorted = sorted(nme_keys)
+            nme_values = [nme_accy["grouped"][key] for key in nme_keys_sorted]
+            nme_matrix.append(nme_values)
+
+            cnn_curve["top1"].append(cnn_accy["top1"])
+            cnn_curve["top5"].append(cnn_accy["top5"])
+
+            nme_curve["top1"].append(nme_accy["top1"])
+            nme_curve["top5"].append(nme_accy["top5"])
+
+            logging.info("CNN top1 curve: {}".format(cnn_curve["top1"]))
+            logging.info("CNN top5 curve: {}".format(cnn_curve["top5"]))
+            logging.info("NME top1 curve: {}".format(nme_curve["top1"]))
+            logging.info("NME top5 curve: {}\n".format(nme_curve["top5"]))
+
+            print('Average Accuracy (CNN):', sum(cnn_curve["top1"])/len(cnn_curve["top1"]))
+            print('Average Accuracy (NME):', sum(nme_curve["top1"])/len(nme_curve["top1"]))
+
+            logging.info("Average Accuracy (CNN): {}".format(sum(cnn_curve["top1"])/len(cnn_curve["top1"])))
+            logging.info("Average Accuracy (NME): {}".format(sum(nme_curve["top1"])/len(nme_curve["top1"])))
+
+        else:
+            logging.info("No NME accuracy.")
+            logging.info("CNN: {}".format(cnn_accy["grouped"]))
+
+            cnn_keys = [key for key in cnn_accy["grouped"].keys() if '-' in key]
+            cnn_keys_sorted = sorted(cnn_keys)
+            cnn_values = [cnn_accy["grouped"][key] for key in cnn_keys_sorted]
+            cnn_matrix.append(cnn_values)
+
+            cnn_curve["top1"].append(cnn_accy["top1"])
+            cnn_curve["top5"].append(cnn_accy["top5"])
+
+            logging.info("CNN top1 curve: {}".format(cnn_curve["top1"]))
+            logging.info("CNN top5 curve: {}\n".format(cnn_curve["top5"]))
+
+            print('Average Accuracy (CNN):', sum(cnn_curve["top1"])/len(cnn_curve["top1"]))
+            logging.info("Average Accuracy (CNN): {} \n".format(sum(cnn_curve["top1"])/len(cnn_curve["top1"])))
+
+        _distributed_barrier(args)
+        if args.get("sa_boundary_checkpoint_root") and _is_main_process(args):
+            from utils.structure_bank_resume import checkpoint
+            checkpoint(model, data_manager, args, task,
+                       cnn_curve, nme_curve, cnn_matrix, nme_matrix)
+
+    if _is_main_process(args) and len(cnn_matrix) > 0:
+        np_acctable = np.zeros([task + 1, task + 1])
+        for idxx, line in enumerate(cnn_matrix):
+            idxy = len(line)
+            np_acctable[idxx, :idxy] = np.array(line)
+        np_acctable = np_acctable.T
+        forgetting = np.mean((np.max(np_acctable, axis=1) - np_acctable[:, task])[:task])
+        print('Accuracy Matrix (CNN):')
+        print(np_acctable)
+        logging.info('Forgetting (CNN): {}'.format(forgetting))
+
+    if _is_main_process(args) and len(nme_matrix) > 0:
+        np_acctable = np.zeros([task + 1, task + 1])
+        for idxx, line in enumerate(nme_matrix):
+            idxy = len(line)
+            np_acctable[idxx, :idxy] = np.array(line)
+        np_acctable = np_acctable.T
+        forgetting = np.mean((np.max(np_acctable, axis=1) - np_acctable[:, task])[:task])
+        print('Accuracy Matrix (NME):')
+        print(np_acctable)
+        logging.info('Forgetting (NME): {}'.format(forgetting))
+
+    _distributed_barrier(args)
+    if args.get("distributed", False):
+        dist.destroy_process_group()
+
+
+def distributed_timeout(args):
+    seconds = args.get("dist_timeout_seconds", 600)
+    if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds <= 0:
+        raise ValueError("dist_timeout_seconds must be a positive integer")
+    return timedelta(seconds=seconds)
+
+
+def start_stack_diagnostics(args):
+    seconds = args.get("sa_stack_trace_seconds", 0)
+    if isinstance(seconds, bool) or not isinstance(seconds, int) or seconds < 0:
+        raise ValueError("sa_stack_trace_seconds must be a nonnegative integer")
+    if not seconds:
+        return None
+    stream = (Path(args["filepath"]) / f"rank{args.get('rank', 0)}_stacks.log").open("a")
+    faulthandler.dump_traceback_later(seconds, repeat=True, file=stream)
+    return stream
+
+
+def stop_stack_diagnostics(stream):
+    if stream is not None:
+        faulthandler.cancel_dump_traceback_later()
+        stream.close()
+
+
+def _init_distributed(args):
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    rank = int(os.environ.get("RANK", "0"))
+    args["distributed"] = world_size > 1
+    args["rank"] = rank
+    args["local_rank"] = local_rank
+    args["world_size"] = world_size
+    if args["distributed"]:
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(
+            backend=args.get("dist_backend", "nccl"),
+            init_method="env://",
+            timeout=distributed_timeout(args),
+        )
+
+
+def _is_main_process(args):
+    return args.get("rank", 0) == 0
+
+
+def _distributed_barrier(args):
+    if args.get("distributed", False) and dist.is_initialized():
+        dist.barrier()
+
+
+def _set_device(args):
+    if args.get("distributed", False):
+        args["device"] = [torch.device("cuda:{}".format(args["local_rank"]))]
+        if _is_main_process(args):
+            print('devices_type', args["device"])
+        return
+    device_type = args["device"]
+    gpus = []
+    print('devices_type', device_type)
+    for device in device_type:
+        if device == -1:
+            device = torch.device("cpu")
+        else:
+            device = torch.device("cuda:{}".format(device))
+
+        gpus.append(device)
+
+    args["device"] = gpus
+
+
+def _set_random(seed=1, args=None):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        # In DDP each rank owns exactly one CUDA device; seeding another rank's
+        # device would create/perturb RNG contexts outside this process's rank.
+        torch.cuda.manual_seed(seed)
+        if args is None or not args.get("distributed", False):
+            torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def _set_deterministic_backend(args):
+    if not args.get("sa_deterministic_training", False):
+        return
+    torch.use_deterministic_algorithms(True, warn_only=False)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.enable_flash_sdp(False)
+    torch.backends.cuda.enable_mem_efficient_sdp(False)
+    torch.backends.cuda.enable_math_sdp(True)
+    torch.set_num_threads(1)
+
+
+def _acquire_p0_run_guard(args):
+    if not args.get("sa_deterministic_training", False):
+        return
+    if not _is_main_process(args):
+        _distributed_barrier(args)
+        return
+    from utils.run_guard import acquire_run_guard
+
+    config_path = args.get("config")
+    config_bytes = None
+    if config_path and os.path.exists(config_path):
+        with open(config_path, "rb") as handle:
+            config_bytes = handle.read()
+    lock_file = acquire_run_guard(
+        args["filepath"],
+        config_bytes=config_bytes,
+        command=sys.argv,
+        resume=bool(args.get("sa_resume", False)),
+        project_root=os.getcwd(),
+    )
+    # Keep the lock alive for the lifetime of this process.
+    args["_p0_run_guard_lock"] = lock_file
+    _distributed_barrier(args)
+
+
+def print_args(args):
+    for key, value in args.items():
+        logging.info("{}: {}".format(key, value))

@@ -1,38 +1,83 @@
-# SD-LoRA: Scalable Decoupled Low-Rank Adaptation for Class Incremental Learning
+# HOEP-A / Adaptive-A Continual Learning
 
-Welcome to the official code repository for [SD-LoRA: Scalable Decoupled Low-Rank Adaptation for Class Incremental Learning **(ICLR 2025, Oral)**](https://openreview.net/pdf?id=5U1rlpX68A).
+Research implementations of shared-A LoRA, fixed-size aggregate state, HOEP
+energy-based direction selection, historical least-squares alignment and
+prototype transport. This project builds on SD-LoRA and includes experimental
+variants and diagnostic tools.
 
-If you find this code useful in your research then please cite  
+The repository contains source code, tests, input configurations and usage
+documentation. Logs, weights, snapshots, metrics, result tables, execution
+manifests and experiment reports are generated locally and ignored by Git.
+
+## Layout
+
+- `backbone/`, `models/`, `utils/`: current HOEP implementation and existing
+  structure, transport, consolidation and gradient-accumulation controls.
+- `exps/`: training configuration templates.
+- `scripts/`, `tests/`: launchers, diagnostics, analysis code and tests.
+- `experiments/hoep-lora-adaptation-t50-cuda8-20261022/`: isolated historical-input
+  total-update regularization and all-seen-class prototype training, with a
+  paired queue and mathematical tests.
+- Other `experiments/` directories: snapshot, prototype replay, transport and
+  resume utilities. Runtime inputs and outputs are not distributed.
+- `variants/live_frozen/`: the separate Live-A/Frozen-A implementation family,
+  including source, configurations and tests.
+- `external_baselines_configs/`: input configurations for external baselines.
+
+## Environment and data
+
+Use Python 3.10, install a PyTorch build compatible with the local CUDA driver,
+then install the remaining requirements:
+
+```bash
+pip install -r requirements.no_torch.txt
+```
+
+Prepare datasets locally:
+
+```text
+data/cifar-100-python/
+data/imagenet-r/train/
+data/imagenet-r/test/
+data/cub/train/
+data/cub/test/
+```
+
+Pretrained ViT weights are loaded through timm/Hugging Face. Offline execution
+requires the corresponding weights to be cached beforehand.
+
+## Training
+
+Copy a configuration from `exps/`, set the dataset, GPU devices and a fresh
+`filepath`, then run:
+
+```bash
+python main.py --config=/path/to/config.json
+```
+
+Older configuration templates contain server-specific paths; update them
+before use. Record effective batch size and single-GPU/distributed/accumulation
+settings when comparing runs.
+
+For the latest paired LoRA adaptation queue, see its
+[setup instructions](experiments/hoep-lora-adaptation-t50-cuda8-20261022/README.md).
+See also [the method overview](docs/hoep_method.md). Experimental extensions are
+included for reproducibility; inclusion does not imply verified improvement.
+
+## Upstream attribution
+
+This research repository is derived from SD-LoRA; it is not the authors'
+official SD-LoRA release. Retain the original license and cite the upstream work:
+
 ```bibtex
-@inproceedings{
-wu2025sdlora,
-title={{SD}-Lo{RA}: Scalable Decoupled Low-Rank Adaptation for Class Incremental Learning},
-author={Yichen Wu and Hongming Piao and Long-Kai Huang and Renzhen Wang and Wanhua Li and Hanspeter Pfister and Deyu Meng and Kede Ma and Ying Wei},
-booktitle={The Thirteenth International Conference on Learning Representations},
-year={2025},
-url={https://openreview.net/forum?id=5U1rlpX68A}
+@inproceedings{wu2025sdlora,
+  title={{SD}-Lo{RA}: Scalable Decoupled Low-Rank Adaptation for Class Incremental Learning},
+  author={Yichen Wu and Hongming Piao and Long-Kai Huang and Renzhen Wang and Wanhua Li and Hanspeter Pfister and Deyu Meng and Kede Ma and Ying Wei},
+  booktitle={The Thirteenth International Conference on Learning Representations},
+  year={2025},
+  url={https://openreview.net/forum?id=5U1rlpX68A}
 }
-``` 
+```
 
-## 👀 Introduction
-![SD-LoRA](imgs/intro.jpg)
-
-- SD-LoRA introduces a decoupled learning strategy for the magnitude and direction of LoRA components to achieve scalable continual learning without rehearsal of huge sample features.
-- It demonstrates a strong stability-plasticity trade-off by converging to overlapping low-loss regions across sequential tasks, supported by empirical and theoretical analysis.
-- SD-LoRA and its two variants enable end-to-end optimization and efficient inference without component selection, achieving state-of-the-art performance on multiple CL benchmarks and foundation models.
-
-## 📜 Results
-![SD-LoRA](imgs/results1.jpg)
-![SD-LoRA](imgs/results2.jpg)
-- To run the experiments, download the datasets to /data/ and execute:
-   ```bash
-  bash run.sh
-- For your convenience, we have provided the running logs in the log file, where you can find detailed performance results for all streaming tasks.
-
-
-
-## 🙏 Acknowledgement
-This repo is built upon the following projects:
-
-* [LoRA-ViT](https://github.com/JamesQFreeman/LoRA-ViT)
-* [PILOT](https://github.com/sun-hailong/LAMDA-PILOT)
+Related projects include [LoRA-ViT](https://github.com/JamesQFreeman/LoRA-ViT)
+and [PILOT](https://github.com/sun-hailong/LAMDA-PILOT).

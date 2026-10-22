@@ -1,0 +1,6893 @@
+"""Shared-A SD-LoRA backbone.
+
+Each task trains only the up-projection B (plus a scalar scale) against a
+task-invariant down-projection A.  Because A is shared, the final model can
+store a single merged B per layer:
+
+    B* = sum_{i<t} (s_i / (||A|| * ||B_i||)) * B_i  +  s_t * B_t
+
+which reproduces the exact forward of the per-task bank at evaluation time.
+"""
+
+import math
+import copy
+import os
+import time
+from collections.abc import Sequence
+from contextlib import contextmanager
+
+import timm
+import torch
+import torch.distributed as dist
+import torch.nn as nn
+import torch.nn.functional as F
+from timm.models.vision_transformer import VisionTransformer as timm_ViT
+from torch import Tensor
+
+from backbone.coordinate_stability import align_live_a_aggregate
+from backbone.cuo_lowrank import row_orthonormal_projection, solve_projected_cuo
+from backbone.linears import SimpleLinear
+from backbone.lora import ParameterWrapper
+from backbone.operator_energy_partition import (
+    canonicalize_operator_coordinates,
+    diagonal_functional_energies,
+    historical_energy_coordinates,
+    mask_jaccard,
+    project_partition_gradient,
+    retract_partitioned_coordinates,
+    rotate_operator_coordinates,
+    select_global_low_energy_partition,
+    spectral_tie_group_ids,
+    spearman_rank_correlation,
+)
+from backbone.recoverability import (
+    accessibility_candidates,
+    accessibility_energy,
+    align_to_anchor,
+    choose_global_recoverability_candidates,
+    choose_local_recoverability_candidates,
+    grassmann_accessibility_direction_from_gradient,
+    recoverability_energies,
+    row_polar_retraction,
+)
+from backbone.sa_operator_stability import (
+    aggregate_normalized_up_projections,
+    relative_effective_operator_drift,
+)
+from backbone.sbgc import (
+    historical_response_risk,
+    normalize_sensitivity,
+    project_current_response_update,
+    solve_global_sensitivity_budgeted_g,
+    solve_sensitivity_budgeted_g,
+    update_running_moment,
+    weighted_response_energy,
+)
+
+
+SA_STATE_VERSION = 2
+SA_STATE_VERSION_LEGACY = 1
+SA_STATE_VERSION_UNION = 3
+SA_STATE_VERSION_LIVE_A = 4
+SA_STATE_VERSION_CUO = 5
+SA_STATE_VERSION_SBGC = 6
+SA_STATE_VERSION_SBGC_GUARD = 7
+SA_STATE_VERSION_SBGC_GLOBAL = 8
+SA_STATE_VERSION_SBGC_TRAIN_PROJECTED = 9
+SA_MERGE_MODE_GAUGE = "gauge"
+SA_MERGE_MODE_UNION_SVD = "union_svd"
+SA_MERGE_MODE_LIVE_A_AGGREGATE_B = "live_a_aggregate_b"
+SA_MERGE_MODE_CUO_LOWRANK = "cuo_lowrank"
+SA_MERGE_MODE_SBGC = "sensitivity_budgeted_g"
+SA_ABSORB_MODE_NORMALIZED = "normalized_absorb"
+SA_ABSORB_MODE_OPERATOR_PRESERVING = "operator_preserving_absorb"
+SA_ABSORB_MODE_BOUNDED_NORM_CALIBRATED = (
+    "bounded_norm_calibrated_absorb"
+)
+SA_STATE_FILENAME = "sa_state.pt"
+SA_MERGED_FILENAME = "sa_merged_lora.pt"
+
+
+def hbd_historical_branch_distance(
+    student_outputs, teacher_outputs
+):
+    """Normalized cosine distance between historical-branch responses.
+
+    ``student_outputs`` / ``teacher_outputs`` are lists of ``(q, v)`` tensors
+    shaped ``[B, T, D]`` (one entry per LoRA block, in block order).  For every
+    Q/V branch the tokens are L2-normalized and the mean cosine similarity is
+    taken; the loss is ``1 - mean`` averaged over branches and blocks (the
+    guide's preferred token/branch-averaged normalized cosine distance).
+
+    Gradients flow only through ``student_outputs``; teacher tensors should be
+    detached (the training hook runs the teacher under ``torch.no_grad()``).
+    """
+    if len(student_outputs) != len(teacher_outputs):
+        raise ValueError(
+            "student/teacher historical output counts differ: {} vs {}".format(
+                len(student_outputs), len(teacher_outputs)
+            )
+        )
+    branch_losses = []
+    for (sq, sv), (tq, tv) in zip(student_outputs, teacher_outputs):
+        for s, t in ((sq, tq), (sv, tv)):
+            s_flat = s.reshape(-1, s.shape[-1])
+            t_flat = t.reshape(-1, t.shape[-1])
+            s_norm = F.normalize(s_flat, p=2, dim=1)
+            t_norm = F.normalize(t_flat, p=2, dim=1)
+            branch_losses.append(
+                1.0 - (s_norm * t_norm).sum(dim=1).mean()
+            )
+    if not branch_losses:
+        raise ValueError("HBD requires at least one historical branch output")
+    return torch.stack(branch_losses).mean()
+
+
+def register_live_a_historical_capture_hooks(model, capture_list):
+    """Register forward hooks capturing per-block historical-branch outputs.
+
+    Each hook appends ``(q, v)`` for the block's ``_LiveAAggregateQKV``
+    wrapper using that block's actual input tokens.  Returns the hook handles;
+    callers must remove them after the forward.
+    """
+    handles = []
+    for blk in model.lora_vit.blocks:
+        wrapper = blk.attn.qkv
+        if not isinstance(wrapper, _LiveAAggregateQKV):
+            continue
+
+        def _make_hook(capture_list):
+            def _hook(module, args, output):
+                hq, hv = module.historical_output(args[0])
+                capture_list.append((hq, hv))
+
+            return _hook
+
+        handles.append(
+            wrapper.register_forward_hook(_make_hook(capture_list))
+        )
+    if not handles:
+        raise ValueError(
+            "no _LiveAAggregateQKV wrappers found; HBD requires "
+            "sa_cumulative_merge=live_a_aggregate_b"
+        )
+    return handles
+
+
+def live_a_historical_outputs(model, x, capture_list):
+    """Run a frozen Live-A model forward and return per-block (q, v) outputs.
+
+    The caller must have registered capture hooks on ``model`` and must wrap
+    this call in ``torch.no_grad()`` when a teacher is used.
+    """
+    capture_list.clear()
+    model(x)
+    return list(capture_list)
+
+
+def _join_path(prefix, name):
+    return os.path.join(prefix, name)
+
+
+def cuo_state_scalar_counts(num_blocks, rank, dim):
+    """Report CUO deployment factors separately from Gram bookkeeping."""
+    if not all(
+        isinstance(value, int) and value > 0
+        for value in (num_blocks, rank, dim)
+    ):
+        raise ValueError("num_blocks, rank, and dim must be positive integers")
+    branches = 2 * num_blocks
+    lora_factor_scalars = branches * 2 * dim * rank
+    gram_scalars = branches * rank * rank
+    return {
+        "lora_factor_scalars": lora_factor_scalars,
+        "gram_scalars": gram_scalars,
+        "persistent_scalar_total": lora_factor_scalars + gram_scalars,
+    }
+
+
+def combine_cuo_statistics(statistics):
+    """Combine independently collected projected moment tuples once."""
+    if not statistics:
+        raise ValueError("at least one CUO statistic tuple is required")
+    gram, cross, count = statistics[0]
+    if not isinstance(gram, Tensor) or not isinstance(cross, Tensor):
+        raise ValueError("CUO Gram and cross statistics must be tensors")
+    if gram.ndim != 2 or gram.shape[0] != gram.shape[1]:
+        raise ValueError("CUO Gram statistics must be square matrices")
+    if cross.ndim != 2 or cross.shape[1] != gram.shape[0]:
+        raise ValueError("CUO cross statistics must have shape [dim, rank]")
+    if gram.dtype != torch.float64 or cross.dtype != torch.float64:
+        raise ValueError("CUO statistics must use float64")
+    if gram.device != cross.device:
+        raise ValueError("CUO Gram and cross statistics must share a device")
+    total_gram = torch.zeros_like(gram)
+    total_cross = torch.zeros_like(cross)
+    total_count = 0
+    for local_gram, local_cross, local_count in statistics:
+        if (
+            not isinstance(local_gram, Tensor)
+            or not isinstance(local_cross, Tensor)
+            or local_gram.shape != gram.shape
+            or local_cross.shape != cross.shape
+            or local_gram.dtype != torch.float64
+            or local_cross.dtype != torch.float64
+            or local_gram.device != gram.device
+            or local_cross.device != cross.device
+        ):
+            raise ValueError("CUO statistic tuples must have matching FP64 tensors")
+        if not isinstance(local_count, int) or local_count < 0:
+            raise ValueError("CUO statistic counts must be non-negative integers")
+        total_gram.add_(local_gram)
+        total_cross.add_(local_cross)
+        total_count += local_count
+    return total_gram, total_cross, total_count
+
+
+def _fixed_orthogonal_down(in_dim, target_rank, seed, dtype=torch.float32):
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(seed))
+    random_matrix = torch.randn(in_dim, target_rank, generator=generator)
+    q, _ = torch.linalg.qr(random_matrix, mode="reduced")
+    return q.t().contiguous().to(dtype)
+
+
+def absorb_live_a_current_projection(
+    shared_a,
+    current_b,
+    scale,
+    mode=SA_ABSORB_MODE_OPERATOR_PRESERVING,
+    eps=1e-8,
+):
+    if mode not in (
+        SA_ABSORB_MODE_NORMALIZED,
+        SA_ABSORB_MODE_OPERATOR_PRESERVING,
+        SA_ABSORB_MODE_BOUNDED_NORM_CALIBRATED,
+    ):
+        raise ValueError("unsupported live-a absorption mode: {}".format(mode))
+    if shared_a.ndim != 2 or current_b.ndim != 2:
+        raise ValueError("shared_a and current_b must be matrices")
+    if current_b.shape[1] != shared_a.shape[0]:
+        raise ValueError("current_b rank must match shared_a rank")
+    if scale.numel() != 1:
+        raise ValueError("scale must be scalar")
+
+    a = shared_a.to(device=current_b.device, dtype=current_b.dtype)
+    s = scale.to(device=current_b.device, dtype=current_b.dtype).reshape(())
+    norm_a = torch.linalg.vector_norm(a) + eps
+    norm_b = torch.linalg.vector_norm(current_b) + eps
+    a_hat = a / norm_a
+    b_hat = current_b / norm_b
+    norm_product = norm_a * norm_b
+    gamma = s
+    if mode == SA_ABSORB_MODE_OPERATOR_PRESERVING:
+        consolidation_gain = torch.ones_like(norm_product)
+        gamma = s * norm_product
+    elif mode == SA_ABSORB_MODE_BOUNDED_NORM_CALIBRATED:
+        # Turn the legacy task-boundary normalization into an explicit,
+        # bounded consolidation rule: attenuate oversized current operators
+        # but never amplify operators whose factor norms are below one.
+        consolidation_gain = torch.clamp(
+            torch.reciprocal(norm_product), max=1.0
+        )
+        gamma = s * norm_product * consolidation_gain
+    else:
+        consolidation_gain = torch.reciprocal(norm_product)
+    absorbed_up = gamma * b_hat
+
+    before_operator = s * (current_b @ a)
+    after_operator = absorbed_up @ a_hat
+    relative_error = torch.linalg.vector_norm(
+        after_operator - before_operator
+    ) / (torch.linalg.vector_norm(before_operator) + eps)
+    return absorbed_up, {
+        "norm_A": float(norm_a),
+        "norm_B": float(norm_b),
+        "scaling": float(s),
+        "gamma": float(gamma),
+        "norm_product": float(norm_product),
+        "consolidation_gain": float(consolidation_gain),
+        "absorption_relative_error": float(relative_error),
+    }
+
+
+def fold_cumulative_up_projection(
+    shared_a: Tensor,
+    up_weights: Sequence[Tensor],
+    scales: Sequence[Tensor],
+    *,
+    device=None,
+    dtype=None,
+    eps: float = 1e-8,
+) -> Tensor:
+    """Fold the historical B bank into one cumulative up projection.
+
+    For a fixed down projection ``A``, each historical task contributes
+    ``scale_i * B_i(A x) / (||A|| ||B_i||)`` to the Shared-A LoRA forward.
+    The exact bank sum is reproduced by a single cumulative up projection
+
+        H = sum_i scale_i * B_i / (||A|| ||B_i||)
+
+    followed by ``H(A x)``.  The returned tensor has the same shape as each
+    ``B_i`` (``dim x rank``).
+    """
+    if len(up_weights) == 0:
+        raise ValueError("at least one historical up projection is required")
+    if len(up_weights) != len(scales):
+        raise ValueError("up projection and scale counts must match")
+
+    if device is None:
+        device = up_weights[0].device
+    if dtype is None:
+        dtype = up_weights[0].dtype
+
+    shared_a = shared_a.to(device=device, dtype=dtype)
+    norm_a = torch.linalg.vector_norm(shared_a)
+    total = torch.zeros_like(up_weights[0], device=device, dtype=dtype)
+    for up_weight, scale in zip(up_weights, scales):
+        if scale.numel() != 1:
+            raise ValueError("each historical scale must be scalar")
+        up = up_weight.to(device=device, dtype=dtype)
+        denom = norm_a * torch.linalg.vector_norm(up) + eps
+        total = total + scale.to(device=device, dtype=dtype).reshape(()) * up / denom
+    return total
+
+
+def fold_all_cumulative_up_projections(
+    shared_a_list: Sequence[Tensor],
+    saved_b_tasks: dict[int, Sequence[Tensor]],
+    scales: dict[int, Tensor],
+    *,
+    device=None,
+    dtype=None,
+    eps: float = 1e-8,
+) -> list[Tensor]:
+    """Fold every Q/V branch across all historical tasks."""
+    task_ids = sorted(saved_b_tasks)
+    if not task_ids:
+        raise ValueError("at least one historical task is required")
+    branch_count = len(shared_a_list)
+    if branch_count == 0:
+        raise ValueError("at least one shared down projection is required")
+    for task_id in task_ids:
+        if len(saved_b_tasks[task_id]) != branch_count:
+            raise ValueError(
+                "task {} has {} branches; expected {}".format(
+                    task_id, len(saved_b_tasks[task_id]), branch_count
+                )
+            )
+        if task_id not in scales:
+            raise ValueError("missing scale for task {}".format(task_id))
+    cumulative = []
+    for branch in range(branch_count):
+        cumulative.append(
+            fold_cumulative_up_projection(
+                shared_a_list[branch],
+                [saved_b_tasks[task_id][branch] for task_id in task_ids],
+                [scales[task_id] for task_id in task_ids],
+                device=device,
+                dtype=dtype,
+                eps=eps,
+            )
+        )
+    return cumulative
+
+
+def canonical_down_projection(shared_a: Tensor) -> tuple[Tensor, Tensor]:
+    """Return the canonical down projection and the triangular factor of ``A``.
+
+    With the thin QR decomposition ``A^T = Q R`` we have
+    ``A = R^T Q^T`` and ``B A = (B R^T) Q^T``.  ``Q^T`` is the canonical
+    down projection (``rank x dim``) and ``R`` is the ``rank x rank``
+    triangular factor that is absorbed into the up projection.
+    """
+    a_t = shared_a.to(dtype=torch.float64).t().contiguous()
+    q, r = torch.linalg.qr(a_t, mode="reduced")
+    return q.t().to(shared_a.dtype), r.to(shared_a.dtype)
+
+
+def low_rank_product_frobenius_norm(
+    up: Tensor, down: Tensor, eps: float = 1e-8
+) -> Tensor:
+    """Return ``||up @ down||_F`` without forming the dense product."""
+    if up.ndim != 2 or down.ndim != 2:
+        raise ValueError("up and down must be matrices")
+    if up.shape[1] != down.shape[0]:
+        raise ValueError("up and down inner dimensions must match")
+    if eps <= 0:
+        raise ValueError("eps must be positive")
+    up_gram = up.t() @ up
+    down_gram = down @ down.t()
+    squared_norm = torch.sum(up_gram * down_gram)
+    return torch.sqrt(torch.clamp_min(squared_norm, 0.0))
+
+
+ADAPTIVE_A_MODES = ("frozen", "tangent", "live")
+
+
+def decompose_adaptive_a_gradient(
+    gradient: Tensor, shared_a: Tensor
+) -> dict[str, Tensor]:
+    """Return the exact Frozen/Tangent/Live shared-A candidates."""
+    if gradient.shape != shared_a.shape:
+        raise ValueError("gradient and shared_a must have the same shape")
+    q_t, _ = canonical_down_projection(shared_a.detach())
+    q_t = q_t.to(device=gradient.device, dtype=gradient.dtype)
+    tangent = (gradient @ q_t.t()) @ q_t
+    perpendicular = gradient - tangent
+    return {
+        "frozen": torch.zeros_like(gradient),
+        "tangent": tangent,
+        "live": gradient,
+        "perpendicular": perpendicular,
+    }
+
+
+def project_functional_halfspace_directions(
+    proposed_directions: Sequence[Tensor],
+    stability_gradients: Sequence[Tensor],
+    shared_as: Sequence[Tensor],
+    conflict_tol: float = 1e-12,
+    conflict_cosine: float = 0.0,
+    normal_tol: float = 1e-12,
+    min_normal_fraction: float = 1e-4,
+) -> dict:
+    """Project shared-A directions onto one global functional halfspace."""
+    branch_count = len(proposed_directions)
+    if branch_count == 0:
+        raise ValueError("at least one shared-A direction is required")
+    if not 0.0 <= conflict_cosine <= 1.0:
+        raise ValueError("conflict_cosine must be in [0, 1]")
+    if len(stability_gradients) != branch_count or len(shared_as) != branch_count:
+        raise ValueError("direction, stability, and shared-A counts must match")
+    for direction, stability_gradient, shared_a in zip(
+        proposed_directions, stability_gradients, shared_as
+    ):
+        if not all(
+            isinstance(tensor, Tensor)
+            for tensor in (direction, stability_gradient, shared_a)
+        ):
+            raise ValueError("directions, stability gradients, and shared As must be tensors")
+        if (
+            direction.shape != stability_gradient.shape
+            or direction.shape != shared_a.shape
+        ):
+            raise ValueError(
+                "direction, stability gradient, and shared-A shapes must match"
+            )
+        if (
+            direction.device != stability_gradient.device
+            or direction.device != shared_a.device
+        ):
+            raise ValueError(
+                "direction, stability gradient, and shared-A devices must match"
+            )
+        if (
+            direction.dtype != stability_gradient.dtype
+            or direction.dtype != shared_a.dtype
+        ):
+            raise ValueError(
+                "direction, stability gradient, and shared-A dtypes must match"
+            )
+        if direction.dtype not in (torch.float32, torch.float64):
+            raise ValueError(
+                "functional halfspace projection tensors must use "
+                "torch.float32 or torch.float64"
+            )
+
+    proposed_components = [
+        decompose_adaptive_a_gradient(direction, shared_a)
+        for direction, shared_a in zip(proposed_directions, shared_as)
+    ]
+    stability_components = [
+        decompose_adaptive_a_gradient(stability_gradient, shared_a)
+        for stability_gradient, shared_a in zip(stability_gradients, shared_as)
+    ]
+
+    pre_inner = sum(
+        float(
+            torch.sum(
+                stability_gradient.to(dtype=torch.float64)
+                * direction.to(dtype=torch.float64)
+            )
+        )
+        for stability_gradient, direction in zip(
+            stability_gradients, proposed_directions
+        )
+    )
+    stability_norm2 = sum(
+        float(torch.sum(stability_gradient.to(dtype=torch.float64).square()))
+        for stability_gradient in stability_gradients
+    )
+    normal_norm2 = sum(
+        float(
+            torch.sum(component["perpendicular"].to(dtype=torch.float64).square())
+        )
+        for component in stability_components
+    )
+    normal_fraction = (
+        normal_norm2 / stability_norm2 if stability_norm2 > 0.0 else 0.0
+    )
+    proposed_norm2 = sum(
+        float(torch.sum(component["live"].to(dtype=torch.float64).square()))
+        for component in proposed_components
+    )
+    pre_cosine = (
+        pre_inner / math.sqrt(stability_norm2 * proposed_norm2)
+        if stability_norm2 > 0.0 and proposed_norm2 > 0.0
+        else 0.0
+    )
+
+    directions = [direction.clone() for direction in proposed_directions]
+    mode = "identity"
+    correction_ratio = 0.0
+    if stability_norm2 <= normal_tol:
+        mode = "degenerate"
+    elif pre_inner < -conflict_tol and pre_cosine < -conflict_cosine:
+        if (
+            normal_norm2 > normal_tol
+            and normal_fraction >= min_normal_fraction
+        ):
+            correction_scale = pre_inner / normal_norm2
+            directions = [
+                direction - correction_scale * component["perpendicular"]
+                for direction, component in zip(directions, stability_components)
+            ]
+            mode = "normal"
+            correction_norm2 = correction_scale * correction_scale * normal_norm2
+        else:
+            correction_scale = pre_inner / stability_norm2
+            directions = [
+                direction - correction_scale * stability_gradient
+                for direction, stability_gradient in zip(
+                    directions, stability_gradients
+                )
+            ]
+            mode = "full"
+            correction_norm2 = correction_scale * correction_scale * stability_norm2
+        if proposed_norm2 > 0.0:
+            correction_ratio = math.sqrt(correction_norm2 / proposed_norm2)
+
+    post_inner = sum(
+        float(
+            torch.sum(
+                stability_gradient.to(dtype=torch.float64)
+                * direction.to(dtype=torch.float64)
+            )
+        )
+        for stability_gradient, direction in zip(stability_gradients, directions)
+    )
+    return {
+        "directions": directions,
+        "mode": mode,
+        "pre_inner": pre_inner,
+        "pre_cosine": pre_cosine,
+        "post_inner": post_inner,
+        "normal_fraction": normal_fraction,
+        "correction_ratio": correction_ratio,
+    }
+
+
+def signed_gradient_utility(
+    candidate: Tensor, control_gradient: Tensor, eps: float = 1e-8
+) -> Tensor:
+    """Cosine agreement between a candidate update and held-out gradient."""
+    if candidate.shape != control_gradient.shape:
+        raise ValueError("candidate and control_gradient must have the same shape")
+    if eps <= 0:
+        raise ValueError("eps must be positive")
+    numerator = torch.sum(candidate * control_gradient)
+    denominator = (
+        torch.linalg.vector_norm(candidate)
+        * torch.linalg.vector_norm(control_gradient)
+    )
+    if bool(denominator.detach() <= eps):
+        return numerator.new_zeros(())
+    return numerator / (denominator + eps)
+
+
+def crossfit_dot_utility(
+    train_candidate: Tensor,
+    control_gradient: Tensor,
+    control_candidate: Tensor,
+    train_gradient: Tensor,
+    step_size: float = 1.0,
+) -> Tensor:
+    """Return the symmetric first-order held-out loss decrease."""
+    if train_candidate.shape != control_gradient.shape:
+        raise ValueError("train candidate and control gradient shapes must match")
+    if control_candidate.shape != train_gradient.shape:
+        raise ValueError("control candidate and train gradient shapes must match")
+    if step_size < 0:
+        raise ValueError("step_size must be non-negative")
+    return 0.5 * step_size * (
+        torch.sum(train_candidate * control_gradient)
+        + torch.sum(control_candidate * train_gradient)
+    )
+
+
+def weighted_operator_risk(
+    historical_up: Tensor,
+    shared_a: Tensor,
+    delta_a: Tensor,
+    input_rms: Tensor,
+    eps: float = 1e-8,
+) -> Tensor:
+    """Exact one-step normalized historical-operator drift under a sketch."""
+    if shared_a.shape != delta_a.shape:
+        raise ValueError("shared_a and delta_a must have the same shape")
+    if historical_up.shape[1] != shared_a.shape[0]:
+        raise ValueError("historical_up and shared_a ranks must match")
+    if input_rms.ndim != 1 or input_rms.shape[0] != shared_a.shape[1]:
+        raise ValueError("input_rms must match the shared-A input dimension")
+    if eps <= 0:
+        raise ValueError("eps must be positive")
+    dtype = shared_a.dtype
+    device = shared_a.device
+    historical_up = historical_up.to(device=device, dtype=dtype)
+    input_rms = input_rms.to(device=device, dtype=dtype)
+    a_hat = shared_a / (torch.linalg.vector_norm(shared_a) + eps)
+    updated_a = shared_a - delta_a
+    updated_a_hat = updated_a / (torch.linalg.vector_norm(updated_a) + eps)
+    weighted_delta = (updated_a_hat - a_hat) * input_rms.unsqueeze(0)
+    weighted_reference = a_hat * input_rms.unsqueeze(0)
+    drift = low_rank_product_frobenius_norm(historical_up, weighted_delta, eps)
+    reference = low_rank_product_frobenius_norm(
+        historical_up, weighted_reference, eps
+    )
+    return drift.square() / (reference.square() + eps)
+
+
+def effective_risk_budget(
+    layer_candidates: list[dict[str, dict[str, float]]],
+    configured_budget: float,
+    risk_budget_mode: str = "absolute",
+) -> float:
+    """Resolve an absolute budget or a fraction of the all-live risk."""
+    if configured_budget < 0:
+        raise ValueError("configured_budget must be non-negative")
+    if risk_budget_mode not in ("absolute", "relative"):
+        raise ValueError(
+            "risk_budget_mode must be absolute or relative"
+        )
+    if risk_budget_mode == "absolute":
+        return float(configured_budget)
+    live_risk = sum(
+        float(layer["live"]["risk"]) for layer in layer_candidates
+    )
+    return float(configured_budget) * live_risk
+
+
+def choose_risk_budgeted_modes(
+    layer_candidates: list[dict[str, dict[str, float]]],
+    risk_budget: float,
+    eps: float = 1e-12,
+) -> dict:
+    """Solve the small multiple-choice risk budget via Pareto pruning."""
+    if risk_budget < 0:
+        raise ValueError("risk_budget must be non-negative")
+    frontier = [(0.0, 0.0, ())]
+    for layer in layer_candidates:
+        missing = set(ADAPTIVE_A_MODES) - set(layer)
+        if missing:
+            raise ValueError("missing Adaptive-A modes: {}".format(sorted(missing)))
+        expanded = []
+        for total_risk, total_utility, modes in frontier:
+            for mode in ADAPTIVE_A_MODES:
+                risk = float(layer[mode]["risk"])
+                utility = float(layer[mode]["utility"])
+                if risk < 0:
+                    raise ValueError("candidate risk must be non-negative")
+                next_risk = total_risk + risk
+                if next_risk <= risk_budget + eps:
+                    expanded.append(
+                        (next_risk, total_utility + utility, modes + (mode,))
+                    )
+        expanded.sort(key=lambda item: (item[0], -item[1], item[2]))
+        frontier = []
+        best_utility = float("-inf")
+        for state in expanded:
+            if state[1] > best_utility + eps:
+                frontier.append(state)
+                best_utility = state[1]
+        if not frontier:
+            raise RuntimeError("no Adaptive-A candidate satisfies the risk budget")
+    selected = max(frontier, key=lambda item: (item[1], -item[0], item[2]))
+    return {
+        "modes": list(selected[2]),
+        "selected_risk": selected[0],
+        "selected_utility": selected[1],
+    }
+
+
+def choose_pareto_knee_modes(
+    layer_candidates: list[dict[str, dict[str, float]]],
+    eps: float = 1e-12,
+) -> dict:
+    """Choose the Pareto point nearest normalized ideal risk and utility."""
+    frontier = [(0.0, 0.0, ())]
+    for layer in layer_candidates:
+        missing = set(ADAPTIVE_A_MODES) - set(layer)
+        if missing:
+            raise ValueError("missing Adaptive-A modes: {}".format(sorted(missing)))
+        expanded = []
+        for total_risk, total_utility, modes in frontier:
+            for mode in ADAPTIVE_A_MODES:
+                risk = float(layer[mode]["risk"])
+                utility = float(layer[mode]["utility"])
+                if risk < 0:
+                    raise ValueError("candidate risk must be non-negative")
+                expanded.append(
+                    (total_risk + risk, total_utility + utility, modes + (mode,))
+                )
+        expanded.sort(key=lambda item: (item[0], -item[1], item[2]))
+        frontier = []
+        best_utility = float("-inf")
+        for state in expanded:
+            if state[1] > best_utility + eps:
+                frontier.append(state)
+                best_utility = state[1]
+    if not frontier:
+        raise RuntimeError("no Adaptive-A candidates are available")
+
+    min_risk = min(state[0] for state in frontier)
+    max_risk = max(state[0] for state in frontier)
+    min_utility = min(state[1] for state in frontier)
+    max_utility = max(state[1] for state in frontier)
+    risk_span = max_risk - min_risk
+    utility_span = max_utility - min_utility
+
+    def ideal_distance(state):
+        risk, utility, modes = state
+        normalized_risk = (
+            (risk - min_risk) / risk_span if risk_span > eps else 0.0
+        )
+        utility_regret = (
+            (max_utility - utility) / utility_span
+            if utility_span > eps
+            else 0.0
+        )
+        return (
+            normalized_risk * normalized_risk
+            + utility_regret * utility_regret,
+            risk,
+            -utility,
+            modes,
+        )
+
+    selected = min(frontier, key=ideal_distance)
+    live_risk = sum(float(layer["live"]["risk"]) for layer in layer_candidates)
+    implied_ratio = selected[0] / live_risk if live_risk > eps else 0.0
+    return {
+        "modes": list(selected[2]),
+        "selected_risk": selected[0],
+        "selected_utility": selected[1],
+        "implied_risk_ratio": implied_ratio,
+        "pareto_points": len(frontier),
+    }
+
+
+def adaptive_a_layer_gradient(
+    *,
+    gradient_q: Tensor,
+    gradient_v: Tensor,
+    shared_a_q: Tensor,
+    shared_a_v: Tensor,
+    current_up_q: Tensor,
+    current_up_v: Tensor,
+    historical_up_q: Tensor | None,
+    historical_up_v: Tensor | None,
+    scale: Tensor,
+    stability_weight: float,
+    gate_floor: float,
+    momentum: float,
+    gate_formula: str = "ratio",
+    eps: float = 1e-8,
+    previous_gate: Tensor | float | None = None,
+    fixed_gate: Tensor | float | None = None,
+) -> dict[str, Tensor]:
+    """Gate one Q/V layer's coordinate-changing shared-A gradients."""
+    if not 0.0 <= gate_floor <= 1.0:
+        raise ValueError("gate_floor must be in [0, 1]")
+    if not 0.0 <= momentum < 1.0:
+        raise ValueError("momentum must be in [0, 1)")
+    if stability_weight < 0:
+        raise ValueError("stability_weight must be non-negative")
+    if gate_formula not in ("ratio", "squared_ratio"):
+        raise ValueError("gate_formula must be ratio or squared_ratio")
+    if eps <= 0:
+        raise ValueError("eps must be positive")
+    if scale.numel() != 1:
+        raise ValueError("scale must be scalar")
+    if (historical_up_q is None) != (historical_up_v is None):
+        raise ValueError("historical Q and V projections must be supplied together")
+
+    def _decompose(gradient, shared_a):
+        q_t, _ = canonical_down_projection(shared_a.detach())
+        q_t = q_t.to(device=gradient.device, dtype=gradient.dtype)
+        parallel = (gradient @ q_t.t()) @ q_t
+        return parallel, gradient - parallel
+
+    parallel_q, perpendicular_q = _decompose(gradient_q, shared_a_q)
+    parallel_v, perpendicular_v = _decompose(gradient_v, shared_a_v)
+    zero_perpendicular = bool(
+        torch.linalg.vector_norm(perpendicular_q).detach() <= eps
+        and torch.linalg.vector_norm(perpendicular_v).detach() <= eps
+    )
+    has_history = historical_up_q is not None
+    one = gradient_q.new_ones(())
+    if not has_history:
+        return {
+            "gradient_q": gradient_q,
+            "gradient_v": gradient_v,
+            "parallel_q_gradient": parallel_q,
+            "parallel_v_gradient": parallel_v,
+            "perpendicular_q_gradient": perpendicular_q,
+            "perpendicular_v_gradient": perpendicular_v,
+            "current_impact": gradient_q.new_zeros(()),
+            "historical_impact": gradient_q.new_zeros(()),
+            "raw_gate": one,
+            "gate": one,
+            "perpendicular_retention": one,
+        }
+    if zero_perpendicular:
+        raw_gate = one
+        if fixed_gate is not None:
+            gate = torch.as_tensor(
+                fixed_gate, device=raw_gate.device, dtype=raw_gate.dtype
+            )
+            if not bool(torch.isfinite(gate)) or not 0.0 <= float(gate) <= 1.0:
+                raise ValueError("fixed_gate must be finite and in [0, 1]")
+        elif previous_gate is None:
+            gate = raw_gate
+        else:
+            previous_gate = torch.as_tensor(
+                previous_gate, device=raw_gate.device, dtype=raw_gate.dtype
+            )
+            gate = momentum * previous_gate + (
+                1.0 - momentum
+            ) * raw_gate
+        return {
+            "gradient_q": gradient_q,
+            "gradient_v": gradient_v,
+            "parallel_q_gradient": parallel_q,
+            "parallel_v_gradient": parallel_v,
+            "perpendicular_q_gradient": perpendicular_q,
+            "perpendicular_v_gradient": perpendicular_v,
+            "current_impact": gradient_q.new_zeros(()),
+            "historical_impact": gradient_q.new_zeros(()),
+            "raw_gate": raw_gate,
+            "gate": gate,
+            "perpendicular_retention": gate,
+        }
+
+    scalar_scale = scale.detach().to(
+        device=gradient_q.device, dtype=gradient_q.dtype
+    ).reshape(())
+    current_q = scalar_scale * current_up_q.to(
+        device=gradient_q.device, dtype=gradient_q.dtype
+    )
+    current_v = scalar_scale * current_up_v.to(
+        device=gradient_v.device, dtype=gradient_v.dtype
+    )
+    historical_q = historical_up_q.to(
+        device=gradient_q.device, dtype=gradient_q.dtype
+    ) / (torch.linalg.vector_norm(shared_a_q.detach()) + eps)
+    historical_v = historical_up_v.to(
+        device=gradient_v.device, dtype=gradient_v.dtype
+    ) / (torch.linalg.vector_norm(shared_a_v.detach()) + eps)
+    current_impact = torch.sqrt(
+        low_rank_product_frobenius_norm(current_q, perpendicular_q, eps).square()
+        + low_rank_product_frobenius_norm(current_v, perpendicular_v, eps).square()
+    )
+    historical_impact = torch.sqrt(
+        low_rank_product_frobenius_norm(
+            historical_q, perpendicular_q, eps
+        ).square()
+        + low_rank_product_frobenius_norm(
+            historical_v, perpendicular_v, eps
+        ).square()
+    )
+    if gate_formula == "ratio":
+        numerator = current_impact
+        denominator = current_impact + stability_weight * historical_impact
+    else:
+        numerator = current_impact.square()
+        denominator = numerator + stability_weight * historical_impact.square()
+    raw_gate = torch.clamp(
+        numerator / (denominator + eps), min=gate_floor, max=1.0
+    )
+    if fixed_gate is not None:
+        gate = torch.as_tensor(
+            fixed_gate, device=raw_gate.device, dtype=raw_gate.dtype
+        )
+        if not bool(torch.isfinite(gate)) or not 0.0 <= float(gate) <= 1.0:
+            raise ValueError("fixed_gate must be finite and in [0, 1]")
+    elif previous_gate is None:
+        gate = raw_gate
+    else:
+        previous_gate = torch.as_tensor(
+            previous_gate, device=raw_gate.device, dtype=raw_gate.dtype
+        )
+        gate = momentum * previous_gate + (
+            1.0 - momentum
+        ) * raw_gate
+    return {
+        "gradient_q": parallel_q + gate * perpendicular_q,
+        "gradient_v": parallel_v + gate * perpendicular_v,
+        "parallel_q_gradient": parallel_q,
+        "parallel_v_gradient": parallel_v,
+        "perpendicular_q_gradient": perpendicular_q,
+        "perpendicular_v_gradient": perpendicular_v,
+        "current_impact": current_impact,
+        "historical_impact": historical_impact,
+        "raw_gate": raw_gate,
+        "gate": gate,
+        "perpendicular_retention": gate,
+    }
+
+
+def canonicalize_effective_up_projection(
+    up_raw: Tensor, triangular_r: Tensor
+) -> Tensor:
+    """Convert a raw cumulative up projection into canonical coordinates.
+
+    If ``A = R^T Q^T``, the effective operator ``H_raw @ A`` equals
+    ``(H_raw @ R^T) Q^T``; the canonical up projection is ``H_raw @ R^T``.
+    """
+    return up_raw @ triangular_r.t()
+
+
+def gauge_align_up_projection(
+    cumulative_up: Tensor, q_old_t: Tensor, q_new_t: Tensor
+) -> Tensor:
+    """Closed-form best approximation of the old operator in the new basis.
+
+    ``H_old Q_old^T`` is approximated by ``H_aligned Q_new^T`` with
+    ``H_aligned = H_old (Q_old^T Q_new)``, the least-squares solution of
+    ``min_H ||H_old Q_old^T - H Q_new^T||_F^2``.
+    """
+    return cumulative_up @ (q_old_t @ q_new_t.t())
+
+
+def gauge_projection_residual(
+    cumulative_up: Tensor, q_old_t: Tensor, q_new_t: Tensor
+) -> Tensor:
+    """Frobenius norm of the part of the old operator outside ``span(Q_new)``.
+
+    This equals ``||H_old Q_old^T (I - Q_new Q_new^T)||_F``.
+    """
+    identity = torch.eye(
+        q_new_t.shape[1], device=q_new_t.device, dtype=torch.float64
+    )
+    projector = q_new_t.double().t() @ q_new_t.double()
+    old_operator = cumulative_up.double() @ q_old_t.double()
+    residual = old_operator @ (identity - projector)
+    return residual.norm().to(cumulative_up.dtype)
+
+
+def union_svd_factors(
+    left_factors: Sequence[Tensor],
+    right_factors: Sequence[Tensor],
+    rank: int,
+    eps: float = 1e-12,
+) -> tuple[Tensor, Tensor, Tensor, float]:
+    """Fixed-rank optimal approximation of ``M = sum_i L_i R_i^T``.
+
+    Returns ``(Q^T, H, singular_values, relative_truncation_error)`` such that
+    ``H Q^T`` is the rank-``rank`` truncated SVD of ``M``.  The dense ``d x d``
+    matrix is never materialized: the joint left/right factors are QR-reduced
+    first and only the small ``K x K`` core is decomposed.
+    """
+    if not left_factors:
+        raise ValueError("at least one left factor is required")
+    if len(left_factors) != len(right_factors):
+        raise ValueError("left and right factor counts must match")
+    left = torch.cat([t.to(torch.float64) for t in left_factors], dim=1)
+    right = torch.cat([t.to(torch.float64) for t in right_factors], dim=1)
+    if left.ndim != 2 or right.ndim != 2:
+        raise ValueError("factors must be 2D matrices")
+    if left.shape[0] != right.shape[0]:
+        raise ValueError(
+            "left and right factors must share the output dimension; "
+            "got {} vs {}".format(left.shape[0], right.shape[0])
+        )
+    if left.shape[1] != right.shape[1]:
+        raise ValueError(
+            "left and right factors must share the joint rank; "
+            "got {} vs {}".format(left.shape[1], right.shape[1])
+        )
+    k = left.shape[1]
+    if rank <= 0 or rank > k:
+        raise ValueError("rank must satisfy 0 < rank <= {}".format(k))
+
+    q_l, r_l = torch.linalg.qr(left, mode="reduced")
+    q_r, r_r = torch.linalg.qr(right, mode="reduced")
+    core = r_l @ r_r.t()
+    u_c, s, v_c = torch.linalg.svd(core, full_matrices=False)
+    u_full = q_l @ u_c
+    v_full = q_r @ v_c.t()
+
+    canonical_down = v_full[:, :rank].t().contiguous().float()
+    cumulative_up = (u_full[:, :rank] * s[:rank]).contiguous().float()
+    total_sq = (s.square().sum()).clamp_min(eps)
+    trunc_sq = (s[rank:].square().sum()).clamp_min(0.0)
+    relative_error = float((trunc_sq / total_sq).sqrt())
+    return canonical_down, cumulative_up, s.float(), relative_error
+
+
+def joint_live_a_boundary_factors(old_a, old_g, current_a, current_up, eps=1e-8):
+    """Represent the capped historical-plus-current operator at fixed rank."""
+    rank, dim = current_a.shape
+    if old_a.shape != (rank, dim) or old_g.shape != (dim, rank):
+        raise ValueError("old A/G shapes must match the current branch")
+    if current_up.shape != (dim, rank):
+        raise ValueError("current up shape must match the current A")
+    if not all(torch.isfinite(t).all() for t in (old_a, old_g, current_a, current_up)):
+        raise ValueError("joint boundary factors must be finite")
+    old_norm = torch.linalg.vector_norm(old_a.double())
+    current_norm = torch.linalg.vector_norm(current_a.double())
+    if old_norm <= eps or current_norm <= eps:
+        raise ValueError("old and current A must have nonzero norm")
+    canonical_down, canonical_up, _, relative_error = union_svd_factors(
+        [old_g.double() / old_norm, current_up.double() / current_norm],
+        [old_a.double().t(), current_a.double().t()],
+        rank,
+    )
+    root_rank = math.sqrt(rank)
+    shared_a = canonical_down * (current_norm.float() / root_rank)
+    merged_g = canonical_up * root_rank
+    return shared_a, merged_g, {
+        "relative_truncation_error": relative_error,
+    }
+
+
+def migrate_sa_state_v1_to_v2(filepath: str, force: bool = False) -> dict:
+    """Explicitly migrate a legacy v1 artifact to the v2 cumulative state.
+
+    The original ``sa_state.pt`` is moved to ``sa_state.pt.v1`` and the
+    per-task B files are left untouched as a backup.  The new state contains
+    ``canonical_down`` / ``cumulative_up`` / ``triangular_r`` and is the exact
+    canonicalization of the v1 bank at its final shared A.
+    """
+    state_path = _join_path(filepath, SA_STATE_FILENAME)
+    state = torch.load(state_path, map_location="cpu", weights_only=True)
+    if int(state.get("version", -1)) != SA_STATE_VERSION_LEGACY:
+        raise ValueError(
+            "artifact is not legacy v1 (version={}); nothing to migrate".format(
+                state.get("version", -1)
+            )
+        )
+    task_ids = sorted(int(task_id) for task_id in state.get("scales", {}))
+    if not task_ids:
+        raise ValueError("legacy artifact has no saved tasks")
+    shared_a = state["shared_a"]
+    b_lists = []
+    for task_id in task_ids:
+        path = _join_path(filepath, "sa_lora_w_b_{}.pt".format(task_id))
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                "missing B file for task {}".format(task_id)
+            )
+        b_lists.append(
+            torch.load(path, map_location="cpu", weights_only=True)
+        )
+    canonical_down = []
+    cumulative_up = []
+    triangular_r = []
+    for branch in range(len(shared_a)):
+        h_raw = fold_cumulative_up_projection(
+            shared_a[branch],
+            [b_list[branch] for b_list in b_lists],
+            [state["scales"][task_id] for task_id in task_ids],
+        )
+        q_t, r = canonical_down_projection(shared_a[branch])
+        canonical_down.append(q_t)
+        cumulative_up.append(canonicalize_effective_up_projection(h_raw, r))
+        triangular_r.append(r)
+    new_state = {
+        "version": SA_STATE_VERSION,
+        "task_id": len(task_ids),
+        "rank": int(shared_a[0].shape[0]),
+        "canonical_down": canonical_down,
+        "cumulative_up": cumulative_up,
+        "triangular_r": triangular_r,
+        "migrated_from": {
+            "version": SA_STATE_VERSION_LEGACY,
+            "task_ids": task_ids,
+        },
+    }
+    backup_path = state_path + ".v1"
+    if os.path.exists(backup_path):
+        if not force:
+            raise FileExistsError(
+                "backup already exists: {}; pass --force to overwrite".format(
+                    backup_path
+                )
+            )
+        os.remove(backup_path)
+    os.replace(state_path, backup_path)
+    torch.save(new_state, state_path)
+    return new_state
+
+
+def migrate_sa_state_v2_to_v3(
+    filepath: str, rank: int | None = None, force: bool = False
+) -> dict:
+    """Explicitly migrate a v2 gauge state to a v3 union-SVD state.
+
+    The old ``sa_state.pt`` is backed up to ``sa_state.pt.v2``.  Each branch's
+    exact historical operator ``H Q^T`` is re-factorized with a fixed-rank
+    union SVD at ``rank`` (defaults to the state's stored rank).  Truncating
+    below the stored rank is intentionally lossy; this is an explicit,
+    non-silent migration.
+    """
+    state_path = _join_path(filepath, SA_STATE_FILENAME)
+    state = torch.load(state_path, map_location="cpu", weights_only=True)
+    if int(state.get("version", -1)) != SA_STATE_VERSION:
+        raise ValueError(
+            "artifact is not v2 gauge (version={}); nothing to migrate".format(
+                state.get("version", -1)
+            )
+        )
+    old_rank = int(state["rank"])
+    target_rank = int(rank) if rank is not None else old_rank
+    if target_rank <= 0 or target_rank > old_rank:
+        raise ValueError(
+            "target rank must satisfy 0 < rank <= {}".format(old_rank)
+        )
+    canonical_down = []
+    cumulative_up = []
+    triangular_r = []
+    for h, q_t in zip(state["cumulative_up"], state["canonical_down"]):
+        q_new, h_new, _, _ = union_svd_factors(
+            [h], [q_t.t()], rank=target_rank
+        )
+        canonical_down.append(q_new)
+        cumulative_up.append(h_new)
+        triangular_r.append(torch.eye(target_rank, dtype=torch.float32))
+    new_state = {
+        "version": SA_STATE_VERSION_UNION,
+        "task_id": int(state["task_id"]),
+        "rank": target_rank,
+        "merge_mode": SA_MERGE_MODE_UNION_SVD,
+        "canonical_down": canonical_down,
+        "cumulative_up": cumulative_up,
+        "triangular_r": triangular_r,
+        "migrated_from": {
+            "version": SA_STATE_VERSION,
+            "old_rank": old_rank,
+        },
+    }
+    backup_path = state_path + ".v2"
+    if os.path.exists(backup_path):
+        if not force:
+            raise FileExistsError(
+                "backup already exists: {}; pass --force to overwrite".format(
+                    backup_path
+                )
+            )
+        os.remove(backup_path)
+    os.replace(state_path, backup_path)
+    torch.save(new_state, state_path)
+    return new_state
+
+
+def migrate_sa_state_v1_to_v4(
+    filepath: str, force: bool = False
+) -> dict:
+    """Explicitly migrate a v1 EXP-009 artifact to v4 Live-A Aggregate-B.
+
+    Computes ``G = sum_i s_i B_i / ||B_i||`` from the saved B files and the
+    final shared A, then writes a v4 ``sa_state.pt``.  The original v1 state
+    is backed up to ``sa_state.pt.v1`` and the per-task B files are kept as a
+    backup.
+    """
+    state_path = _join_path(filepath, SA_STATE_FILENAME)
+    state = torch.load(state_path, map_location="cpu", weights_only=True)
+    if int(state.get("version", -1)) != SA_STATE_VERSION_LEGACY:
+        raise ValueError(
+            "artifact is not legacy v1 (version={}); nothing to migrate".format(
+                state.get("version", -1)
+            )
+        )
+    task_ids = sorted(int(task_id) for task_id in state.get("scales", {}))
+    if not task_ids:
+        raise ValueError("legacy artifact has no saved tasks")
+    shared_a = [w.detach().cpu().float() for w in state["shared_a"]]
+    branches = len(shared_a)
+    aggregate_up = []
+    for branch in range(branches):
+        total = None
+        for task_id in task_ids:
+            path = _join_path(
+                filepath, "sa_lora_w_b_{}.pt".format(task_id)
+            )
+            b_list = torch.load(path, map_location="cpu", weights_only=True)
+            b = b_list[branch].float()
+            s = state["scales"][task_id].reshape(())
+            term = s * b / (torch.linalg.vector_norm(b) + 1e-8)
+            total = term if total is None else total + term
+        aggregate_up.append(total)
+    new_state = {
+        "version": SA_STATE_VERSION_LIVE_A,
+        "task_id": len(task_ids),
+        "rank": shared_a[0].shape[0],
+        "merge_mode": SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
+        "aggregate_up": aggregate_up,
+        "shared_a": shared_a,
+        "history_groups": 1,
+        "coordinate_aligned": False,
+        "absorb_mode": SA_ABSORB_MODE_NORMALIZED,
+        "migrated_from": {"version": SA_STATE_VERSION_LEGACY},
+    }
+    backup_path = state_path + ".v1"
+    if os.path.exists(backup_path):
+        if not force:
+            raise FileExistsError(
+                "backup already exists: {}; pass --force to overwrite".format(
+                    backup_path
+                )
+            )
+        os.remove(backup_path)
+    os.replace(state_path, backup_path)
+    torch.save(new_state, state_path)
+    return new_state
+
+
+class _SharedAQKV(nn.Module):
+    """QKV wrapper: base qkv + shared-A LoRA bank with per-task B matrices."""
+
+    def __init__(
+        self,
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        saved_b_q,
+        saved_b_v,
+        scaling_cur,
+        scaling_prev,
+        layer_index,
+        normalize_current_branch=False,
+    ):
+        super().__init__()
+        self.qkv = qkv
+        self.a_q = a_q
+        self.a_v = a_v
+        self.b_q = b_q
+        self.b_v = b_v
+        self.scaling_cur = scaling_cur
+        self.scaling_prev = scaling_prev
+        self.layer_index = layer_index
+        self.normalize_current_branch = bool(normalize_current_branch)
+        self.dim = qkv.in_features
+        self.saved_b_q = list(saved_b_q)
+        self.saved_b_v = list(saved_b_v)
+
+    def _norm_lora(self, x, a_weight, b_weight):
+        denom = torch.norm(a_weight) * torch.norm(b_weight) + 1e-8
+        return F.linear(F.linear(x, a_weight), b_weight) / denom
+
+    def forward(self, x):
+        new_q = 0
+        new_v = 0
+        a_q_w = self.a_q.weight
+        a_v_w = self.a_v.weight
+
+        for idx, (b_q_w, b_v_w) in enumerate(
+            zip(self.saved_b_q, self.saved_b_v)
+        ):
+            b_q_w = b_q_w.to(device=x.device, dtype=x.dtype)
+            b_v_w = b_v_w.to(device=x.device, dtype=x.dtype)
+            scale_idx = min(idx, len(self.scaling_prev) - 1)
+            new_q = new_q + self.scaling_prev[scale_idx](
+                self._norm_lora(x, a_q_w, b_q_w)
+            )
+            new_v = new_v + self.scaling_prev[scale_idx](
+                self._norm_lora(x, a_v_w, b_v_w)
+            )
+
+        if self.normalize_current_branch:
+            current_q = self._norm_lora(x, a_q_w, self.b_q.weight)
+            current_v = self._norm_lora(x, a_v_w, self.b_v.weight)
+        else:
+            current_q = self.b_q(self.a_q(x))
+            current_v = self.b_v(self.a_v(x))
+        new_q = new_q + self.scaling_cur[0](current_q)
+        new_v = new_v + self.scaling_cur[0](current_v)
+
+        base_qkv = self.qkv(x)
+        qkv = torch.cat(
+            (
+                base_qkv[:, :, : self.dim] + new_q,
+                base_qkv[:, :, self.dim : -self.dim],
+                base_qkv[:, :, -self.dim :] + new_v,
+            ),
+            dim=-1,
+        )
+        return qkv
+
+
+class _CumulativeSharedAQKV(nn.Module):
+    """QKV wrapper for the canonical cumulative Shared-A state.
+
+    Historical tasks are represented by the exact effective operator
+    ``H @ Q^T`` (fixed while the current task trains).  The current task adds
+    its own raw LoRA branch ``scale * B(A x)``, matching the legacy v1
+    training-time semantics; the normalization is folded in only when the
+    task is saved into the cumulative state.
+    """
+
+    def __init__(
+        self,
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        h_q,
+        q_q_t,
+        h_v,
+        q_v_t,
+        scaling_cur,
+        layer_index,
+    ):
+        super().__init__()
+        self.qkv = qkv
+        self.a_q = a_q
+        self.a_v = a_v
+        self.b_q = b_q
+        self.b_v = b_v
+        self.scaling_cur = scaling_cur
+        self.layer_index = layer_index
+        self.dim = qkv.in_features
+        self.register_buffer("h_q", h_q.clone(), persistent=False)
+        self.register_buffer("q_q_t", q_q_t.clone(), persistent=False)
+        self.register_buffer("h_v", h_v.clone(), persistent=False)
+        self.register_buffer("q_v_t", q_v_t.clone(), persistent=False)
+
+    def forward(self, x):
+        new_q = F.linear(F.linear(x, self.q_q_t), self.h_q)
+        new_v = F.linear(F.linear(x, self.q_v_t), self.h_v)
+        new_q = new_q + self.scaling_cur[0](self.b_q(self.a_q(x)))
+        new_v = new_v + self.scaling_cur[0](self.b_v(self.a_v(x)))
+        qkv = self.qkv(x)
+        qkv[:, :, : self.dim] += new_q
+        qkv[:, :, -self.dim :] += new_v
+        return qkv
+
+
+class _CUOLowRankQKV(nn.Module):
+    """QKV wrapper with fixed CUO coordinates and task-local raw LoRA."""
+
+    def __init__(
+        self,
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        projection_q,
+        unified_up_q,
+        projection_v,
+        unified_up_v,
+        scaling_cur,
+        layer_index,
+        projected_gram_q=None,
+        projected_gram_v=None,
+    ):
+        super().__init__()
+        self.qkv = qkv
+        self.a_q = a_q
+        self.a_v = a_v
+        self.b_q = b_q
+        self.b_v = b_v
+        self.scaling_cur = scaling_cur
+        self.layer_index = layer_index
+        self.dim = qkv.in_features
+        self.register_buffer(
+            "projection_q", projection_q.detach().clone(), persistent=False
+        )
+        self.register_buffer(
+            "unified_up_q", unified_up_q.detach().clone(), persistent=False
+        )
+        self.register_buffer(
+            "projection_v", projection_v.detach().clone(), persistent=False
+        )
+        self.register_buffer(
+            "unified_up_v", unified_up_v.detach().clone(), persistent=False
+        )
+        rank = projection_q.shape[0]
+        if projected_gram_q is None:
+            projected_gram_q = torch.zeros(
+                rank,
+                rank,
+                dtype=projection_q.dtype,
+                device=projection_q.device,
+            )
+        if projected_gram_v is None:
+            projected_gram_v = torch.zeros(
+                rank,
+                rank,
+                dtype=projection_v.dtype,
+                device=projection_v.device,
+            )
+        self.register_buffer(
+            "projected_gram_q",
+            projected_gram_q.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "projected_gram_v",
+            projected_gram_v.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_cuo_gram_q",
+            torch.zeros(rank, rank, dtype=torch.float64, device=projection_q.device),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_cuo_cross_q",
+            torch.zeros(self.dim, rank, dtype=torch.float64, device=projection_q.device),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_cuo_gram_v",
+            torch.zeros(rank, rank, dtype=torch.float64, device=projection_v.device),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_cuo_cross_v",
+            torch.zeros(self.dim, rank, dtype=torch.float64, device=projection_v.device),
+            persistent=False,
+        )
+        self._cuo_collecting = False
+        self._cuo_count_q = 0
+        self._cuo_count_v = 0
+
+    def historical_output(self, x):
+        return (
+            F.linear(F.linear(x, self.projection_q), self.unified_up_q),
+            F.linear(F.linear(x, self.projection_v), self.unified_up_v),
+        )
+
+    def current_output(self, x):
+        return (
+            self.scaling_cur[0](self.b_q(self.a_q(x))),
+            self.scaling_cur[0](self.b_v(self.a_v(x))),
+        )
+
+    def begin_cuo_calibration(self):
+        self.clear_cuo_calibration()
+        self._cuo_collecting = True
+
+    def clear_cuo_calibration(self):
+        self._cuo_collecting = False
+        self._cuo_gram_q.zero_()
+        self._cuo_cross_q.zero_()
+        self._cuo_gram_v.zero_()
+        self._cuo_cross_v.zero_()
+        self._cuo_count_q = 0
+        self._cuo_count_v = 0
+
+    def _collect_branch_statistics(self, x, residual, projection, gram, cross):
+        flat_x = x.detach().reshape(-1, self.dim).to(dtype=torch.float64)
+        flat_y = residual.detach().reshape(-1, self.dim).to(dtype=torch.float64)
+        z = flat_x @ projection.detach().to(dtype=torch.float64).T
+        gram.add_(z.T @ z)
+        cross.add_(flat_y.T @ z)
+        return int(z.shape[0])
+
+    def consume_cuo_statistics(self):
+        statistics = (
+            (self._cuo_gram_q.clone(), self._cuo_cross_q.clone(), self._cuo_count_q),
+            (self._cuo_gram_v.clone(), self._cuo_cross_v.clone(), self._cuo_count_v),
+        )
+        self.clear_cuo_calibration()
+        return statistics
+
+    def forward(self, x):
+        historical_q, historical_v = self.historical_output(x)
+        current_q, current_v = self.current_output(x)
+        new_q = historical_q + current_q
+        new_v = historical_v + current_v
+        if self._cuo_collecting:
+            with torch.no_grad():
+                self._cuo_count_q += self._collect_branch_statistics(
+                    x,
+                    new_q,
+                    self.projection_q,
+                    self._cuo_gram_q,
+                    self._cuo_cross_q,
+                )
+                self._cuo_count_v += self._collect_branch_statistics(
+                    x,
+                    new_v,
+                    self.projection_v,
+                    self._cuo_gram_v,
+                    self._cuo_cross_v,
+                )
+        qkv = self.qkv(x)
+        qkv[:, :, : self.dim] += new_q
+        qkv[:, :, -self.dim :] += new_v
+        return qkv
+
+
+class _SensitivityBudgetedGQKV(nn.Module):
+    """Q/V LoRA wrapper with a fixed P and sensitivity-budgeted cumulative G."""
+
+    def __init__(
+        self,
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        projection_q,
+        unified_up_q,
+        projection_v,
+        unified_up_v,
+        scaling_cur,
+        layer_index,
+        projected_covariance_q=None,
+        projected_covariance_v=None,
+        sensitivity_q=None,
+        sensitivity_v=None,
+        covariance_count_q=0.0,
+        covariance_count_v=0.0,
+        sensitivity_count_q=0.0,
+        sensitivity_count_v=0.0,
+        train_projected=False,
+        risk_budget=0.05,
+    ):
+        super().__init__()
+        self.qkv = qkv
+        self.a_q = a_q
+        self.a_v = a_v
+        self.b_q = b_q
+        self.b_v = b_v
+        self.scaling_cur = scaling_cur
+        self.layer_index = int(layer_index)
+        self.dim = qkv.in_features
+        rank = projection_q.shape[0]
+        if projected_covariance_q is None:
+            projected_covariance_q = torch.zeros(rank, rank)
+        if projected_covariance_v is None:
+            projected_covariance_v = torch.zeros(rank, rank)
+        if sensitivity_q is None:
+            sensitivity_q = torch.zeros(self.dim)
+        if sensitivity_v is None:
+            sensitivity_v = torch.zeros(self.dim)
+        for name, tensor, shape in (
+            ("projection_q", projection_q, (rank, self.dim)),
+            ("projection_v", projection_v, (rank, self.dim)),
+            ("unified_up_q", unified_up_q, (self.dim, rank)),
+            ("unified_up_v", unified_up_v, (self.dim, rank)),
+            ("projected_covariance_q", projected_covariance_q, (rank, rank)),
+            ("projected_covariance_v", projected_covariance_v, (rank, rank)),
+            ("sensitivity_q", sensitivity_q, (self.dim,)),
+            ("sensitivity_v", sensitivity_v, (self.dim,)),
+        ):
+            if tuple(tensor.shape) != shape:
+                raise ValueError(
+                    "{} has shape {}; expected {}".format(
+                        name, tuple(tensor.shape), shape
+                    )
+                )
+            self.register_buffer(name, tensor.detach().clone(), persistent=False)
+        self.covariance_count_q = float(covariance_count_q)
+        self.covariance_count_v = float(covariance_count_v)
+        self.sensitivity_count_q = float(sensitivity_count_q)
+        self.sensitivity_count_v = float(sensitivity_count_v)
+        self.train_projected = bool(train_projected)
+        self.risk_budget = float(risk_budget)
+        for name in (
+            "covariance_count_q",
+            "covariance_count_v",
+            "sensitivity_count_q",
+            "sensitivity_count_v",
+        ):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError("{} must be finite and non-negative".format(name))
+        if self.train_projected:
+            if min(
+                self.covariance_count_q,
+                self.covariance_count_v,
+                self.sensitivity_count_q,
+                self.sensitivity_count_v,
+            ) <= 0:
+                raise ValueError("train-projected SBGC requires historical statistics")
+            if not 0 < self.risk_budget <= 1:
+                raise ValueError("train-projected SBGC requires a positive budget")
+        for suffix in ("q", "v"):
+            historical_energy = weighted_response_energy(
+                getattr(self, "unified_up_" + suffix),
+                getattr(self, "projected_covariance_" + suffix),
+                getattr(self, "sensitivity_" + suffix),
+            )
+            self.register_buffer(
+                "_historical_energy_" + suffix,
+                historical_energy.detach(),
+                persistent=False,
+            )
+            self.register_buffer(
+                "_projection_alpha_sum_" + suffix,
+                torch.zeros((), dtype=torch.float64),
+                persistent=False,
+            )
+            self.register_buffer(
+                "_projection_alpha_min_" + suffix,
+                torch.ones((), dtype=torch.float64),
+                persistent=False,
+            )
+            self.register_buffer(
+                "_projection_active_count_" + suffix,
+                torch.zeros((), dtype=torch.float64),
+                persistent=False,
+            )
+            setattr(self, "_projection_call_count_" + suffix, 0)
+
+        self.register_buffer(
+            "_sbgc_covariance_sum_q",
+            torch.zeros(rank, rank, dtype=torch.float64),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_sbgc_covariance_sum_v",
+            torch.zeros(rank, rank, dtype=torch.float64),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_sbgc_sensitivity_sum_q",
+            torch.zeros(self.dim, dtype=torch.float64),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_sbgc_sensitivity_sum_v",
+            torch.zeros(self.dim, dtype=torch.float64),
+            persistent=False,
+        )
+        self._sbgc_collecting = False
+        self._sbgc_covariance_count_q = 0
+        self._sbgc_covariance_count_v = 0
+        self._sbgc_sensitivity_count_q = 0
+        self._sbgc_sensitivity_count_v = 0
+        self._sbgc_outputs = None
+
+    def historical_output(self, x):
+        return (
+            F.linear(F.linear(x, self.projection_q), self.unified_up_q),
+            F.linear(F.linear(x, self.projection_v), self.unified_up_v),
+        )
+
+    def projected_current_up(self, suffix):
+        if suffix not in ("q", "v"):
+            raise ValueError("branch must be q or v")
+        raw_update = self.scaling_cur[0].param.reshape(()) * getattr(
+            self, "b_" + suffix
+        ).weight
+        if not self.train_projected:
+            return raw_update, raw_update.new_ones(()), raw_update.new_zeros(())
+        return project_current_response_update(
+            raw_update,
+            getattr(self, "projected_covariance_" + suffix),
+            getattr(self, "sensitivity_" + suffix),
+            getattr(self, "_historical_energy_" + suffix),
+            self.risk_budget,
+        )
+
+    def projection_training_stats(self, suffix):
+        count = getattr(self, "_projection_call_count_" + suffix)
+        if not count:
+            return {"mean_alpha": 1.0, "min_alpha": 1.0, "active_fraction": 0.0}
+        return {
+            "mean_alpha": float(getattr(self, "_projection_alpha_sum_" + suffix) / count),
+            "min_alpha": float(getattr(self, "_projection_alpha_min_" + suffix)),
+            "active_fraction": float(getattr(self, "_projection_active_count_" + suffix) / count),
+        }
+
+    def current_output(self, x):
+        if not self.train_projected:
+            return (
+                self.scaling_cur[0](self.b_q(self.a_q(x))),
+                self.scaling_cur[0](self.b_v(self.a_v(x))),
+            )
+        outputs = []
+        for suffix in ("q", "v"):
+            _, alpha, _ = self.projected_current_up(suffix)
+            if self.training and not self._sbgc_collecting:
+                with torch.no_grad():
+                    detached = alpha.detach().to(torch.float64)
+                    getattr(self, "_projection_alpha_sum_" + suffix).add_(detached)
+                    minimum = getattr(self, "_projection_alpha_min_" + suffix)
+                    minimum.copy_(torch.minimum(minimum, detached))
+                    getattr(self, "_projection_active_count_" + suffix).add_(
+                        (detached < 1.0 - 1e-7).to(torch.float64)
+                    )
+                    setattr(
+                        self,
+                        "_projection_call_count_" + suffix,
+                        getattr(self, "_projection_call_count_" + suffix) + 1,
+                    )
+            outputs.append(alpha.to(x.dtype) * self.scaling_cur[0](
+                getattr(self, "b_" + suffix)(getattr(self, "a_" + suffix)(x))
+            ))
+        return tuple(outputs)
+
+    def begin_sbgc_calibration(self):
+        self.clear_sbgc_calibration()
+        self._sbgc_collecting = True
+
+    def clear_sbgc_calibration(self):
+        self._sbgc_collecting = False
+        self._sbgc_covariance_sum_q.zero_()
+        self._sbgc_covariance_sum_v.zero_()
+        self._sbgc_sensitivity_sum_q.zero_()
+        self._sbgc_sensitivity_sum_v.zero_()
+        self._sbgc_covariance_count_q = 0
+        self._sbgc_covariance_count_v = 0
+        self._sbgc_sensitivity_count_q = 0
+        self._sbgc_sensitivity_count_v = 0
+        self._sbgc_outputs = None
+
+    def _collect_covariance(self, x, projection, destination):
+        flat = x.detach().reshape(-1, self.dim).to(dtype=torch.float64)
+        coordinates = flat @ projection.detach().to(dtype=torch.float64).t()
+        destination.add_(coordinates.t() @ coordinates)
+        return int(coordinates.shape[0])
+
+    def calibration_outputs(self):
+        if not self._sbgc_collecting or self._sbgc_outputs is None:
+            raise RuntimeError("SBGC calibration outputs are unavailable")
+        return self._sbgc_outputs
+
+    def accumulate_sensitivity(self, gradient_q, gradient_v, batch_size):
+        if not self._sbgc_collecting:
+            raise RuntimeError("SBGC sensitivity accumulation is not active")
+        if gradient_q.shape[-1] != self.dim or gradient_v.shape[-1] != self.dim:
+            raise ValueError("SBGC output gradient dimension mismatch")
+        if int(batch_size) <= 0:
+            raise ValueError("SBGC calibration batch size must be positive")
+        scale = float(batch_size)
+        q = gradient_q.detach().to(torch.float64) * scale
+        v = gradient_v.detach().to(torch.float64) * scale
+        q = q.reshape(-1, self.dim)
+        v = v.reshape(-1, self.dim)
+        self._sbgc_sensitivity_sum_q.add_(q.square().sum(dim=0))
+        self._sbgc_sensitivity_sum_v.add_(v.square().sum(dim=0))
+        self._sbgc_sensitivity_count_q += int(q.shape[0])
+        self._sbgc_sensitivity_count_v += int(v.shape[0])
+        self._sbgc_outputs = None
+
+    def consume_sbgc_statistics(self):
+        statistics = (
+            (
+                self._sbgc_covariance_sum_q.clone(),
+                self._sbgc_sensitivity_sum_q.clone(),
+                self._sbgc_covariance_count_q,
+                self._sbgc_sensitivity_count_q,
+            ),
+            (
+                self._sbgc_covariance_sum_v.clone(),
+                self._sbgc_sensitivity_sum_v.clone(),
+                self._sbgc_covariance_count_v,
+                self._sbgc_sensitivity_count_v,
+            ),
+        )
+        self.clear_sbgc_calibration()
+        return statistics
+
+    def forward(self, x):
+        historical_q, historical_v = self.historical_output(x)
+        current_q, current_v = self.current_output(x)
+        new_q = historical_q + current_q
+        new_v = historical_v + current_v
+        if self._sbgc_collecting:
+            self._sbgc_covariance_count_q += self._collect_covariance(
+                x, self.projection_q, self._sbgc_covariance_sum_q
+            )
+            self._sbgc_covariance_count_v += self._collect_covariance(
+                x, self.projection_v, self._sbgc_covariance_sum_v
+            )
+            self._sbgc_outputs = (new_q, new_v)
+        qkv = self.qkv(x)
+        qkv[:, :, : self.dim] += new_q
+        qkv[:, :, -self.dim :] += new_v
+        return qkv
+
+
+class _LiveAAggregateQKV(nn.Module):
+    """QKV wrapper for Live-A Aggregate-B.
+
+    Shared history uses the differentiable current A. Anchored history uses
+    the fixed task-start A/G operator while preserving input gradients.
+    The current branch retains raw ``scale * B(Ax)`` semantics unless
+    current-branch normalization is explicitly enabled.
+    """
+
+    def __init__(
+        self,
+        qkv,
+        a_q,
+        a_v,
+        b_q,
+        b_v,
+        aggregate_q,
+        aggregate_v,
+        scaling_cur,
+        layer_index,
+        history_groups=1,
+        historical_input_rms=None,
+        historical_input_count=0.0,
+        capture_input_sketch=False,
+        capture_effective_gradient=False,
+        recoverability_sketch_rank=16,
+        normalize_current_branch=False,
+        history_forward="shared",
+    ):
+        super().__init__()
+        self.qkv = qkv
+        self.a_q = a_q
+        self.a_v = a_v
+        self.b_q = b_q
+        self.b_v = b_v
+        self.scaling_cur = scaling_cur
+        self.layer_index = layer_index
+        self.dim = qkv.in_features
+        self.history_groups = int(history_groups)
+        self.capture_input_sketch = bool(capture_input_sketch)
+        self.capture_effective_gradient = bool(capture_effective_gradient)
+        self.normalize_current_branch = bool(normalize_current_branch)
+        if history_forward not in ("shared", "anchored"):
+            raise ValueError("history_forward must be shared or anchored")
+        self.history_forward = history_forward
+        self._effective_weight_gradient_q = None
+        self._effective_weight_gradient_v = None
+        sketch_rank = min(int(recoverability_sketch_rank), self.dim)
+        if sketch_rank <= 0:
+            raise ValueError("recoverability_sketch_rank must be positive")
+        if sketch_rank == self.dim:
+            output_sketch_q = torch.eye(self.dim)
+            output_sketch_v = torch.eye(self.dim)
+        else:
+            generator_q = torch.Generator(device="cpu")
+            generator_v = torch.Generator(device="cpu")
+            generator_q.manual_seed(7919 + 2 * int(layer_index))
+            generator_v.manual_seed(7920 + 2 * int(layer_index))
+            output_sketch_q = torch.randn(
+                self.dim, sketch_rank, generator=generator_q
+            ) / math.sqrt(sketch_rank)
+            output_sketch_v = torch.randn(
+                self.dim, sketch_rank, generator=generator_v
+            ) / math.sqrt(sketch_rank)
+        self.register_buffer(
+            "recoverability_output_sketch_q",
+            output_sketch_q,
+            persistent=False,
+        )
+        self.register_buffer(
+            "recoverability_output_sketch_v",
+            output_sketch_v,
+            persistent=False,
+        )
+        self.current_branch_enabled = True
+        if historical_input_rms is None:
+            historical_input_rms = torch.ones(self.dim)
+        self.register_buffer(
+            "historical_input_rms",
+            historical_input_rms.detach().clone().float(),
+            persistent=False,
+        )
+        self.historical_input_count = float(historical_input_count)
+        self.register_buffer(
+            "task_input_square_sum", torch.zeros(self.dim), persistent=False
+        )
+        self.task_input_count = 0.0
+        self.register_buffer(
+            "pending_input_square_sum", torch.zeros(self.dim), persistent=False
+        )
+        self.pending_input_count = 0.0
+        self._hoep_calibration_active = False
+        self._hoep_calibration_finalized = False
+        self.register_buffer(
+            "aggregate_q", aggregate_q.clone(), persistent=False
+        )
+        self.register_buffer(
+            "aggregate_v", aggregate_v.clone(), persistent=False
+        )
+        self.register_buffer(
+            "recoverability_anchor_a_q",
+            a_q.weight.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "recoverability_anchor_a_v",
+            a_v.weight.detach().clone(),
+            persistent=False,
+        )
+        self.register_buffer(
+            "recoverability_anchor_up_q",
+            aggregate_q.detach().clone()
+            / (torch.linalg.vector_norm(a_q.weight.detach()) + 1e-8),
+            persistent=False,
+        )
+        self.register_buffer(
+            "recoverability_anchor_up_v",
+            aggregate_v.detach().clone()
+            / (torch.linalg.vector_norm(a_v.weight.detach()) + 1e-8),
+            persistent=False,
+        )
+
+    def _norm_live_a(self, x, a_weight, aggregate):
+        denom = torch.linalg.vector_norm(a_weight) + 1e-8
+        return F.linear(F.linear(x, a_weight), aggregate / denom)
+
+    def _current_lora(self, x, a_module, b_module):
+        output = b_module(a_module(x))
+        if not self.normalize_current_branch:
+            return output
+        denom = (
+            torch.linalg.vector_norm(a_module.weight)
+            * torch.linalg.vector_norm(b_module.weight)
+            + 1e-8
+        )
+        return output / denom
+
+    def forward(self, x):
+        if self._hoep_calibration_active:
+            with torch.no_grad():
+                flat = x.detach().float().reshape(-1, self.dim)
+                self.task_input_square_sum.add_(flat.square().sum(dim=0))
+                self.task_input_count += float(flat.shape[0])
+        elif self.training and self.capture_input_sketch:
+            with torch.no_grad():
+                flat = x.detach().float().reshape(-1, self.dim)
+                self.pending_input_square_sum.add_(flat.square().sum(dim=0))
+                self.pending_input_count += float(flat.shape[0])
+        new_q, new_v = self.historical_output(x)
+        if self.current_branch_enabled:
+            new_q = new_q + self.scaling_cur[0](
+                self._current_lora(x, self.a_q, self.b_q)
+            )
+            new_v = new_v + self.scaling_cur[0](
+                self._current_lora(x, self.a_v, self.b_v)
+            )
+        if (
+            self.training
+            and self.capture_effective_gradient
+            and new_q.requires_grad
+            and new_v.requires_grad
+        ):
+            flat_input = x.detach().reshape(-1, self.dim)
+
+            def _capture_q_gradient(gradient):
+                flat_gradient = gradient.detach().reshape(-1, self.dim)
+                projected = flat_gradient @ self.recoverability_output_sketch_q.to(
+                    device=flat_gradient.device, dtype=flat_gradient.dtype
+                )
+                effective = projected.t() @ flat_input
+                if self._effective_weight_gradient_q is None:
+                    self._effective_weight_gradient_q = effective
+                else:
+                    self._effective_weight_gradient_q.add_(effective)
+                return gradient
+
+            def _capture_v_gradient(gradient):
+                flat_gradient = gradient.detach().reshape(-1, self.dim)
+                projected = flat_gradient @ self.recoverability_output_sketch_v.to(
+                    device=flat_gradient.device, dtype=flat_gradient.dtype
+                )
+                effective = projected.t() @ flat_input
+                if self._effective_weight_gradient_v is None:
+                    self._effective_weight_gradient_v = effective
+                else:
+                    self._effective_weight_gradient_v.add_(effective)
+                return gradient
+
+            new_q.register_hook(_capture_q_gradient)
+            new_v.register_hook(_capture_v_gradient)
+        base_q, base_k, base_v = self.qkv(x).split(self.dim, dim=-1)
+        return torch.cat((base_q + new_q, base_k, base_v + new_v), dim=-1)
+
+    def consume_effective_weight_gradients(self):
+        gradients = (
+            self._effective_weight_gradient_q,
+            self._effective_weight_gradient_v,
+        )
+        self._effective_weight_gradient_q = None
+        self._effective_weight_gradient_v = None
+        return gradients
+
+    def set_recoverability_anchor(self):
+        """Freeze the current normalized historical operator for this task."""
+        with torch.no_grad():
+            self.recoverability_anchor_a_q.copy_(self.a_q.weight)
+            self.recoverability_anchor_a_v.copy_(self.a_v.weight)
+            self.recoverability_anchor_up_q.copy_(
+                self.aggregate_q
+                / (torch.linalg.vector_norm(self.a_q.weight) + 1e-8)
+            )
+            self.recoverability_anchor_up_v.copy_(
+                self.aggregate_v
+                / (torch.linalg.vector_norm(self.a_v.weight) + 1e-8)
+            )
+
+    def consume_input_sketch(self):
+        """Synchronize one pending minibatch and add it to task statistics."""
+        if self.pending_input_count <= 0:
+            return
+        square_sum = self.pending_input_square_sum
+        count = square_sum.new_tensor(self.pending_input_count)
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            dist.all_reduce(square_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(count, op=dist.ReduceOp.SUM)
+        self.task_input_square_sum.add_(square_sum)
+        self.task_input_count += float(count)
+        square_sum.zero_()
+        self.pending_input_count = 0.0
+
+    def begin_hoep_activation_calibration(self):
+        """Begin one eval-only, task-boundary activation-statistics pass."""
+
+        if self._hoep_calibration_active:
+            raise RuntimeError("HOEP activation calibration is already active")
+        self.task_input_square_sum.zero_()
+        self.task_input_count = 0.0
+        self.pending_input_square_sum.zero_()
+        self.pending_input_count = 0.0
+        self._hoep_calibration_active = True
+        self._hoep_calibration_finalized = False
+
+    def finalize_hoep_activation_calibration(self):
+        """Synchronize disjoint DDP shards once and freeze this task's sum."""
+
+        if not self._hoep_calibration_active:
+            raise RuntimeError("HOEP activation calibration was not started")
+        count = self.task_input_square_sum.new_tensor(self.task_input_count)
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(self.task_input_square_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(count, op=dist.ReduceOp.SUM)
+        self.task_input_count = float(count)
+        self._hoep_calibration_active = False
+        self._hoep_calibration_finalized = True
+        if self.task_input_count <= 0:
+            raise RuntimeError("HOEP activation calibration observed no tokens")
+        if not bool(torch.isfinite(self.task_input_square_sum).all()):
+            raise RuntimeError("HOEP activation calibration produced non-finite sums")
+        return self.merged_input_sketch()
+
+    def merged_input_sketch(self):
+        self.consume_input_sketch()
+        historical_sum = (
+            self.historical_input_rms.square() * self.historical_input_count
+        )
+        count = self.historical_input_count + self.task_input_count
+        if count <= 0:
+            return torch.ones_like(self.historical_input_rms), 0.0
+        rms = torch.sqrt(
+            torch.clamp_min(
+                (historical_sum + self.task_input_square_sum) / count, 0.0
+            )
+        )
+        return rms, count
+
+    def historical_output(self, x):
+        if self.history_forward == "anchored":
+            return (
+                F.linear(
+                    F.linear(x, self.recoverability_anchor_a_q),
+                    self.recoverability_anchor_up_q,
+                ),
+                F.linear(
+                    F.linear(x, self.recoverability_anchor_a_v),
+                    self.recoverability_anchor_up_v,
+                ),
+            )
+        return (
+            self._norm_live_a(x, self.a_q.weight, self.aggregate_q),
+            self._norm_live_a(x, self.a_v.weight, self.aggregate_v),
+        )
+
+    def current_output(self, x):
+        return (
+            self.scaling_cur[0](self._current_lora(x, self.a_q, self.b_q)),
+            self.scaling_cur[0](self._current_lora(x, self.a_v, self.b_v)),
+        )
+
+
+class SharedALoRA_ViT_timm(nn.Module):
+    def __init__(
+        self,
+        vit_model: timm_ViT,
+        r: int,
+        num_classes: int = 0,
+        increment=10,
+        filepath="./",
+        lora_layer=None,
+        eval=False,
+        index=True,
+        cur_task_index=None,
+        shared_a_orthogonal=True,
+        train_a_all_tasks=False,
+        delete_per_task_files=False,
+        cumulative_state=False,
+        cumulative_gauge=True,
+        cumulative_merge=SA_MERGE_MODE_GAUGE,
+        cumulative_rank=None,
+        cuo_lambda=0.1,
+        g_risk_budget=0.05,
+        g_budget_scope="branch",
+        g_sensitivity_metric="fisher_diag",
+        g_sensitivity_floor=1e-4,
+        g_solver_ridge=1e-6,
+        g_bisection_steps=40,
+        g_shadow_only=False,
+        g_train_projected=False,
+        g_plasticity_guard=False,
+        g_holdout_fraction=0.0,
+        g_guard_ce_tolerance=0.01,
+        freeze_old_scales=False,
+        normalize_current_branch=False,
+        live_a_history_groups=1,
+        live_a_coordinate_align=False,
+        live_a_absorb_mode=SA_ABSORB_MODE_OPERATOR_PRESERVING,
+        live_a_boundary_merge="aligned",
+        adaptive_a_enabled=False,
+        adaptive_a_stability_weight=1.0,
+        adaptive_a_gate_floor=0.05,
+        adaptive_a_gate_momentum=0.9,
+        adaptive_a_gate_formula="ratio",
+        adaptive_a_eps=1e-8,
+        adaptive_a_strategy="impact_ratio",
+        adaptive_a_risk_budget=0.05,
+        adaptive_a_risk_budget_mode="absolute",
+        recoverability_stage="global_budget",
+        recoverability_budget=0.01,
+        recoverability_step_size=0.1,
+        recoverability_interval=4,
+        recoverability_sketch_rank=16,
+        recoverability_gammas=(0.0, 0.25, 0.5, 0.75, 1.0),
+        hoep_energy_budget=0.05,
+        hoep_eigenvalue_rtol=1e-6,
+        hoep_energy_metric="operator",
+        hoep_functional_diagnostics=False,
+        functional_conflict_tol=1e-12,
+        functional_conflict_cosine=0.05,
+        functional_normal_tol=1e-12,
+        functional_min_normal_fraction=1e-4,
+        functional_temperature=2.0,
+        resume=False,
+        initialize_training_partition=True,
+        live_a_history_forward="shared",
+        freeze_a_after_tasks=None,
+    ):
+        super().__init__()
+        assert r > 0
+        if freeze_a_after_tasks is not None:
+            if (
+                isinstance(freeze_a_after_tasks, bool)
+                or not isinstance(freeze_a_after_tasks, int)
+                or freeze_a_after_tasks <= 0
+            ):
+                raise ValueError("sa_freeze_a_after_tasks must be a positive integer")
+            if (
+                not train_a_all_tasks
+                or not cumulative_state
+                or cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+                or adaptive_a_enabled
+                or live_a_boundary_merge != "aligned"
+                or live_a_history_forward != "shared"
+            ):
+                raise ValueError(
+                    "sa_freeze_a_after_tasks requires an aligned Live-A prefix "
+                    "without an Adaptive-A controller"
+                )
+        if cumulative_merge not in (
+            SA_MERGE_MODE_GAUGE,
+            SA_MERGE_MODE_UNION_SVD,
+            SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
+            SA_MERGE_MODE_CUO_LOWRANK,
+            SA_MERGE_MODE_SBGC,
+        ):
+            raise ValueError(
+                "cumulative_merge must be gauge/union_svd/live_a_aggregate_b/"
+                "cuo_lowrank/sensitivity_budgeted_g; "
+                "got {}".format(
+                    cumulative_merge
+                )
+            )
+        if (
+            cumulative_merge == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+            and not cumulative_state
+        ):
+            raise ValueError(
+                "live_a_aggregate_b requires sa_cumulative_state=True"
+            )
+        if int(live_a_history_groups) < 1:
+            raise ValueError("sa_live_a_history_groups must be >= 1")
+        self.rank = r
+        self.cumulative_rank = (
+            int(cumulative_rank) if cumulative_rank is not None else r
+        )
+        if self.cumulative_rank <= 0 or self.cumulative_rank > r:
+            raise ValueError(
+                "cumulative_rank must satisfy 0 < rank <= lora_rank; "
+                "got {}".format(self.cumulative_rank)
+            )
+        self.cuo_lambda = 0.1
+        if cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+            try:
+                self.cuo_lambda = float(cuo_lambda)
+            except (TypeError, ValueError) as error:
+                raise ValueError("sa_cuo_lambda must be strictly positive and finite") from error
+            if not cumulative_state:
+                raise ValueError("cuo_lowrank requires sa_cumulative_state=True")
+            if not train_a_all_tasks:
+                raise ValueError("cuo_lowrank requires sa_train_a_all_tasks=True")
+            if self.cumulative_rank != r:
+                raise ValueError(
+                    "cuo_lowrank requires sa_cumulative_rank to equal lora_rank"
+                )
+            if not math.isfinite(self.cuo_lambda) or self.cuo_lambda <= 0:
+                raise ValueError("sa_cuo_lambda must be strictly positive and finite")
+        self.g_risk_budget = float(g_risk_budget)
+        self.g_budget_scope = str(g_budget_scope)
+        self.g_sensitivity_metric = str(g_sensitivity_metric)
+        self.g_sensitivity_floor = float(g_sensitivity_floor)
+        self.g_solver_ridge = float(g_solver_ridge)
+        self.g_bisection_steps = int(g_bisection_steps)
+        self.g_shadow_only = bool(g_shadow_only)
+        self.g_train_projected = bool(g_train_projected)
+        self.g_plasticity_guard = bool(g_plasticity_guard)
+        self.g_holdout_fraction = float(g_holdout_fraction)
+        self.g_guard_ce_tolerance = float(g_guard_ce_tolerance)
+        if cumulative_merge == SA_MERGE_MODE_SBGC:
+            if not cumulative_state:
+                raise ValueError(
+                    "sensitivity_budgeted_g requires sa_cumulative_state=True"
+                )
+            if train_a_all_tasks:
+                raise ValueError(
+                    "sensitivity_budgeted_g requires sa_train_a_all_tasks=False"
+                )
+            if self.cumulative_rank != r:
+                raise ValueError(
+                    "sensitivity_budgeted_g requires sa_cumulative_rank "
+                    "to equal lora_rank"
+                )
+            if normalize_current_branch:
+                raise ValueError(
+                    "sensitivity_budgeted_g requires an unnormalized current branch"
+                )
+            if not math.isfinite(self.g_risk_budget) or not (
+                0.0 <= self.g_risk_budget <= 1.0
+            ):
+                raise ValueError("sa_g_risk_budget must be finite and in [0, 1]")
+            if self.g_budget_scope not in ("branch", "global"):
+                raise ValueError("sa_g_budget_scope must be branch or global")
+            if self.g_budget_scope == "global" and self.g_plasticity_guard:
+                raise ValueError("global SBGC budget is incompatible with plasticity guard")
+            if self.g_budget_scope == "global" and self.g_shadow_only:
+                raise ValueError("global SBGC budget requires deployed consolidation")
+            if self.g_train_projected and (
+                self.g_budget_scope != "branch"
+                or self.g_sensitivity_metric != "fisher_diag"
+                or self.g_shadow_only
+                or self.g_plasticity_guard
+            ):
+                raise ValueError(
+                    "train-projected SBGC requires branch Fisher deployment "
+                    "without shadow or guard"
+                )
+            if self.g_sensitivity_metric not in ("uniform", "fisher_diag"):
+                raise ValueError(
+                    "sa_g_sensitivity_metric must be uniform or fisher_diag"
+                )
+            if not math.isfinite(self.g_sensitivity_floor) or not (
+                0.0 < self.g_sensitivity_floor <= 1.0
+            ):
+                raise ValueError(
+                    "sa_g_sensitivity_floor must be finite and in (0, 1]"
+                )
+            if not math.isfinite(self.g_solver_ridge) or self.g_solver_ridge <= 0:
+                raise ValueError("sa_g_solver_ridge must be positive and finite")
+            if self.g_bisection_steps <= 0:
+                raise ValueError("sa_g_bisection_steps must be positive")
+        self.cumulative_merge = cumulative_merge
+        self.freeze_old_scales = bool(freeze_old_scales)
+        self.normalize_current_branch = bool(normalize_current_branch)
+        self.live_a_history_groups = int(live_a_history_groups)
+        self.live_a_coordinate_align = bool(live_a_coordinate_align)
+        if live_a_absorb_mode not in (
+            SA_ABSORB_MODE_NORMALIZED,
+            SA_ABSORB_MODE_OPERATOR_PRESERVING,
+            SA_ABSORB_MODE_BOUNDED_NORM_CALIBRATED,
+        ):
+            raise ValueError(
+                "sa_live_a_absorb_mode must be normalized_absorb, "
+                "operator_preserving_absorb, or "
+                "bounded_norm_calibrated_absorb"
+            )
+        self.live_a_absorb_mode = live_a_absorb_mode
+        if live_a_boundary_merge not in ("aligned", "joint_svd"):
+            raise ValueError("sa_live_a_boundary_merge must be aligned or joint_svd")
+        if live_a_boundary_merge == "joint_svd" and (
+            cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+            or not train_a_all_tasks
+            or not live_a_coordinate_align
+            or normalize_current_branch
+            or adaptive_a_enabled
+        ):
+            raise ValueError(
+                "joint_svd requires Live-A aggregate, trainable A, coordinate "
+                "alignment, unnormalized current branch, and no Adaptive-A"
+            )
+        self.live_a_boundary_merge = live_a_boundary_merge
+        if live_a_history_forward not in ("shared", "anchored"):
+            raise ValueError("sa_live_a_history_forward must be shared or anchored")
+        if live_a_history_forward == "anchored" and live_a_boundary_merge != "joint_svd":
+            raise ValueError("anchored history requires joint_svd boundary merge")
+        self.live_a_history_forward = live_a_history_forward
+        self.adaptive_a_enabled = bool(adaptive_a_enabled)
+        self.adaptive_a_stability_weight = float(adaptive_a_stability_weight)
+        self.adaptive_a_gate_floor = float(adaptive_a_gate_floor)
+        self.adaptive_a_gate_momentum = float(adaptive_a_gate_momentum)
+        self.adaptive_a_gate_formula = str(adaptive_a_gate_formula)
+        self.adaptive_a_eps = float(adaptive_a_eps)
+        self.adaptive_a_strategy = str(adaptive_a_strategy)
+        self.adaptive_a_risk_budget = float(adaptive_a_risk_budget)
+        self.adaptive_a_risk_budget_mode = str(adaptive_a_risk_budget_mode)
+        self.recoverability_stage = str(recoverability_stage)
+        self.recoverability_budget = float(recoverability_budget)
+        self.recoverability_step_size = float(recoverability_step_size)
+        self.recoverability_interval = int(recoverability_interval)
+        self.recoverability_sketch_rank = int(recoverability_sketch_rank)
+        self.recoverability_gammas = tuple(
+            float(value) for value in recoverability_gammas
+        )
+        self.hoep_energy_budget = float(hoep_energy_budget)
+        self.hoep_eigenvalue_rtol = float(hoep_eigenvalue_rtol)
+        self.hoep_energy_metric = str(hoep_energy_metric)
+        self.hoep_functional_diagnostics = bool(
+            hoep_functional_diagnostics
+        )
+        self.functional_conflict_tol = float(functional_conflict_tol)
+        self.functional_conflict_cosine = float(functional_conflict_cosine)
+        self.functional_normal_tol = float(functional_normal_tol)
+        self.functional_min_normal_fraction = float(
+            functional_min_normal_fraction
+        )
+        self.functional_temperature = float(functional_temperature)
+        if self.adaptive_a_strategy not in (
+            "impact_ratio",
+            "tangent",
+            "risk_budgeted",
+            "pareto_knee",
+            "functional_halfspace",
+            "function_safe_pareto",
+            "recoverability",
+            "operator_energy_partition",
+        ):
+            raise ValueError(
+                "sa_adaptive_a_strategy must be impact_ratio, tangent, "
+                "risk_budgeted, pareto_knee, functional_halfspace, "
+                "function_safe_pareto, recoverability, or "
+                "operator_energy_partition"
+            )
+        if not 0.0 <= self.hoep_energy_budget <= 1.0:
+            raise ValueError("hoep_energy_budget must be in [0, 1]")
+        if self.hoep_energy_metric not in ("operator", "functional_diag"):
+            raise ValueError(
+                "hoep_energy_metric must be operator or functional_diag"
+            )
+        if (
+            not math.isfinite(self.hoep_eigenvalue_rtol)
+            or self.hoep_eigenvalue_rtol < 0
+        ):
+            raise ValueError("hoep_eigenvalue_rtol must be finite and non-negative")
+        if self.recoverability_stage not in (
+            "exact_risk",
+            "accessibility",
+            "anchor_realign",
+            "global_budget",
+        ):
+            raise ValueError(
+                "recoverability_stage must be exact_risk, accessibility, "
+                "anchor_realign, or global_budget"
+            )
+        if self.recoverability_budget < 0:
+            raise ValueError("recoverability_budget must be non-negative")
+        if self.recoverability_step_size < 0:
+            raise ValueError("recoverability_step_size must be non-negative")
+        if self.recoverability_interval <= 0:
+            raise ValueError("recoverability_interval must be positive")
+        if self.recoverability_sketch_rank <= 0:
+            raise ValueError("recoverability_sketch_rank must be positive")
+        if (
+            not self.recoverability_gammas
+            or self.recoverability_gammas
+            != tuple(sorted(set(self.recoverability_gammas)))
+            or self.recoverability_gammas[0] != 0.0
+            or self.recoverability_gammas[-1] != 1.0
+        ):
+            raise ValueError(
+                "recoverability_gammas must be sorted unique values including 0 and 1"
+            )
+        if self.adaptive_a_risk_budget < 0:
+            raise ValueError("sa_adaptive_a_risk_budget must be non-negative")
+        if self.adaptive_a_risk_budget_mode not in ("absolute", "relative"):
+            raise ValueError(
+                "sa_adaptive_a_risk_budget_mode must be absolute or relative"
+            )
+        if self.adaptive_a_stability_weight < 0:
+            raise ValueError("sa_adaptive_a_stability_weight must be non-negative")
+        if not 0.0 <= self.adaptive_a_gate_floor <= 1.0:
+            raise ValueError("sa_adaptive_a_gate_floor must be in [0, 1]")
+        if not 0.0 <= self.adaptive_a_gate_momentum < 1.0:
+            raise ValueError("sa_adaptive_a_gate_momentum must be in [0, 1)")
+        if self.adaptive_a_gate_formula not in ("ratio", "squared_ratio"):
+            raise ValueError(
+                "sa_adaptive_a_gate_formula must be ratio or squared_ratio"
+            )
+        if self.adaptive_a_eps <= 0:
+            raise ValueError("sa_adaptive_a_eps must be positive")
+        if self.functional_conflict_tol < 0:
+            raise ValueError("sa_functional_conflict_tol must be non-negative")
+        if self.functional_normal_tol <= 0:
+            raise ValueError("sa_functional_normal_tol must be positive")
+        if not 0.0 <= self.functional_min_normal_fraction <= 1.0:
+            raise ValueError(
+                "sa_functional_min_normal_fraction must be in [0, 1]"
+            )
+        if not 0.0 <= self.functional_conflict_cosine <= 1.0:
+            raise ValueError(
+                "sa_functional_conflict_cosine must be in [0, 1]"
+            )
+        if self.functional_temperature <= 0.0:
+            raise ValueError("sa_functional_temperature must be positive")
+        if self.adaptive_a_enabled and not train_a_all_tasks:
+            raise ValueError(
+                "sa_adaptive_a_enabled requires sa_train_a_all_tasks=True"
+            )
+        if self.adaptive_a_enabled and not cumulative_state:
+            raise ValueError(
+                "sa_adaptive_a_enabled requires sa_cumulative_state=True"
+            )
+        if (
+            self.adaptive_a_enabled
+            and cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+        ):
+            raise ValueError(
+                "sa_adaptive_a_enabled requires "
+                "sa_cumulative_merge=live_a_aggregate_b"
+            )
+        if self.adaptive_a_enabled and not live_a_coordinate_align:
+            raise ValueError(
+                "sa_adaptive_a_enabled requires "
+                "sa_live_a_coordinate_align=True"
+            )
+        if (
+            self.live_a_coordinate_align
+            and cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+        ):
+            raise ValueError(
+                "sa_live_a_coordinate_align requires "
+                "sa_cumulative_merge=live_a_aggregate_b"
+            )
+        self.save_file = filepath
+        if cur_task_index is not None and cur_task_index == 0:
+            state_path = _join_path(filepath, SA_STATE_FILENAME)
+            manifest_path = _join_path(filepath, "run_manifest.json")
+            if os.path.exists(state_path) and not resume:
+                raise FileExistsError(
+                    "task0 fresh-run guard: {} already exists. "
+                    "Refusing to silently continue from an old Aggregate-B "
+                    "state; pass sa_resume=true together with a run manifest "
+                    "to explicitly recover.".format(state_path)
+                )
+            if resume and not os.path.exists(manifest_path):
+                raise RuntimeError(
+                    "sa_resume=true requires a run_manifest.json in {}; "
+                    "cannot infer the original run metadata".format(filepath)
+                )
+        self.increment = increment
+        self.shared_a_orthogonal = bool(shared_a_orthogonal)
+        self.train_a_all_tasks = bool(train_a_all_tasks)
+        self.freeze_a_after_tasks = freeze_a_after_tasks
+        self.delete_per_task_files = bool(delete_per_task_files)
+        self.cumulative_state = bool(cumulative_state)
+        self.cumulative_gauge = bool(cumulative_gauge)
+        self.base_vit = vit_model
+
+        if lora_layer:
+            self.lora_layer = lora_layer
+        else:
+            self.lora_layer = list(range(len(vit_model.blocks)))
+
+        self.w_As, self.w_Bs = [], []
+        if index:
+            self.task_id, self.cur_id = 0, 0
+        if cur_task_index is not None:
+            self.task_id = cur_task_index
+        self.train_a_current_task = (
+            self.task_id == 0 or self.train_a_all_tasks
+        ) and (
+            self.freeze_a_after_tasks is None
+            or self.task_id < self.freeze_a_after_tasks
+        )
+
+        for param in vit_model.parameters():
+            param.requires_grad = False
+
+        state = self._load_state()
+        state_version = int(state.get("version", -1))
+        if state_version == SA_STATE_VERSION_LEGACY:
+            if self.cumulative_state:
+                raise ValueError(
+                    "sa_cumulative_state=True (merge={}) but artifact is "
+                    "legacy v1; run the explicit migrate script first".format(
+                        self.cumulative_merge
+                    )
+                )
+            self.cumulative_state = False
+        elif state_version == SA_STATE_VERSION:
+            if self.cumulative_merge in (
+                SA_MERGE_MODE_CUO_LOWRANK,
+                SA_MERGE_MODE_SBGC,
+            ):
+                raise ValueError(
+                    "{} requires its own projected state; "
+                    "artifact version {} cannot be migrated".format(
+                        self.cumulative_merge, state_version
+                    )
+                )
+            if self.cumulative_merge in (
+                SA_MERGE_MODE_UNION_SVD,
+                SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
+            ):
+                raise ValueError(
+                    "sa_cumulative_merge={} but artifact is v2 gauge; "
+                    "run scripts/migrate_sa_state_v2_to_v3.py first "
+                    "(union) or scripts/migrate_sa_v1_to_live_a_aggregate.py "
+                    "first (live-a)".format(
+                        self.cumulative_merge
+                    )
+                )
+            self.cumulative_state = True
+        elif state_version == SA_STATE_VERSION_UNION:
+            if self.cumulative_merge != SA_MERGE_MODE_UNION_SVD:
+                raise ValueError(
+                    "artifact is v3 union-SVD but sa_cumulative_merge={}; "
+                    "use union_svd or migrate back explicitly".format(
+                        self.cumulative_merge
+                    )
+                )
+            self.cumulative_state = True
+        elif state_version == SA_STATE_VERSION_LIVE_A:
+            if self.cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B:
+                raise ValueError(
+                    "artifact is v4 live-a-aggregate-b but "
+                    "sa_cumulative_merge={}; use live_a_aggregate_b".format(
+                        self.cumulative_merge
+                    )
+                )
+            state_coordinate_aligned = bool(
+                state.get("coordinate_aligned", False)
+            )
+            state_absorb_mode = state.get(
+                "absorb_mode", SA_ABSORB_MODE_NORMALIZED
+            )
+            state_boundary_merge = state.get("boundary_merge", "aligned")
+            state_history_forward = state.get("history_forward", "shared")
+            if (
+                self.task_id > 0
+                and state_coordinate_aligned != self.live_a_coordinate_align
+            ):
+                raise ValueError(
+                    "live-a coordinate alignment setting differs from the "
+                    "saved state (saved={}, requested={})".format(
+                        state_coordinate_aligned,
+                        self.live_a_coordinate_align,
+                    )
+                )
+            if self.task_id > 0 and state_absorb_mode != self.live_a_absorb_mode:
+                raise ValueError(
+                    "live-a absorption mode differs from the saved state "
+                    "(saved={}, requested={})".format(
+                        state_absorb_mode, self.live_a_absorb_mode
+                    )
+                )
+            if self.task_id > 0 and state_boundary_merge != self.live_a_boundary_merge:
+                raise ValueError(
+                    "live-a boundary merge differs from the saved state "
+                    "(saved={}, requested={})".format(
+                        state_boundary_merge, self.live_a_boundary_merge
+                    )
+                )
+            if self.task_id > 0 and state_history_forward != self.live_a_history_forward:
+                raise ValueError(
+                    "live-a history forward differs from the saved state "
+                    "(saved={}, requested={})".format(
+                        state_history_forward, self.live_a_history_forward
+                    )
+                )
+            self.cumulative_state = True
+        elif state_version == SA_STATE_VERSION_CUO:
+            if self.cumulative_merge != SA_MERGE_MODE_CUO_LOWRANK:
+                raise ValueError(
+                    "artifact is v{} cuo_lowrank but "
+                    "sa_cumulative_merge={}".format(
+                        SA_STATE_VERSION_CUO, self.cumulative_merge
+                    )
+                )
+            required_cuo_keys = {
+                "version",
+                "task_id",
+                "rank",
+                "merge_mode",
+                "projection_down",
+                "unified_up",
+                "projected_gram",
+                "cuo_lambda",
+            }
+            if set(state) != required_cuo_keys:
+                raise ValueError(
+                    "cuo_lowrank state must contain only the v{} projected "
+                    "normal-equation fields".format(SA_STATE_VERSION_CUO)
+                )
+            if state["merge_mode"] != SA_MERGE_MODE_CUO_LOWRANK:
+                raise ValueError("cuo_lowrank state has an invalid merge_mode")
+            if int(state["rank"]) != self.rank:
+                raise ValueError("cuo_lowrank state rank does not match lora_rank")
+            state_lambda = float(state["cuo_lambda"])
+            if not math.isfinite(state_lambda) or state_lambda <= 0:
+                raise ValueError("cuo_lowrank state has an invalid cuo_lambda")
+            if not math.isclose(state_lambda, self.cuo_lambda, rel_tol=0.0, abs_tol=0.0):
+                raise ValueError(
+                    "cuo_lowrank state cuo_lambda differs from the requested value"
+                )
+            if self.task_id > 0 and int(state["task_id"]) != self.task_id:
+                raise ValueError(
+                    "cuo_lowrank state task_id does not match the requested task"
+                )
+            self.cumulative_state = True
+        elif state_version in (
+            SA_STATE_VERSION_SBGC,
+            SA_STATE_VERSION_SBGC_GUARD,
+            SA_STATE_VERSION_SBGC_GLOBAL,
+            SA_STATE_VERSION_SBGC_TRAIN_PROJECTED,
+        ):
+            if self.cumulative_merge != SA_MERGE_MODE_SBGC:
+                raise ValueError(
+                    "artifact is v{} sensitivity_budgeted_g but "
+                    "sa_cumulative_merge={}".format(
+                        state_version, self.cumulative_merge
+                    )
+                )
+            required_sbgc_keys = {
+                "version",
+                "task_id",
+                "rank",
+                "merge_mode",
+                "projection_down",
+                "unified_up",
+                "projected_covariance",
+                "sensitivity_diag",
+                "covariance_count",
+                "sensitivity_count",
+                "risk_budget",
+                "sensitivity_metric",
+                "sensitivity_floor",
+                "solver_ridge",
+                "bisection_steps",
+                "shadow_only",
+            }
+            if state_version == SA_STATE_VERSION_SBGC_GUARD:
+                required_sbgc_keys.update({
+                    "guard_enabled",
+                    "guard_selected_name",
+                    "guard_selected_budget",
+                    "guard_selected_aggregate_risk",
+                    "guard_selected_max_branch_risk",
+                    "guard_holdout_fraction",
+                    "guard_ce_tolerance",
+                })
+            if state_version == SA_STATE_VERSION_SBGC_GLOBAL:
+                required_sbgc_keys.add("budget_scope")
+            if state_version == SA_STATE_VERSION_SBGC_TRAIN_PROJECTED:
+                required_sbgc_keys.add("train_projected")
+            if set(state) != required_sbgc_keys:
+                raise ValueError(
+                    "sensitivity_budgeted_g state must contain only the v{} "
+                    "fixed-coordinate fields".format(state_version)
+                )
+            saved_scope = (
+                state["budget_scope"]
+                if state_version == SA_STATE_VERSION_SBGC_GLOBAL else "branch"
+            )
+            if saved_scope != self.g_budget_scope:
+                raise ValueError("SBGC budget_scope differs from saved state")
+            if self.g_train_projected != (
+                state_version == SA_STATE_VERSION_SBGC_TRAIN_PROJECTED
+            ):
+                raise ValueError("SBGC train-projected mode differs from saved state")
+            if self.g_train_projected and state["train_projected"] is not True:
+                raise ValueError("SBGC train-projected artifact is not enabled")
+            if self.g_plasticity_guard != (
+                state_version == SA_STATE_VERSION_SBGC_GUARD
+            ):
+                raise ValueError("SBGC guard mode differs from the saved state")
+            if self.g_plasticity_guard:
+                if state["guard_enabled"] is not True:
+                    raise ValueError("SBGC guard artifact is not enabled")
+                if state["guard_selected_name"] not in (
+                    None, "0.05", "0.10", "0.20", "0.40", "0.80", "additive"
+                ):
+                    raise ValueError("SBGC guard selected name is invalid")
+                if state["guard_selected_name"] is None and int(state["task_id"]) > 1:
+                    raise ValueError("SBGC guard selection is missing after Task 0")
+                expected_budget = (
+                    None
+                    if state["guard_selected_name"] in (None, "additive")
+                    else float(state["guard_selected_name"])
+                )
+                if state["guard_selected_budget"] != expected_budget:
+                    raise ValueError("SBGC guard selected budget is inconsistent")
+                for key in (
+                    "guard_selected_aggregate_risk",
+                    "guard_selected_max_branch_risk",
+                ):
+                    if not math.isfinite(float(state[key])) or float(state[key]) < 0:
+                        raise ValueError("SBGC {} is invalid".format(key))
+                for key, requested in (
+                    ("guard_holdout_fraction", self.g_holdout_fraction),
+                    ("guard_ce_tolerance", self.g_guard_ce_tolerance),
+                ):
+                    if not math.isclose(
+                        float(state[key]), requested, rel_tol=0.0, abs_tol=0.0
+                    ):
+                        raise ValueError("SBGC {} differs from saved state".format(key))
+            if state["merge_mode"] != SA_MERGE_MODE_SBGC:
+                raise ValueError("SBGC state has an invalid merge_mode")
+            if int(state["rank"]) != self.rank:
+                raise ValueError("SBGC state rank does not match lora_rank")
+            saved_settings = {
+                "risk_budget": self.g_risk_budget,
+                "sensitivity_floor": self.g_sensitivity_floor,
+                "solver_ridge": self.g_solver_ridge,
+            }
+            for key, requested in saved_settings.items():
+                if not math.isclose(
+                    float(state[key]), float(requested), rel_tol=0.0, abs_tol=0.0
+                ):
+                    raise ValueError(
+                        "SBGC {} differs from the saved state".format(key)
+                    )
+            if state["sensitivity_metric"] != self.g_sensitivity_metric:
+                raise ValueError(
+                    "SBGC sensitivity_metric differs from the saved state"
+                )
+            if int(state["bisection_steps"]) != self.g_bisection_steps:
+                raise ValueError(
+                    "SBGC bisection_steps differs from the saved state"
+                )
+            if bool(state["shadow_only"]) != self.g_shadow_only:
+                raise ValueError("SBGC shadow_only differs from the saved state")
+            if self.task_id > 0 and int(state["task_id"]) != self.task_id:
+                raise ValueError("SBGC state task_id does not match requested task")
+            self.cumulative_state = True
+        elif state_version == -1:
+            # Fresh run: the flag decides which version new artifacts use.
+            pass
+        else:
+            raise ValueError(
+                "unsupported shared-A state version {}".format(state_version)
+            )
+
+        shared_a = state.get("shared_a", [])
+        adaptive_a_input_rms = state.get("adaptive_a_input_rms", [])
+        adaptive_a_input_counts = state.get("adaptive_a_input_counts", [])
+        needs_hoep_input_statistics = (
+            self.adaptive_a_strategy == "operator_energy_partition"
+            and (
+                self.hoep_energy_metric == "functional_diag"
+                or self.hoep_functional_diagnostics
+            )
+        )
+        if needs_hoep_input_statistics and self.task_id > 0:
+            expected_blocks = len(self.lora_layer)
+            if (
+                len(adaptive_a_input_rms) != expected_blocks
+                or len(adaptive_a_input_counts) != expected_blocks
+                or any(float(count) <= 0 for count in adaptive_a_input_counts)
+            ):
+                raise RuntimeError(
+                    "functional HOEP requires valid task-boundary activation "
+                    "statistics for every ViT block"
+                )
+        self.cuo_projection_down = []
+        self.cuo_unified_up = []
+        self.cuo_projected_gram = []
+        self.sbgc_projection_down = []
+        self.sbgc_unified_up = []
+        self.sbgc_projected_covariance = []
+        self.sbgc_sensitivity_diag = []
+        self.sbgc_covariance_count = []
+        self.sbgc_sensitivity_count = []
+        self._sbgc_guard_selection = (
+            {
+                "name": state["guard_selected_name"],
+                "budget": state["guard_selected_budget"],
+                "aggregate_risk": float(state["guard_selected_aggregate_risk"]),
+                "max_branch_risk": float(state["guard_selected_max_branch_risk"]),
+            }
+            if state_version == SA_STATE_VERSION_SBGC_GUARD
+            else None
+        )
+        if self.cumulative_state:
+            expected_branches = 2 * len(self.lora_layer)
+            if self.cumulative_merge == SA_MERGE_MODE_SBGC:
+                self.sbgc_projection_down = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("projection_down", [])
+                ]
+                self.sbgc_unified_up = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("unified_up", [])
+                ]
+                self.sbgc_projected_covariance = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("projected_covariance", [])
+                ]
+                self.sbgc_sensitivity_diag = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("sensitivity_diag", [])
+                ]
+                self.sbgc_covariance_count = [
+                    float(value) for value in state.get("covariance_count", [])
+                ]
+                self.sbgc_sensitivity_count = [
+                    float(value) for value in state.get("sensitivity_count", [])
+                ]
+                self.aggregate_up = []
+                self.cumulative_up = []
+                self.canonical_down = []
+                self.triangular_r = []
+                lengths = (
+                    len(self.sbgc_projection_down),
+                    len(self.sbgc_unified_up),
+                    len(self.sbgc_projected_covariance),
+                    len(self.sbgc_sensitivity_diag),
+                    len(self.sbgc_covariance_count),
+                    len(self.sbgc_sensitivity_count),
+                )
+                if self.task_id > 0 and any(
+                    length != expected_branches for length in lengths
+                ):
+                    raise ValueError(
+                        "SBGC state must contain {} Q/V branches; got {}".format(
+                            expected_branches, lengths
+                        )
+                    )
+                if self.task_id > 0 and (
+                    any(value <= 0 for value in self.sbgc_covariance_count)
+                    or any(value <= 0 for value in self.sbgc_sensitivity_count)
+                ):
+                    raise ValueError("SBGC state counts must be positive")
+                if self.task_id > 0 and not self.sbgc_projection_down:
+                    raise FileNotFoundError(
+                        "{} is required before training task {}".format(
+                            _join_path(self.save_file, SA_STATE_FILENAME),
+                            self.task_id,
+                        )
+                    )
+                shared_a = list(self.sbgc_projection_down)
+            elif self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+                self.cuo_projection_down = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("projection_down", [])
+                ]
+                self.cuo_unified_up = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("unified_up", [])
+                ]
+                self.cuo_projected_gram = [
+                    tensor.detach().cpu().float()
+                    for tensor in state.get("projected_gram", [])
+                ]
+                self.aggregate_up = []
+                self.cumulative_up = []
+                self.canonical_down = []
+                self.triangular_r = []
+                if self.task_id > 0 and not (
+                    len(self.cuo_projection_down)
+                    == len(self.cuo_unified_up)
+                    == len(self.cuo_projected_gram)
+                    == expected_branches
+                ):
+                    raise ValueError(
+                        "cuo_lowrank state must contain {} Q/V branches; "
+                        "got projection_down={} unified_up={} projected_gram={}".format(
+                            expected_branches,
+                            len(self.cuo_projection_down),
+                            len(self.cuo_unified_up),
+                            len(self.cuo_projected_gram),
+                        )
+                    )
+                if self.task_id > 0 and not self.cuo_projection_down:
+                    raise FileNotFoundError(
+                        "{} is required before training task {}".format(
+                            _join_path(self.save_file, SA_STATE_FILENAME),
+                            self.task_id,
+                        )
+                    )
+                shared_a = list(self.cuo_projection_down)
+            elif self.cumulative_merge == SA_MERGE_MODE_LIVE_A_AGGREGATE_B:
+                self.aggregate_up = [
+                    t.detach().cpu().float()
+                    for t in state.get("aggregate_up", [])
+                ]
+                self.cumulative_up = []
+                self.canonical_down = []
+                self.triangular_r = []
+                if self.task_id > 0 and len(self.aggregate_up) != expected_branches:
+                    raise ValueError(
+                        "live-a aggregate state must contain {} branches; "
+                        "got aggregate_up={}".format(
+                            expected_branches, len(self.aggregate_up)
+                        )
+                    )
+                if self.task_id > 0 and len(self.aggregate_up) == 0:
+                    raise FileNotFoundError(
+                        "{} is required before training task {}".format(
+                            _join_path(self.save_file, SA_STATE_FILENAME),
+                            self.task_id,
+                        )
+                    )
+                loaded_a = state.get("shared_a", [])
+                if self.task_id > 0 and len(loaded_a) != expected_branches:
+                    raise ValueError(
+                        "live-a state shared_a must contain {} branches; "
+                        "got {}".format(expected_branches, len(loaded_a))
+                    )
+                shared_a = [t.detach().cpu().float() for t in loaded_a]
+            else:
+                self.aggregate_up = []
+                self.cumulative_up = [
+                    t.detach().cpu().float()
+                    for t in state.get("cumulative_up", [])
+                ]
+                self.canonical_down = [
+                    t.detach().cpu().float()
+                    for t in state.get("canonical_down", [])
+                ]
+                self.triangular_r = [
+                    t.detach().cpu().float()
+                    for t in state.get("triangular_r", [])
+                ]
+                if self.task_id > 0 and not (
+                    len(self.cumulative_up)
+                    == len(self.canonical_down)
+                    == len(self.triangular_r)
+                    == expected_branches
+                ):
+                    raise ValueError(
+                        "cumulative Shared-A state must contain {} branches; "
+                        "got cumulative_up={} canonical_down={} triangular_r={}".format(
+                            expected_branches,
+                            len(self.cumulative_up),
+                            len(self.canonical_down),
+                            len(self.triangular_r),
+                        )
+                    )
+                if self.task_id > 0 and len(self.cumulative_up) == 0:
+                    raise FileNotFoundError(
+                        "{} is required before training task {}".format(
+                            _join_path(self.save_file, SA_STATE_FILENAME),
+                            self.task_id,
+                        )
+                    )
+                shared_a = [
+                    (r.t() @ q).float()
+                    for q, r in zip(self.canonical_down, self.triangular_r)
+                ]
+            self.saved_b_tasks = {}
+        elif self.task_id > 0 and len(shared_a) == 0:
+            raise FileNotFoundError(
+                "{} is required before training task {}".format(
+                    _join_path(self.save_file, SA_STATE_FILENAME), self.task_id
+                )
+            )
+
+        if not self.cumulative_state:
+            self.saved_b_tasks = {}
+            for task_id in range(self.task_id):
+                path = _join_path(
+                    self.save_file, "sa_lora_w_b_{}.pt".format(task_id)
+                )
+                if not os.path.exists(path):
+                    raise FileNotFoundError(
+                        "missing saved shared-A B for task {}".format(task_id)
+                    )
+                self.saved_b_tasks[task_id] = torch.load(
+                    path, map_location="cpu", weights_only=True
+                )
+
+        # These are task-local, non-persistent snapshots used only while the
+        # next task is trained. They never enter the saved Shared-A artifact.
+        self._live_a_previous_shared_a = (
+            [tensor.detach().cpu().float().clone() for tensor in shared_a]
+            if self.cumulative_merge == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+            else []
+        )
+        self._last_live_a_coordinate_diagnostics = None
+        self._last_saved_live_a_aggregate = None
+        self._last_saved_live_a_shared_a = None
+        self._operator_reference_down = []
+        self._operator_reference_up = []
+        self._operator_reference_task_count = 0
+        # Diagnostics computed from the *pre-save* historical state; populated
+        # by _save_cumulative_state before the state is overwritten.
+        self._last_cumulative_gauge_diagnostics = None
+        self._last_union_svd_truncation_error = None
+        self._last_live_a_save_stats = None
+        self._cuo_calibration_prepared = False
+        self._cuo_calibration_finalized = False
+        self._cuo_deployment_saved = self.task_id > 0
+        self._last_cuo_calibration_stats = None
+        self._sbgc_calibration_prepared = False
+        self._sbgc_calibration_finalized = False
+        self._sbgc_deployment_saved = self.task_id > 0
+        self._last_sbgc_calibration_stats = None
+        self._last_sbgc_branch_diagnostics = None
+        self._sbgc_task0_operator_error = 0.0
+        # HBD teacher lifecycle (plain attributes; never enter state_dict).
+        self._hbd_capture_list = None
+        # These values are deliberately task-local and are not buffers or
+        # modules, so deployment state remains the existing (A, G) artifact.
+        self._adaptive_a_gate_ema = {}
+        self._adaptive_a_observations = []
+        self._adaptive_a_statistics_task_id = None
+        self._adaptive_a_last_modes = {}
+        self._adaptive_a_previous_gradients = None
+        self._adaptive_a_last_effective_budget = None
+        self._adaptive_a_last_live_risk = None
+        self._adaptive_a_last_implied_risk_ratio = None
+        self._adaptive_a_last_pareto_points = None
+        self._adaptive_a_risk_ratios = []
+        self._adaptive_a_pareto_point_counts = []
+        self._functional_halfspace_observations = []
+        self._recoverability_step = 0
+        self._recoverability_pending_bases = None
+        self._recoverability_observations = []
+        self._recoverability_exact_b_warmup_checked = False
+        self._hoep_plastic_masks = []
+        self._hoep_anchor_a = []
+        self._hoep_partition_diagnostics = None
+        self._hoep_functional_diagnostic_record = None
+        self._hoep_step_count = 0
+        self._hoep_step_maxima = {
+            "max_orthogonality_error": 0.0,
+            "max_rowspace_reconstruction_error": 0.0,
+            "max_historical_operator_error": 0.0,
+            "max_current_operator_error": 0.0,
+        }
+
+        scaling_factor = nn.Parameter(torch.Tensor([0.8]))
+        self.wrapped_param = nn.ModuleList([ParameterWrapper(scaling_factor)])
+        if self.cumulative_state:
+            self.wrapped_param_prev = nn.ModuleList()
+        else:
+            saved_scales = state.get("scales", {})
+            residual_scale_values = [
+                saved_scales.get(task_id, torch.Tensor([0.8]))
+                for task_id in range(self.task_id)
+            ]
+            residual_scale_values.extend(
+                [
+                    torch.Tensor([0.8])
+                    for _ in range(
+                        max(0, 20 - len(residual_scale_values))
+                    )
+                ]
+            )
+            self.wrapped_param_prev = nn.ModuleList(
+                [
+                    ParameterWrapper(
+                        nn.Parameter(value.detach().clone().float())
+                    )
+                    for value in residual_scale_values
+                ]
+            )
+            if self.freeze_old_scales:
+                for idx in range(self.task_id):
+                    self.wrapped_param_prev[idx].param.requires_grad_(False)
+
+        for layer_index, blk in enumerate(vit_model.blocks):
+            if layer_index not in self.lora_layer:
+                continue
+            qkv = blk.attn.qkv
+            dim = qkv.in_features
+            a_q = nn.Linear(dim, r, bias=False)
+            a_v = nn.Linear(dim, r, bias=False)
+            b_q = nn.Linear(r, dim, bias=False)
+            b_v = nn.Linear(r, dim, bias=False)
+
+            offset = len(self.w_As)
+            self.w_As.extend([a_q, a_v])
+            self.w_Bs.extend([b_q, b_v])
+
+            if self.task_id > 0 and not self.train_a_current_task:
+                a_q.weight.data.copy_(shared_a[offset].to(a_q.weight.dtype))
+                a_v.weight.data.copy_(shared_a[offset + 1].to(a_v.weight.dtype))
+                a_q.weight.requires_grad_(False)
+                a_v.weight.requires_grad_(False)
+            elif self.task_id > 0:
+                a_q.weight.data.copy_(shared_a[offset].to(a_q.weight.dtype))
+                a_v.weight.data.copy_(shared_a[offset + 1].to(a_v.weight.dtype))
+            elif self.shared_a_orthogonal:
+                a_q.weight.data.copy_(
+                    _fixed_orthogonal_down(
+                        dim, r, 1729 + offset, dtype=a_q.weight.dtype
+                    )
+                )
+                a_v.weight.data.copy_(
+                    _fixed_orthogonal_down(
+                        dim, r, 1729 + offset + 1, dtype=a_v.weight.dtype
+                    )
+                )
+
+            if self.cumulative_state:
+                if (
+                    self.cumulative_merge
+                    == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+                ):
+                    agg_q = (
+                        self.aggregate_up[offset]
+                        if offset < len(self.aggregate_up)
+                        else torch.zeros(dim, r)
+                    )
+                    agg_v = (
+                        self.aggregate_up[offset + 1]
+                        if offset + 1 < len(self.aggregate_up)
+                        else torch.zeros(dim, r)
+                    )
+                    blk.attn.qkv = _LiveAAggregateQKV(
+                        qkv,
+                        a_q,
+                        a_v,
+                        b_q,
+                        b_v,
+                        agg_q,
+                        agg_v,
+                        self.wrapped_param,
+                        layer_index,
+                        history_groups=self.live_a_history_groups,
+                        historical_input_rms=(
+                            adaptive_a_input_rms[offset // 2]
+                            if len(adaptive_a_input_rms) > offset // 2
+                            else None
+                        ),
+                        historical_input_count=(
+                            float(adaptive_a_input_counts[offset // 2])
+                            if len(adaptive_a_input_counts) > offset // 2
+                            else 0.0
+                        ),
+                        capture_input_sketch=(
+                            self.adaptive_a_enabled
+                            and self.adaptive_a_strategy
+                            in (
+                                "risk_budgeted",
+                                "pareto_knee",
+                                "function_safe_pareto",
+                            )
+                        ),
+                        capture_effective_gradient=(
+                            self.adaptive_a_enabled
+                            and self.adaptive_a_strategy == "recoverability"
+                            and self.recoverability_stage != "exact_risk"
+                            and self.task_id > 0
+                        ),
+                        recoverability_sketch_rank=self.recoverability_sketch_rank,
+                        normalize_current_branch=self.normalize_current_branch,
+                        history_forward=self.live_a_history_forward,
+                    )
+                elif self.cumulative_merge == SA_MERGE_MODE_SBGC:
+                    if offset < len(self.sbgc_projection_down):
+                        projection_q = self.sbgc_projection_down[offset]
+                        unified_up_q = self.sbgc_unified_up[offset]
+                        covariance_q = self.sbgc_projected_covariance[offset]
+                        sensitivity_q = self.sbgc_sensitivity_diag[offset]
+                        covariance_count_q = self.sbgc_covariance_count[offset]
+                        sensitivity_count_q = self.sbgc_sensitivity_count[offset]
+                        projection_v = self.sbgc_projection_down[offset + 1]
+                        unified_up_v = self.sbgc_unified_up[offset + 1]
+                        covariance_v = self.sbgc_projected_covariance[offset + 1]
+                        sensitivity_v = self.sbgc_sensitivity_diag[offset + 1]
+                        covariance_count_v = self.sbgc_covariance_count[offset + 1]
+                        sensitivity_count_v = self.sbgc_sensitivity_count[offset + 1]
+                    else:
+                        projection_q = row_orthonormal_projection(
+                            a_q.weight.detach().cpu()
+                        )
+                        projection_v = row_orthonormal_projection(
+                            a_v.weight.detach().cpu()
+                        )
+                        unified_up_q = torch.zeros(dim, r)
+                        unified_up_v = torch.zeros(dim, r)
+                        covariance_q = torch.zeros(r, r)
+                        covariance_v = torch.zeros(r, r)
+                        sensitivity_q = torch.zeros(dim)
+                        sensitivity_v = torch.zeros(dim)
+                        covariance_count_q = 0.0
+                        covariance_count_v = 0.0
+                        sensitivity_count_q = 0.0
+                        sensitivity_count_v = 0.0
+                    blk.attn.qkv = _SensitivityBudgetedGQKV(
+                        qkv,
+                        a_q,
+                        a_v,
+                        b_q,
+                        b_v,
+                        projection_q,
+                        unified_up_q,
+                        projection_v,
+                        unified_up_v,
+                        self.wrapped_param,
+                        layer_index,
+                        projected_covariance_q=covariance_q,
+                        projected_covariance_v=covariance_v,
+                        sensitivity_q=sensitivity_q,
+                        sensitivity_v=sensitivity_v,
+                        covariance_count_q=covariance_count_q,
+                        covariance_count_v=covariance_count_v,
+                        sensitivity_count_q=sensitivity_count_q,
+                        sensitivity_count_v=sensitivity_count_v,
+                        train_projected=(
+                            self.g_train_projected and self.task_id > 0
+                        ),
+                        risk_budget=self.g_risk_budget,
+                    )
+                elif self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+                    if offset < len(self.cuo_projection_down):
+                        projection_q = self.cuo_projection_down[offset]
+                        unified_up_q = self.cuo_unified_up[offset]
+                        projected_gram_q = self.cuo_projected_gram[offset]
+                        projection_v = self.cuo_projection_down[offset + 1]
+                        unified_up_v = self.cuo_unified_up[offset + 1]
+                        projected_gram_v = self.cuo_projected_gram[offset + 1]
+                    else:
+                        projection_q = row_orthonormal_projection(
+                            a_q.weight.detach().cpu()
+                        )
+                        projection_v = row_orthonormal_projection(
+                            a_v.weight.detach().cpu()
+                        )
+                        unified_up_q = torch.zeros(dim, r)
+                        unified_up_v = torch.zeros(dim, r)
+                        projected_gram_q = torch.zeros(r, r)
+                        projected_gram_v = torch.zeros(r, r)
+                    blk.attn.qkv = _CUOLowRankQKV(
+                        qkv,
+                        a_q,
+                        a_v,
+                        b_q,
+                        b_v,
+                        projection_q,
+                        unified_up_q,
+                        projection_v,
+                        unified_up_v,
+                        self.wrapped_param,
+                        layer_index,
+                        projected_gram_q=projected_gram_q,
+                        projected_gram_v=projected_gram_v,
+                    )
+                else:
+                    if offset < len(self.cumulative_up):
+                        h_q = self.cumulative_up[offset]
+                        q_q_t = self.canonical_down[offset]
+                        h_v = self.cumulative_up[offset + 1]
+                        q_v_t = self.canonical_down[offset + 1]
+                    else:
+                        h_q = torch.zeros(dim, r)
+                        h_v = torch.zeros(dim, r)
+                        q_q_t, _ = canonical_down_projection(
+                            a_q.weight.detach().cpu()
+                        )
+                        q_v_t, _ = canonical_down_projection(
+                            a_v.weight.detach().cpu()
+                        )
+                    blk.attn.qkv = _CumulativeSharedAQKV(
+                        qkv,
+                        a_q,
+                        a_v,
+                        b_q,
+                        b_v,
+                        h_q,
+                        q_q_t,
+                        h_v,
+                        q_v_t,
+                        self.wrapped_param,
+                        layer_index,
+                    )
+            else:
+                saved_b_q = [
+                    self.saved_b_tasks[task_id][offset]
+                    for task_id in range(self.task_id)
+                ]
+                saved_b_v = [
+                    self.saved_b_tasks[task_id][offset + 1]
+                    for task_id in range(self.task_id)
+                ]
+                blk.attn.qkv = _SharedAQKV(
+                    qkv,
+                    a_q,
+                    a_v,
+                    b_q,
+                    b_v,
+                    saved_b_q,
+                    saved_b_v,
+                    self.wrapped_param,
+                    self.wrapped_param_prev,
+                    layer_index,
+                    normalize_current_branch=self.normalize_current_branch,
+                )
+
+        self.reset_parameters()
+        if (
+            not self.cumulative_state
+            and self.task_id > 0
+            and self.train_a_all_tasks
+        ):
+            self._capture_old_operator_reference()
+        self.lora_vit = vit_model
+        self.lora_vit.head = nn.Identity()
+        self.out_dim = 768
+        if (
+            self.adaptive_a_enabled
+            and self.adaptive_a_strategy == "recoverability"
+        ):
+            self._initialize_recoverability_state()
+        elif (
+            self.adaptive_a_enabled
+            and self.adaptive_a_strategy == "operator_energy_partition"
+            and initialize_training_partition
+        ):
+            # index=False also constructs later training tasks. Only an
+            # explicit deployment rebuild skips training partitioning.
+            self._initialize_operator_energy_partition()
+
+    def _recoverability_wrappers(self):
+        wrappers = [
+            block.attn.qkv
+            for block in self.lora_vit.blocks
+            if isinstance(block.attn.qkv, _LiveAAggregateQKV)
+        ]
+        if len(wrappers) * 2 != len(self.w_As):
+            raise RuntimeError(
+                "recoverability wrapper topology does not match shared-A branches"
+            )
+        return wrappers
+
+    def prepare_hoep_activation_calibration(self):
+        """Enable eval-only input-second-moment collection for every block."""
+
+        if self.adaptive_a_strategy != "operator_energy_partition":
+            raise RuntimeError("HOEP calibration requires operator-energy strategy")
+        wrappers = self._recoverability_wrappers()
+        for wrapper in wrappers:
+            wrapper.begin_hoep_activation_calibration()
+
+    def finalize_hoep_activation_calibration(self):
+        """All-reduce and merge one deterministic calibration pass."""
+
+        summaries = []
+        for wrapper in self._recoverability_wrappers():
+            rms, count = wrapper.finalize_hoep_activation_calibration()
+            summaries.append(
+                {
+                    "layer": wrapper.layer_index,
+                    "token_count": float(count),
+                    "finite": bool(torch.isfinite(rms).all()),
+                    "minimum_second_moment": float(rms.square().min()),
+                    "maximum_second_moment": float(rms.square().max()),
+                }
+            )
+        return summaries
+
+    def _initialize_recoverability_state(self):
+        """Canonicalize row bases and freeze one task-local operator anchor."""
+        wrappers = self._recoverability_wrappers()
+        canonical_aggregate = []
+        with torch.no_grad():
+            for wrapper in wrappers:
+                for a_module, b_module, aggregate in (
+                    (wrapper.a_q, wrapper.b_q, wrapper.aggregate_q),
+                    (wrapper.a_v, wrapper.b_v, wrapper.aggregate_v),
+                ):
+                    old_a = a_module.weight.detach().clone()
+                    old_norm = torch.linalg.vector_norm(old_a) + self.adaptive_a_eps
+                    canonical_a, triangular = canonical_down_projection(old_a)
+                    canonical_a = canonical_a.to(
+                        device=old_a.device, dtype=old_a.dtype
+                    )
+                    triangular = triangular.to(
+                        device=old_a.device, dtype=old_a.dtype
+                    )
+                    canonical_norm = torch.linalg.vector_norm(canonical_a)
+                    aggregate_new = (
+                        aggregate.to(device=old_a.device, dtype=old_a.dtype)
+                        @ triangular.t()
+                        * (canonical_norm / old_norm)
+                    )
+                    b_module.weight.copy_(b_module.weight @ triangular.t())
+                    a_module.weight.copy_(canonical_a)
+                    aggregate.copy_(aggregate_new.to(aggregate.dtype))
+                    canonical_aggregate.append(aggregate.detach().cpu().float().clone())
+                wrapper.set_recoverability_anchor()
+            self.aggregate_up = canonical_aggregate
+            self._live_a_previous_shared_a = [
+                module.weight.detach().cpu().float().clone()
+                for module in self.w_As
+            ]
+
+    def _initialize_operator_energy_partition(self):
+        """Canonicalize, diagonalize historical energy, and allocate plastic rows."""
+        if self.task_id == 0:
+            self._hoep_partition_diagnostics = {
+                "strategy": "operator_energy_partition",
+                "task_zero_skipped": True,
+                "energy_budget": self.hoep_energy_budget,
+                "selected_directions": self.rank * len(self.w_As),
+                "total_directions": self.rank * len(self.w_As),
+                "selected_energy_ratio": 0.0,
+                "max_initial_operator_error": 0.0,
+            }
+            return
+
+        wrappers = self._recoverability_wrappers()
+        branches = []
+        spectra = []
+        activation_factors = []
+        functional_spectra = []
+        max_operator_error = 0.0
+        functional_requested = (
+            self.hoep_functional_diagnostics
+            or self.hoep_energy_metric == "functional_diag"
+        )
+        with torch.no_grad():
+            for wrapper in wrappers:
+                for a_module, b_module, aggregate in (
+                    (wrapper.a_q, wrapper.b_q, wrapper.aggregate_q),
+                    (wrapper.a_v, wrapper.b_v, wrapper.aggregate_v),
+                ):
+                    old_a = a_module.weight.detach().clone()
+                    old_b = b_module.weight.detach().clone()
+                    old_g = aggregate.detach().clone()
+                    old_norm = torch.linalg.vector_norm(old_a).clamp_min(
+                        self.adaptive_a_eps
+                    )
+                    canonical_a, canonical_g, canonical_b = (
+                        canonicalize_operator_coordinates(
+                            old_a,
+                            old_g.to(old_a),
+                            old_b,
+                            self.adaptive_a_eps,
+                        )
+                    )
+                    eigenvalues, eigenvectors = historical_energy_coordinates(
+                        canonical_g, canonical_a, self.adaptive_a_eps
+                    )
+                    rotated_a, rotated_g, rotated_b = rotate_operator_coordinates(
+                        canonical_a,
+                        canonical_g,
+                        canonical_b,
+                        eigenvectors,
+                    )
+                    historical_before = old_g.to(old_a) @ old_a / old_norm
+                    historical_after = (
+                        rotated_g.to(old_a)
+                        @ rotated_a
+                        / torch.linalg.vector_norm(rotated_a).clamp_min(
+                            self.adaptive_a_eps
+                        )
+                    )
+                    current_before = old_b @ old_a
+                    current_after = rotated_b @ rotated_a
+                    historical_error = torch.linalg.matrix_norm(
+                        historical_after - historical_before
+                    ) / torch.linalg.matrix_norm(historical_before).clamp_min(
+                        self.adaptive_a_eps
+                    )
+                    current_error = torch.linalg.matrix_norm(
+                        current_after - current_before
+                    ) / torch.linalg.matrix_norm(current_before).clamp_min(
+                        self.adaptive_a_eps
+                    )
+                    max_operator_error = max(
+                        max_operator_error,
+                        float(historical_error),
+                        float(current_error),
+                    )
+                    branches.append(
+                        (
+                            a_module,
+                            b_module,
+                            aggregate,
+                            rotated_a,
+                            rotated_b,
+                            rotated_g,
+                        )
+                    )
+                    spectra.append(eigenvalues)
+
+                    if functional_requested:
+                        if wrapper.historical_input_count <= 0:
+                            raise RuntimeError(
+                                "functional HOEP requires positive historical "
+                                "activation token counts"
+                            )
+                        second_moment = wrapper.historical_input_rms.square()
+                        q_values, functional_values = (
+                            diagonal_functional_energies(
+                                rotated_a,
+                                eigenvalues,
+                                second_moment.to(rotated_a),
+                            )
+                        )
+                        activation_factors.append(q_values)
+                        functional_spectra.append(functional_values)
+
+            operator_partition = select_global_low_energy_partition(
+                spectra,
+                self.hoep_energy_budget,
+                self.hoep_eigenvalue_rtol,
+                self.adaptive_a_eps,
+            )
+            functional_partition = None
+            if functional_requested:
+                functional_partition = select_global_low_energy_partition(
+                    functional_spectra,
+                    self.hoep_energy_budget,
+                    self.hoep_eigenvalue_rtol,
+                    self.adaptive_a_eps,
+                    tie_spectra=spectra,
+                )
+            partition = (
+                functional_partition
+                if self.hoep_energy_metric == "functional_diag"
+                else operator_partition
+            )
+            canonical_aggregate = []
+            self._hoep_plastic_masks = []
+            self._hoep_anchor_a = []
+            for branch, plastic_mask in zip(branches, partition.plastic_masks):
+                (
+                    a_module,
+                    b_module,
+                    aggregate,
+                    rotated_a,
+                    rotated_b,
+                    rotated_g,
+                ) = branch
+                a_module.weight.copy_(rotated_a)
+                b_module.weight.copy_(rotated_b)
+                aggregate.copy_(rotated_g.to(aggregate))
+                self._hoep_plastic_masks.append(
+                    plastic_mask.to(device=a_module.weight.device)
+                )
+                self._hoep_anchor_a.append(rotated_a.detach().clone())
+                canonical_aggregate.append(
+                    rotated_g.detach().cpu().float().clone()
+                )
+
+            self.aggregate_up = canonical_aggregate
+            self._live_a_previous_shared_a = [
+                module.weight.detach().cpu().float().clone()
+                for module in self.w_As
+            ]
+            selected_ratio = (
+                partition.selected_energy / partition.total_energy
+                if partition.total_energy > self.adaptive_a_eps
+                else 0.0
+            )
+            self._hoep_partition_diagnostics = {
+                "strategy": "operator_energy_partition",
+                "energy_metric": self.hoep_energy_metric,
+                "task_zero_skipped": False,
+                "energy_budget": self.hoep_energy_budget,
+                "total_energy": partition.total_energy,
+                "selected_energy": partition.selected_energy,
+                "budget_energy": partition.budget_energy,
+                "selected_energy_ratio": selected_ratio,
+                "selected_directions": partition.selected_directions,
+                "total_directions": partition.total_directions,
+                "tie_groups": partition.tie_groups,
+                "max_initial_operator_error": max_operator_error,
+            }
+            if functional_partition is not None:
+                flat_operator = torch.cat(
+                    [values.detach().cpu().double() for values in spectra]
+                )
+                flat_functional = torch.cat(
+                    [
+                        values.detach().cpu().double()
+                        for values in functional_spectra
+                    ]
+                )
+                operator_functional_exposure = sum(
+                    float(values.detach().cpu().double()[mask.cpu()].sum())
+                    for values, mask in zip(
+                        functional_spectra, operator_partition.plastic_masks
+                    )
+                ) / max(float(flat_functional.sum()), self.adaptive_a_eps)
+                functional_operator_exposure = sum(
+                    float(values.detach().cpu().double()[mask.cpu()].sum())
+                    for values, mask in zip(
+                        spectra, functional_partition.plastic_masks
+                    )
+                ) / max(float(flat_operator.sum()), self.adaptive_a_eps)
+                jaccard = mask_jaccard(
+                    operator_partition.plastic_masks,
+                    functional_partition.plastic_masks,
+                )
+                correlation = spearman_rank_correlation(
+                    flat_operator, flat_functional
+                )
+                branch_records = []
+                for branch_index, (
+                    operator_values,
+                    q_values,
+                    functional_values,
+                    operator_mask,
+                    functional_mask,
+                ) in enumerate(
+                    zip(
+                        spectra,
+                        activation_factors,
+                        functional_spectra,
+                        operator_partition.plastic_masks,
+                        functional_partition.plastic_masks,
+                    )
+                ):
+                    wrapper = wrappers[branch_index // 2]
+                    branch_functional_total = max(
+                        float(functional_values.sum()), self.adaptive_a_eps
+                    )
+                    branch_operator_total = max(
+                        float(operator_values.sum()), self.adaptive_a_eps
+                    )
+                    branch_records.append(
+                        {
+                            "branch": branch_index,
+                            "layer": branch_index // 2,
+                            "projection": "q" if branch_index % 2 == 0 else "v",
+                            "operator_energy": operator_values.detach().cpu(),
+                            "activation_factor": q_values.detach().cpu(),
+                            "functional_energy": functional_values.detach().cpu(),
+                            "operator_mask": operator_mask.detach().cpu(),
+                            "functional_mask": functional_mask.detach().cpu(),
+                            "tie_group_ids": spectral_tie_group_ids(
+                                operator_values.detach().cpu(),
+                                self.hoep_eigenvalue_rtol,
+                            ),
+                            "token_count": float(
+                                wrapper.historical_input_count
+                            ),
+                            "spearman": spearman_rank_correlation(
+                                operator_values, functional_values
+                            ),
+                            "operator_selected_directions": int(
+                                operator_mask.sum()
+                            ),
+                            "functional_selected_directions": int(
+                                functional_mask.sum()
+                            ),
+                            "operator_mask_functional_energy_ratio": float(
+                                functional_values[operator_mask].sum()
+                            )
+                            / branch_functional_total,
+                            "functional_mask_operator_energy_ratio": float(
+                                operator_values[functional_mask].sum()
+                            )
+                            / branch_operator_total,
+                        }
+                    )
+                layer_records = []
+                for layer_index in range(len(wrappers)):
+                    records = branch_records[2 * layer_index : 2 * layer_index + 2]
+                    layer_operator = torch.cat(
+                        [item["operator_energy"].double() for item in records]
+                    )
+                    layer_functional = torch.cat(
+                        [item["functional_energy"].double() for item in records]
+                    )
+                    layer_operator_mask = torch.cat(
+                        [item["operator_mask"].bool() for item in records]
+                    )
+                    layer_functional_mask = torch.cat(
+                        [item["functional_mask"].bool() for item in records]
+                    )
+                    layer_records.append(
+                        {
+                            "layer": layer_index,
+                            "token_count": records[0]["token_count"],
+                            "jaccard": mask_jaccard(
+                                [layer_operator_mask], [layer_functional_mask]
+                            ),
+                            "spearman": spearman_rank_correlation(
+                                layer_operator, layer_functional
+                            ),
+                            "operator_selected_directions": int(
+                                layer_operator_mask.sum()
+                            ),
+                            "functional_selected_directions": int(
+                                layer_functional_mask.sum()
+                            ),
+                            "operator_mask_functional_energy_ratio": float(
+                                layer_functional[layer_operator_mask].sum()
+                            )
+                            / max(
+                                float(layer_functional.sum()),
+                                self.adaptive_a_eps,
+                            ),
+                            "functional_mask_operator_energy_ratio": float(
+                                layer_operator[layer_functional_mask].sum()
+                            )
+                            / max(
+                                float(layer_operator.sum()),
+                                self.adaptive_a_eps,
+                            ),
+                        }
+                    )
+                self._hoep_functional_diagnostic_record = {
+                    "version": 1,
+                    "task_id": self.task_id,
+                    "energy_metric": self.hoep_energy_metric,
+                    "energy_budget": self.hoep_energy_budget,
+                    "surrogate": (
+                        "diagonal-activation-weighted, per-transition "
+                        "historical branch-output energy surrogate"
+                    ),
+                    "branches": branch_records,
+                    "layers": layer_records,
+                    "global": {
+                        "jaccard": jaccard,
+                        "spearman": correlation,
+                        "operator_mask_functional_energy_ratio": (
+                            operator_functional_exposure
+                        ),
+                        "functional_mask_operator_energy_ratio": (
+                            functional_operator_exposure
+                        ),
+                        "operator_selected_directions": (
+                            operator_partition.selected_directions
+                        ),
+                        "functional_selected_directions": (
+                            functional_partition.selected_directions
+                        ),
+                        "total_directions": partition.total_directions,
+                        "functional_mixed_branch_fraction": sum(
+                            0 < int(mask.sum()) < mask.numel()
+                            for mask in functional_partition.plastic_masks
+                        )
+                        / len(functional_partition.plastic_masks),
+                        "finite": bool(
+                            torch.isfinite(flat_operator).all()
+                            and torch.isfinite(flat_functional).all()
+                        ),
+                    },
+                }
+                self._hoep_partition_diagnostics.update(
+                    {
+                        "functional_jaccard": jaccard,
+                        "functional_spearman": correlation,
+                        "operator_mask_functional_energy_ratio": (
+                            operator_functional_exposure
+                        ),
+                        "functional_selected_directions": (
+                            functional_partition.selected_directions
+                        ),
+                    }
+                )
+
+    def hoep_functional_diagnostic_record(self):
+        return self._hoep_functional_diagnostic_record
+
+    def apply_operator_energy_partition_gradients(self, optimizer=None):
+        """Restrict shared-A gradients to the selected low-energy rows."""
+        if self.adaptive_a_strategy != "operator_energy_partition":
+            return None
+        if self.task_id == 0:
+            return {"skipped": True, "reason": "task_zero"}
+        if len(self._hoep_plastic_masks) != len(self.w_As):
+            raise RuntimeError("operator-energy partition was not initialized")
+        with torch.no_grad():
+            for module, plastic_mask in zip(
+                self.w_As, self._hoep_plastic_masks
+            ):
+                if module.weight.grad is None:
+                    continue
+                projected_gradient = project_partition_gradient(
+                    module.weight.grad,
+                    module.weight,
+                    plastic_mask,
+                )
+                # torch.optim.SGD adds coupled L2 decay after this hook.  A is
+                # a row-orthonormal manifold variable for t>0, so its radial
+                # decay must be cancelled rather than transferred into B by
+                # the subsequent operator-preserving reparameterization.
+                weight_decay = 0.0
+                if optimizer is not None:
+                    matching_groups = [
+                        group
+                        for group in optimizer.param_groups
+                        if any(
+                            parameter is module.weight
+                            for parameter in group["params"]
+                        )
+                    ]
+                    if len(matching_groups) != 1:
+                        raise RuntimeError(
+                            "shared-A parameter must belong to exactly one "
+                            "optimizer group"
+                        )
+                    weight_decay = float(
+                        matching_groups[0].get("weight_decay", 0.0)
+                    )
+                module.weight.grad.copy_(
+                    projected_gradient - weight_decay * module.weight
+                )
+                if optimizer is not None:
+                    momentum = optimizer.state.get(module.weight, {}).get(
+                        "momentum_buffer"
+                    )
+                    if momentum is not None:
+                        momentum.copy_(
+                            project_partition_gradient(
+                                momentum, module.weight, plastic_mask
+                            )
+                        )
+        return {"skipped": False}
+
+    def apply_operator_energy_partition_step(self, optimizer=None):
+        """Retract the partitioned basis and preserve both branch operators."""
+        if self.adaptive_a_strategy != "operator_energy_partition":
+            return None
+        if self.task_id == 0:
+            return {"skipped": True, "reason": "task_zero"}
+        wrappers = self._recoverability_wrappers()
+        branches = [
+            branch
+            for wrapper in wrappers
+            for branch in (
+                (wrapper.a_q, wrapper.b_q, wrapper.aggregate_q),
+                (wrapper.a_v, wrapper.b_v, wrapper.aggregate_v),
+            )
+        ]
+        step_stats = []
+        with torch.no_grad():
+            for index, ((a_module, b_module, aggregate), mask, anchor) in enumerate(
+                zip(branches, self._hoep_plastic_masks, self._hoep_anchor_a)
+            ):
+                new_a, new_g, new_b, coordinate_map, diagnostics = (
+                    retract_partitioned_coordinates(
+                        a_module.weight,
+                        anchor,
+                        aggregate,
+                        b_module.weight,
+                        mask,
+                        self.adaptive_a_eps,
+                    )
+                )
+                a_module.weight.copy_(new_a)
+                b_module.weight.copy_(new_b)
+                aggregate.copy_(new_g)
+                diagnostics["branch"] = index
+                diagnostics["plastic_directions"] = int(mask.sum())
+                step_stats.append(diagnostics)
+                if optimizer is None:
+                    continue
+                a_momentum = optimizer.state.get(a_module.weight, {}).get(
+                    "momentum_buffer"
+                )
+                if a_momentum is not None:
+                    a_momentum.copy_(
+                        project_partition_gradient(a_momentum, new_a, mask)
+                    )
+                b_momentum = optimizer.state.get(b_module.weight, {}).get(
+                    "momentum_buffer"
+                )
+                if b_momentum is not None:
+                    b_momentum.copy_(b_momentum @ coordinate_map)
+        summary = {
+            "max_orthogonality_error": max(
+                (item["orthogonality_error"] for item in step_stats),
+                default=0.0,
+            ),
+            "max_rowspace_reconstruction_error": max(
+                (
+                    item["rowspace_reconstruction_error"]
+                    for item in step_stats
+                ),
+                default=0.0,
+            ),
+            "max_historical_operator_error": max(
+                (item["historical_operator_error"] for item in step_stats),
+                default=0.0,
+            ),
+            "max_current_operator_error": max(
+                (item["current_operator_error"] for item in step_stats),
+                default=0.0,
+            ),
+        }
+        self._hoep_step_count += 1
+        for key, value in summary.items():
+            self._hoep_step_maxima[key] = max(
+                self._hoep_step_maxima[key], value
+            )
+        return summary
+
+    @staticmethod
+    def _distributed_average_tensors(tensors):
+        if not tensors:
+            return tensors
+        if not (dist.is_available() and dist.is_initialized()):
+            return tensors
+        shapes = [tensor.shape for tensor in tensors]
+        sizes = [tensor.numel() for tensor in tensors]
+        packed = torch.cat([tensor.reshape(-1) for tensor in tensors])
+        dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+        packed.div_(dist.get_world_size())
+        outputs = []
+        offset = 0
+        for shape, size in zip(shapes, sizes):
+            outputs.append(packed[offset : offset + size].reshape(shape))
+            offset += size
+        return outputs
+
+    def _set_recoverability_capture_for_next_step(self):
+        enabled = (
+            self.task_id > 0
+            and self.recoverability_stage != "exact_risk"
+            and self._recoverability_step % self.recoverability_interval == 0
+        )
+        for wrapper in self._recoverability_wrappers():
+            wrapper.capture_effective_gradient = enabled
+
+    def prepare_recoverability_step(self, step_size=1.0):
+        """Prepare a post-optimizer row-space update from synchronized signals."""
+        if self.adaptive_a_strategy != "recoverability":
+            return None
+        if self._recoverability_pending_bases is not None:
+            raise RuntimeError("previous recoverability step has not been applied")
+        if self.task_id == 0:
+            self._set_recoverability_capture_for_next_step()
+            return {
+                "stage": self.recoverability_stage,
+                "skipped": True,
+                "reason": "task_zero",
+                "selected_gammas": [],
+            }
+        wrappers = self._recoverability_wrappers()
+        if (
+            self.recoverability_stage == "exact_risk"
+            and not self._recoverability_exact_b_warmup_checked
+        ):
+            current_b_is_zero = all(
+                torch.count_nonzero(module.weight.detach()) == 0
+                for module in self.w_Bs
+            )
+            self._recoverability_exact_b_warmup_checked = True
+            if current_b_is_zero:
+                for module in self.w_As:
+                    if module.weight.grad is not None:
+                        module.weight.grad.zero_()
+                self._recoverability_step += 1
+                self._set_recoverability_capture_for_next_step()
+                return {
+                    "stage": self.recoverability_stage,
+                    "skipped": True,
+                    "reason": "current_b_zero_warmup",
+                    "selected_gammas": [],
+                }
+        branch_records = []
+        effective_gradients = []
+        if self.recoverability_stage != "exact_risk":
+            for wrapper in wrappers:
+                effective_gradients.extend(
+                    wrapper.consume_effective_weight_gradients()
+                )
+            if any(gradient is None for gradient in effective_gradients):
+                for module in self.w_As:
+                    if module.weight.grad is not None:
+                        module.weight.grad.zero_()
+                self._recoverability_step += 1
+                self._set_recoverability_capture_for_next_step()
+                return {
+                    "stage": self.recoverability_stage,
+                    "skipped": True,
+                    "selected_gammas": [],
+                }
+            effective_gradients = self._distributed_average_tensors(
+                effective_gradients
+            )
+
+        branch_index = 0
+        for wrapper in wrappers:
+            for a_module, anchor_a, anchor_up in (
+                (
+                    wrapper.a_q,
+                    wrapper.recoverability_anchor_a_q,
+                    wrapper.recoverability_anchor_up_q,
+                ),
+                (
+                    wrapper.a_v,
+                    wrapper.recoverability_anchor_a_v,
+                    wrapper.recoverability_anchor_up_v,
+                ),
+            ):
+                basis = a_module.weight.detach()
+                if self.recoverability_stage == "exact_risk":
+                    gradient = a_module.weight.grad
+                    if gradient is None:
+                        raise RuntimeError(
+                            "exact recoverability requires synchronized shared-A gradients"
+                        )
+                    normal_gradient = gradient - (
+                        gradient @ basis.t()
+                    ) @ basis
+                    candidates = []
+                    for gamma in self.recoverability_gammas:
+                        if gamma == 0.0:
+                            candidate = basis.clone()
+                        else:
+                            candidate = row_polar_retraction(
+                                basis - float(step_size) * gamma * normal_gradient
+                            )
+                        utility = -float(
+                            torch.sum(gradient.detach() * (candidate - basis))
+                        )
+                        candidates.append((gamma, candidate, utility))
+                else:
+                    h = effective_gradients[branch_index]
+                    direction = grassmann_accessibility_direction_from_gradient(
+                        h, basis
+                    )
+                    h_energy = h.square().sum()
+                    generated = accessibility_candidates(
+                        basis,
+                        direction,
+                        gradient_energy=h_energy,
+                        gammas=self.recoverability_gammas,
+                        step_size=self.recoverability_step_size,
+                        eps=self.adaptive_a_eps,
+                    )
+                    baseline = accessibility_energy(h @ basis.t(), basis)
+                    candidates = []
+                    for gamma, candidate in generated:
+                        value = accessibility_energy(
+                            h @ candidate.t(), candidate
+                        )
+                        candidates.append(
+                            (gamma, candidate, float(value - baseline))
+                        )
+
+                entries = []
+                for gamma, candidate, utility in candidates:
+                    history, _, residual = recoverability_energies(
+                        anchor_up, anchor_a, candidate
+                    )
+                    entries.append(
+                        {
+                            "gamma": float(gamma),
+                            "utility": float(utility),
+                            "residual": float(residual),
+                            "history": float(history),
+                        }
+                    )
+                branch_records.append(
+                    {"module": a_module, "candidates": candidates, "entries": entries}
+                )
+                branch_index += 1
+
+        layers = [record["entries"] for record in branch_records]
+        if self.task_id == 0:
+            indices = [len(layer) - 1 for layer in layers]
+            selection = {
+                "indices": indices,
+                "utility": sum(
+                    float(layer[index]["utility"])
+                    for layer, index in zip(layers, indices)
+                ),
+                "risk": 0.0,
+            }
+        elif self.recoverability_stage == "global_budget":
+            selection = choose_global_recoverability_candidates(
+                layers, risk_budget=self.recoverability_budget
+            )
+        else:
+            selection = choose_local_recoverability_candidates(
+                layers, risk_budget=self.recoverability_budget
+            )
+        pending = []
+        selected_gammas = []
+        for record, selected_index in zip(branch_records, selection["indices"]):
+            gamma, candidate, _ = record["candidates"][selected_index]
+            pending.append(candidate.detach().clone())
+            selected_gammas.append(float(gamma))
+            if record["module"].weight.grad is not None:
+                record["module"].weight.grad.zero_()
+        self._recoverability_pending_bases = pending
+        observation = {
+            "stage": self.recoverability_stage,
+            "selected_gammas": selected_gammas,
+            "risk": float(selection["risk"]),
+            "utility": float(selection["utility"]),
+            "skipped": False,
+        }
+        self._recoverability_observations.append(observation)
+        self._recoverability_step += 1
+        self._set_recoverability_capture_for_next_step()
+        return observation
+
+    def realign_recoverability_history(self):
+        """Express the immutable task-start anchor in each current row basis."""
+        if self.recoverability_stage not in (
+            "anchor_realign",
+            "global_budget",
+        ):
+            return
+        with torch.no_grad():
+            for wrapper in self._recoverability_wrappers():
+                for a_module, aggregate, anchor_a, anchor_up in (
+                    (
+                        wrapper.a_q,
+                        wrapper.aggregate_q,
+                        wrapper.recoverability_anchor_a_q,
+                        wrapper.recoverability_anchor_up_q,
+                    ),
+                    (
+                        wrapper.a_v,
+                        wrapper.aggregate_v,
+                        wrapper.recoverability_anchor_a_v,
+                        wrapper.recoverability_anchor_up_v,
+                    ),
+                ):
+                    aligned_effective = align_to_anchor(
+                        anchor_up, anchor_a, a_module.weight
+                    )
+                    raw_aggregate = aligned_effective * torch.linalg.vector_norm(
+                        a_module.weight
+                    )
+                    aggregate.copy_(raw_aggregate.to(aggregate.dtype))
+
+    def apply_recoverability_step(self, optimizer=None):
+        """Install the accepted basis after SGD and optionally realign history."""
+        if self._recoverability_pending_bases is None:
+            return None
+        with torch.no_grad():
+            for module, candidate in zip(
+                self.w_As, self._recoverability_pending_bases
+            ):
+                module.weight.copy_(candidate)
+                if optimizer is not None:
+                    optimizer.state[module.weight].clear()
+        self._recoverability_pending_bases = None
+        self.realign_recoverability_history()
+        return self._recoverability_observations[-1]
+
+    def _capture_old_operator_reference(self):
+        """Snapshot the historical LoRA operator before shared A is updated."""
+        self._operator_reference_task_count = self.task_id
+        reference_scales = [
+            self.wrapped_param_prev[task_id].param.detach().cpu().clone()
+            for task_id in range(self.task_id)
+        ]
+        self._operator_reference_down = [
+            w_a.weight.detach().cpu().clone() for w_a in self.w_As
+        ]
+        self._operator_reference_up = []
+        for index in range(len(self.w_As)):
+            historical_up = [
+                self.saved_b_tasks[task_id][index]
+                for task_id in range(self.task_id)
+            ]
+            self._operator_reference_up.append(
+                aggregate_normalized_up_projections(
+                    historical_up, reference_scales
+                ).detach().cpu()
+            )
+
+    def old_operator_stability_loss(self):
+        """Relative drift of all historical Shared-A LoRA Q/V operators.
+
+        The live term includes the current values of historical task scales;
+        therefore it protects the exact old LoRA bank used in the forward pass,
+        not just the shared down projection in isolation.
+        """
+        if self.cumulative_state:
+            # The historical operator is fixed in canonical coordinates while
+            # the current task trains; the gauge residual is logged separately.
+            return self.w_As[0].weight.new_zeros(())
+        if self._operator_reference_task_count == 0:
+            return self.w_As[0].weight.new_zeros(())
+        if not self._operator_reference_down or not self._operator_reference_up:
+            raise RuntimeError("missing Shared-A historical operator reference")
+
+        current_scales = [
+            self.wrapped_param_prev[task_id].param
+            for task_id in range(self._operator_reference_task_count)
+        ]
+        losses = []
+        for index, w_a in enumerate(self.w_As):
+            historical_up = [
+                self.saved_b_tasks[task_id][index]
+                for task_id in range(self._operator_reference_task_count)
+            ]
+            current_up = aggregate_normalized_up_projections(
+                historical_up,
+                current_scales,
+                device=w_a.weight.device,
+                dtype=w_a.weight.dtype,
+            )
+            losses.append(
+                relative_effective_operator_drift(
+                    current_down=w_a.weight,
+                    reference_down=self._operator_reference_down[index],
+                    current_up=current_up,
+                    reference_up=self._operator_reference_up[index],
+                )
+            )
+        return torch.stack(losses).mean()
+
+    def cumulative_gauge_residual(self) -> float:
+        """Mean relative projection residual of the historical operator.
+
+        Computes ``||H_old Q_old^T (I - Q_new Q_new^T)||_F /
+        ||H_old Q_old^T||_F`` per branch with ``Q_new`` derived from the
+        current (trained) shared A.  Zero when no historical operator exists.
+        """
+        if not self.cumulative_state or not self.cumulative_up:
+            return 0.0
+        residuals = []
+        for idx, w_a in enumerate(self.w_As):
+            q_t, _ = canonical_down_projection(w_a.weight.detach().cpu())
+            h = self.cumulative_up[idx]
+            q_old_t = self.canonical_down[idx]
+            old_norm = (h.double() @ q_old_t.double()).norm()
+            rel = gauge_projection_residual(h, q_old_t, q_t) / (
+                old_norm + 1e-8
+            )
+            residuals.append(float(rel))
+        return float(torch.tensor(residuals).mean())
+
+    def _compute_gauge_diagnostics_between(
+        self, cumulative_up, canonical_down, q_t_list
+    ) -> dict:
+        """Per-branch gauge diagnostics between an old state and new bases.
+
+        ``cumulative_up``/``canonical_down`` describe the old historical
+        operator ``H_old Q_old^T`` and ``q_t_list`` are the new canonical
+        down-projections ``Q_new^T`` of the trained shared A.  Returns mean
+        relative projection residual (out-of-span part), RMS basis rotation
+        ``||Q_old^T Q_new - I||_F / sqrt(r)``, and relative operator
+        preservation error after closed-form gauge alignment.
+        """
+        if len(cumulative_up) == 0:
+            return {
+                "residual": 0.0,
+                "rotation_fro": 0.0,
+                "preservation": 0.0,
+                "branches": 0,
+            }
+        residuals = []
+        rotations = []
+        preservations = []
+        for idx, q_t in enumerate(q_t_list):
+            h = cumulative_up[idx]
+            q_old_t = canonical_down[idx]
+            old_operator = h.double() @ q_old_t.double()
+            old_norm = old_operator.norm()
+            rel_residual = gauge_projection_residual(h, q_old_t, q_t) / (
+                old_norm + 1e-8
+            )
+            identity = torch.eye(
+                q_old_t.shape[0], dtype=torch.float64
+            )
+            overlap = q_old_t.double() @ q_t.double().t()
+            rotation = (
+                overlap - identity
+            ).norm() / (q_old_t.shape[0] ** 0.5)
+            h_aligned = gauge_align_up_projection(h, q_old_t, q_t)
+            preservation = (
+                h_aligned.double() @ q_t.double() - old_operator
+            ).norm() / (old_norm + 1e-8)
+            residuals.append(float(rel_residual))
+            rotations.append(float(rotation))
+            preservations.append(float(preservation))
+        return {
+            "residual": float(torch.tensor(residuals).mean()),
+            "rotation_fro": float(torch.tensor(rotations).mean()),
+            "preservation": float(torch.tensor(preservations).mean()),
+            "branches": len(residuals),
+        }
+
+    def cumulative_gauge_diagnostics(self) -> dict:
+        """Current-state diagnostics (for tests and manual inspection).
+
+        NOTE: after ``_save_cumulative_state`` the stored state has already
+        been overwritten, so this method compares the new state with itself
+        and returns ~0.  Training logs must use
+        ``_last_cumulative_gauge_diagnostics``, which is captured before the
+        state is replaced.
+        """
+        if not self.cumulative_state or not self.cumulative_up:
+            return {
+                "residual": 0.0,
+                "rotation_fro": 0.0,
+                "preservation": 0.0,
+                "branches": 0,
+            }
+        q_t_list = [
+            canonical_down_projection(w_a.weight.detach().cpu())[0]
+            for w_a in self.w_As
+        ]
+        return self._compute_gauge_diagnostics_between(
+            self.cumulative_up, self.canonical_down, q_t_list
+        )
+
+    def apply_adaptive_a_gradients(
+        self,
+        control_gradients: list[Tensor | None] | None = None,
+        stability_gradients: list[Tensor | None] | None = None,
+        crossfit_gradients: tuple[
+            list[Tensor | None], list[Tensor | None]
+        ] | None = None,
+        step_size: float = 1.0,
+        momentum_buffers: list[Tensor | None] | None = None,
+        momentum: float = 0.0,
+        cached_modes: list[str] | None = None,
+        cached_utilities: list[float] | None = None,
+    ) -> dict | None:
+        """Apply the synchronized Adaptive-A gate to current shared-A grads."""
+        if not self.adaptive_a_enabled:
+            return None
+        if self._adaptive_a_statistics_task_id != self.task_id:
+            self._adaptive_a_gate_ema = {}
+            self._adaptive_a_observations = []
+            self._adaptive_a_statistics_task_id = self.task_id
+            self._adaptive_a_last_modes = {}
+            self._adaptive_a_previous_gradients = None
+            self._adaptive_a_last_effective_budget = None
+            self._adaptive_a_last_live_risk = None
+            self._adaptive_a_last_implied_risk_ratio = None
+            self._adaptive_a_last_pareto_points = None
+            self._adaptive_a_risk_ratios = []
+            self._adaptive_a_pareto_point_counts = []
+            self._functional_halfspace_observations = []
+        if self.adaptive_a_strategy == "functional_halfspace":
+            return self._apply_functional_halfspace_adaptive_a(
+                stability_gradients,
+                momentum_buffers=momentum_buffers,
+                momentum=momentum,
+            )
+        if self.adaptive_a_strategy in (
+            "pareto_knee",
+            "function_safe_pareto",
+        ):
+            if (cached_modes is None) != (cached_utilities is None):
+                raise ValueError(
+                    "cached Pareto modes and utilities must be provided together"
+                )
+            if crossfit_gradients is not None and cached_modes is not None:
+                raise ValueError(
+                    "crossfit gradients and cached Pareto modes are mutually exclusive"
+                )
+            if self.task_id > 0 and crossfit_gradients is None and cached_modes is None:
+                raise ValueError(
+                    "pareto_knee Adaptive-A requires crossfit gradients or cached modes"
+                )
+            return self._apply_risk_budgeted_adaptive_a(
+                control_gradients,
+                step_size=step_size,
+                momentum_buffers=momentum_buffers,
+                momentum=momentum,
+                crossfit_gradients=crossfit_gradients,
+                cached_modes=cached_modes,
+                cached_utilities=cached_utilities,
+                stability_gradients=stability_gradients,
+            )
+        if self.adaptive_a_strategy == "risk_budgeted":
+            if control_gradients is None:
+                control_gradients = self._adaptive_a_previous_gradients
+            return self._apply_risk_budgeted_adaptive_a(
+                control_gradients,
+                step_size=step_size,
+                momentum_buffers=momentum_buffers,
+                momentum=momentum,
+            )
+        if not 0.0 <= momentum < 1.0:
+            raise ValueError("momentum must be in [0, 1)")
+        momentum_by_parameter = {}
+        if momentum_buffers is not None:
+            if len(momentum_buffers) != len(self.w_As):
+                raise ValueError("momentum_buffers must match shared-A branches")
+            momentum_by_parameter = {
+                id(module.weight): buffer
+                for module, buffer in zip(self.w_As, momentum_buffers)
+            }
+
+        def _effective_gradient(parameter, gradient):
+            buffer = momentum_by_parameter.get(id(parameter))
+            if buffer is None:
+                return gradient
+            return gradient + momentum * buffer.to(
+                device=gradient.device, dtype=gradient.dtype
+            )
+
+        def _raw_gradient(parameter, effective_gradient):
+            buffer = momentum_by_parameter.get(id(parameter))
+            if buffer is None:
+                return effective_gradient
+            return effective_gradient - momentum * buffer.to(
+                device=effective_gradient.device,
+                dtype=effective_gradient.dtype,
+            )
+
+        layer_gradients = []
+        for block in self.lora_vit.blocks:
+            wrapper = block.attn.qkv
+            if not isinstance(wrapper, _LiveAAggregateQKV):
+                continue
+            gradient_q = wrapper.a_q.weight.grad
+            gradient_v = wrapper.a_v.weight.grad
+            if gradient_q is None or gradient_v is None:
+                continue
+            has_history = self.task_id > 0
+            effective_q = _effective_gradient(wrapper.a_q.weight, gradient_q)
+            effective_v = _effective_gradient(wrapper.a_v.weight, gradient_v)
+            result = adaptive_a_layer_gradient(
+                gradient_q=effective_q,
+                gradient_v=effective_v,
+                shared_a_q=wrapper.a_q.weight,
+                shared_a_v=wrapper.a_v.weight,
+                current_up_q=wrapper.b_q.weight,
+                current_up_v=wrapper.b_v.weight,
+                historical_up_q=(wrapper.aggregate_q if has_history else None),
+                historical_up_v=(wrapper.aggregate_v if has_history else None),
+                scale=self.wrapped_param[0].param,
+                stability_weight=self.adaptive_a_stability_weight,
+                gate_floor=self.adaptive_a_gate_floor,
+                momentum=self.adaptive_a_gate_momentum,
+                gate_formula=self.adaptive_a_gate_formula,
+                eps=self.adaptive_a_eps,
+                previous_gate=self._adaptive_a_gate_ema.get(
+                    wrapper.layer_index
+                ),
+                fixed_gate=(
+                    0.0
+                    if has_history and self.adaptive_a_strategy == "tangent"
+                    else None
+                ),
+            )
+            with torch.no_grad():
+                if has_history:
+                    gradient_q.copy_(
+                        _raw_gradient(
+                            wrapper.a_q.weight, result["gradient_q"]
+                        )
+                    )
+                    gradient_v.copy_(
+                        _raw_gradient(
+                            wrapper.a_v.weight, result["gradient_v"]
+                        )
+                    )
+            gate = float(result["gate"].detach())
+            self._adaptive_a_gate_ema[wrapper.layer_index] = gate
+            self._adaptive_a_observations.append(
+                {
+                    "layer": wrapper.layer_index,
+                    "gate": gate,
+                    "current_impact": float(result["current_impact"].detach()),
+                    "historical_impact": float(
+                        result["historical_impact"].detach()
+                    ),
+                    "perpendicular_retention": float(
+                        result["perpendicular_retention"].detach()
+                    ),
+                }
+            )
+            layer_gradients.append(result)
+        diagnostics = self.adaptive_a_diagnostics()
+        if diagnostics is None:
+            return None
+        return {**diagnostics, "layer_gradients": layer_gradients}
+
+    def _apply_functional_halfspace_adaptive_a(
+        self, stability_gradients, momentum_buffers, momentum
+    ):
+        """Write shared-A gradients that make SGD apply one global projection."""
+        if self.task_id == 0 or stability_gradients is None:
+            return None
+        if len(stability_gradients) != len(self.w_As):
+            raise ValueError("stability_gradients must match shared-A branches")
+        if not 0.0 <= momentum < 1.0:
+            raise ValueError("momentum must be in [0, 1)")
+        if momentum_buffers is not None and len(momentum_buffers) != len(self.w_As):
+            raise ValueError("momentum_buffers must match shared-A branches")
+
+        gradients = [module.weight.grad for module in self.w_As]
+        if any(gradient is None for gradient in gradients):
+            return None
+        if any(gradient is None for gradient in stability_gradients):
+            return None
+        proposed_directions = []
+        for index, gradient in enumerate(gradients):
+            buffer = (
+                momentum_buffers[index]
+                if momentum_buffers is not None
+                else None
+            )
+            proposed_directions.append(
+                gradient + momentum * buffer if buffer is not None else gradient
+            )
+        projection = project_functional_halfspace_directions(
+            proposed_directions,
+            stability_gradients,
+            [module.weight for module in self.w_As],
+            conflict_tol=self.functional_conflict_tol,
+            normal_tol=self.functional_normal_tol,
+            min_normal_fraction=self.functional_min_normal_fraction,
+        )
+        with torch.no_grad():
+            for index, (module, direction) in enumerate(
+                zip(self.w_As, projection["directions"])
+            ):
+                buffer = (
+                    momentum_buffers[index]
+                    if momentum_buffers is not None
+                    else None
+                )
+                gradient = direction - momentum * buffer if buffer is not None else direction
+                module.weight.grad.copy_(gradient)
+        self._functional_halfspace_observations.append(projection)
+        return self.adaptive_a_diagnostics()
+
+    def _apply_risk_budgeted_adaptive_a(
+        self,
+        control_gradients,
+        step_size,
+        momentum_buffers,
+        momentum,
+        crossfit_gradients=None,
+        cached_modes=None,
+        cached_utilities=None,
+        stability_gradients=None,
+    ):
+        """Select exact Frozen/Tangent/Live gradients under one global budget."""
+        if step_size < 0:
+            raise ValueError("step_size must be non-negative")
+        if not 0.0 <= momentum < 1.0:
+            raise ValueError("momentum must be in [0, 1)")
+        if momentum_buffers is not None and len(momentum_buffers) != len(self.w_As):
+            raise ValueError("momentum_buffers must match shared-A branches")
+        wrappers = [
+            block.attn.qkv
+            for block in self.lora_vit.blocks
+            if isinstance(block.attn.qkv, _LiveAAggregateQKV)
+        ]
+        if control_gradients is not None and len(control_gradients) != len(self.w_As):
+            raise ValueError("control_gradients must match shared-A branches")
+        if crossfit_gradients is not None:
+            if len(crossfit_gradients) != 2:
+                raise ValueError("crossfit gradients must contain two folds")
+            if any(len(fold) != len(self.w_As) for fold in crossfit_gradients):
+                raise ValueError("crossfit gradients must match shared-A branches")
+        if stability_gradients is not None and len(stability_gradients) != len(
+            self.w_As
+        ):
+            raise ValueError("stability_gradients must match shared-A branches")
+        if (
+            self.adaptive_a_strategy == "function_safe_pareto"
+            and self.task_id > 0
+            and stability_gradients is None
+        ):
+            raise ValueError(
+                "function_safe_pareto requires cached or refreshed stability gradients"
+            )
+        if (cached_modes is None) != (cached_utilities is None):
+            raise ValueError("cached Pareto modes and utilities must be provided together")
+        candidates_by_layer = []
+        tensor_candidates = []
+        raw_gradients = []
+        has_history = self.task_id > 0
+        for wrapper_index, wrapper in enumerate(wrappers):
+            wrapper.consume_input_sketch()
+            gradient_q = wrapper.a_q.weight.grad
+            gradient_v = wrapper.a_v.weight.grad
+            if gradient_q is None or gradient_v is None:
+                continue
+            momentum_q = (
+                momentum_buffers[2 * wrapper_index]
+                if momentum_buffers is not None
+                else None
+            )
+            momentum_v = (
+                momentum_buffers[2 * wrapper_index + 1]
+                if momentum_buffers is not None
+                else None
+            )
+            proposed_q = gradient_q + (
+                momentum * momentum_q if momentum_q is not None else 0.0
+            )
+            proposed_v = gradient_v + (
+                momentum * momentum_v if momentum_v is not None else 0.0
+            )
+            raw_gradients.extend(
+                [proposed_q.detach().clone(), proposed_v.detach().clone()]
+            )
+            q_candidates = decompose_adaptive_a_gradient(
+                proposed_q, wrapper.a_q.weight
+            )
+            v_candidates = decompose_adaptive_a_gradient(
+                proposed_v, wrapper.a_v.weight
+            )
+            stability_q = (
+                stability_gradients[2 * wrapper_index]
+                if stability_gradients is not None
+                else None
+            )
+            stability_v = (
+                stability_gradients[2 * wrapper_index + 1]
+                if stability_gradients is not None
+                else None
+            )
+            if self.adaptive_a_strategy == "function_safe_pareto" and has_history:
+                if stability_q is None or stability_v is None:
+                    raise ValueError(
+                        "function-safe stability gradients cannot contain None"
+                    )
+                safety = project_functional_halfspace_directions(
+                    [q_candidates["live"], v_candidates["live"]],
+                    [stability_q, stability_v],
+                    [wrapper.a_q.weight, wrapper.a_v.weight],
+                    conflict_tol=self.functional_conflict_tol,
+                    conflict_cosine=self.functional_conflict_cosine,
+                    normal_tol=self.functional_normal_tol,
+                    min_normal_fraction=self.functional_min_normal_fraction,
+                )
+                q_candidates["live"], v_candidates["live"] = safety[
+                    "directions"
+                ]
+                self._functional_halfspace_observations.append(safety)
+            control_q = (
+                control_gradients[2 * wrapper_index]
+                if control_gradients is not None
+                else None
+            )
+            control_v = (
+                control_gradients[2 * wrapper_index + 1]
+                if control_gradients is not None
+                else None
+            )
+            fold_candidates = None
+            if crossfit_gradients is not None:
+                train_q = crossfit_gradients[0][2 * wrapper_index]
+                train_v = crossfit_gradients[0][2 * wrapper_index + 1]
+                heldout_q = crossfit_gradients[1][2 * wrapper_index]
+                heldout_v = crossfit_gradients[1][2 * wrapper_index + 1]
+                if any(
+                    gradient is None
+                    for gradient in (train_q, train_v, heldout_q, heldout_v)
+                ):
+                    raise ValueError("crossfit shared-A gradients cannot be None")
+                train_proposed_q = train_q + (
+                    momentum * momentum_q if momentum_q is not None else 0.0
+                )
+                train_proposed_v = train_v + (
+                    momentum * momentum_v if momentum_v is not None else 0.0
+                )
+                heldout_proposed_q = heldout_q + (
+                    momentum * momentum_q if momentum_q is not None else 0.0
+                )
+                heldout_proposed_v = heldout_v + (
+                    momentum * momentum_v if momentum_v is not None else 0.0
+                )
+                fold_candidates = (
+                    decompose_adaptive_a_gradient(
+                        train_proposed_q, wrapper.a_q.weight
+                    ),
+                    decompose_adaptive_a_gradient(
+                        train_proposed_v, wrapper.a_v.weight
+                    ),
+                    decompose_adaptive_a_gradient(
+                        heldout_proposed_q, wrapper.a_q.weight
+                    ),
+                    decompose_adaptive_a_gradient(
+                        heldout_proposed_v, wrapper.a_v.weight
+                    ),
+                    train_q,
+                    train_v,
+                    heldout_q,
+                    heldout_v,
+                )
+                if (
+                    self.adaptive_a_strategy == "function_safe_pareto"
+                    and has_history
+                ):
+                    mutable_fold_candidates = list(fold_candidates)
+                    for q_index, v_index in ((0, 1), (2, 3)):
+                        fold_safety = project_functional_halfspace_directions(
+                            [
+                                mutable_fold_candidates[q_index]["live"],
+                                mutable_fold_candidates[v_index]["live"],
+                            ],
+                            [stability_q, stability_v],
+                            [wrapper.a_q.weight, wrapper.a_v.weight],
+                            conflict_tol=self.functional_conflict_tol,
+                            conflict_cosine=self.functional_conflict_cosine,
+                            normal_tol=self.functional_normal_tol,
+                            min_normal_fraction=(
+                                self.functional_min_normal_fraction
+                            ),
+                        )
+                        (
+                            mutable_fold_candidates[q_index]["live"],
+                            mutable_fold_candidates[v_index]["live"],
+                        ) = fold_safety["directions"]
+                    fold_candidates = tuple(mutable_fold_candidates)
+            layer = {}
+            input_rms = wrapper.historical_input_rms.to(
+                device=gradient_q.device, dtype=gradient_q.dtype
+            )
+            for mode in ADAPTIVE_A_MODES:
+                if not has_history:
+                    utility = 1.0 if mode == "live" else 0.0
+                    risk = 0.0
+                else:
+                    utility = 0.0
+                    if fold_candidates is not None:
+                        (
+                            train_q_candidates,
+                            train_v_candidates,
+                            heldout_q_candidates,
+                            heldout_v_candidates,
+                            train_q,
+                            train_v,
+                            heldout_q,
+                            heldout_v,
+                        ) = fold_candidates
+                        utility = float(
+                            (
+                                crossfit_dot_utility(
+                                    train_q_candidates[mode],
+                                    heldout_q,
+                                    heldout_q_candidates[mode],
+                                    train_q,
+                                    step_size,
+                                )
+                                + crossfit_dot_utility(
+                                    train_v_candidates[mode],
+                                    heldout_v,
+                                    heldout_v_candidates[mode],
+                                    train_v,
+                                    step_size,
+                                )
+                            ).detach()
+                        )
+                    elif control_q is not None:
+                        utility += float(
+                            signed_gradient_utility(
+                                q_candidates[mode], control_q, self.adaptive_a_eps
+                            ).detach()
+                        )
+                    if control_v is not None:
+                        utility += float(
+                            signed_gradient_utility(
+                                v_candidates[mode], control_v, self.adaptive_a_eps
+                            ).detach()
+                        )
+                    risk = float(
+                        (
+                            weighted_operator_risk(
+                                wrapper.aggregate_q,
+                                wrapper.a_q.weight,
+                                step_size * q_candidates[mode],
+                                input_rms,
+                                self.adaptive_a_eps,
+                            )
+                            + weighted_operator_risk(
+                                wrapper.aggregate_v,
+                                wrapper.a_v.weight,
+                                step_size * v_candidates[mode],
+                                input_rms,
+                                self.adaptive_a_eps,
+                            )
+                        ).detach()
+                    )
+                layer[mode] = {"utility": utility, "risk": risk}
+            candidates_by_layer.append(layer)
+            tensor_candidates.append(
+                (wrapper, q_candidates, v_candidates, momentum_q, momentum_v)
+            )
+        live_risk = sum(
+            layer["live"]["risk"] for layer in candidates_by_layer
+        )
+        budget = None
+        if not has_history:
+            budget = float("inf")
+        elif self.adaptive_a_strategy == "risk_budgeted":
+            budget = effective_risk_budget(
+                candidates_by_layer,
+                self.adaptive_a_risk_budget,
+                self.adaptive_a_risk_budget_mode,
+            )
+        self._adaptive_a_last_effective_budget = budget
+        self._adaptive_a_last_live_risk = live_risk
+        if not has_history:
+            selection = {
+                "modes": ["live"] * len(candidates_by_layer),
+                "selected_risk": 0.0,
+                "selected_utility": float(len(candidates_by_layer)),
+                "implied_risk_ratio": 1.0,
+                "pareto_points": 1,
+            }
+        elif cached_modes is not None:
+            if len(cached_modes) != len(candidates_by_layer):
+                raise ValueError("cached Pareto modes must match adaptive-A layers")
+            if len(cached_utilities) != len(candidates_by_layer):
+                raise ValueError(
+                    "cached Pareto utilities must match adaptive-A layers"
+                )
+            invalid_modes = set(cached_modes) - set(ADAPTIVE_A_MODES)
+            if invalid_modes:
+                raise ValueError(
+                    "invalid cached Adaptive-A modes: {}".format(
+                        sorted(invalid_modes)
+                    )
+                )
+            selected_risk = sum(
+                layer[mode]["risk"]
+                for mode, layer in zip(cached_modes, candidates_by_layer)
+            )
+            selection = {
+                "modes": list(cached_modes),
+                "selected_risk": selected_risk,
+                "selected_utility": sum(cached_utilities),
+                "implied_risk_ratio": (
+                    selected_risk / live_risk
+                    if live_risk > self.adaptive_a_eps
+                    else 0.0
+                ),
+                "pareto_points": None,
+                "selected_utilities": list(cached_utilities),
+            }
+        elif self.adaptive_a_strategy in (
+            "pareto_knee",
+            "function_safe_pareto",
+        ):
+            selection = choose_pareto_knee_modes(candidates_by_layer)
+        else:
+            selection = choose_risk_budgeted_modes(candidates_by_layer, budget)
+        self._adaptive_a_last_implied_risk_ratio = selection.get(
+            "implied_risk_ratio"
+        )
+        self._adaptive_a_last_pareto_points = selection.get("pareto_points")
+        if self._adaptive_a_last_implied_risk_ratio is not None:
+            self._adaptive_a_risk_ratios.append(
+                self._adaptive_a_last_implied_risk_ratio
+            )
+        if self._adaptive_a_last_pareto_points is not None:
+            self._adaptive_a_pareto_point_counts.append(
+                self._adaptive_a_last_pareto_points
+            )
+        if "selected_utilities" not in selection:
+            selection["selected_utilities"] = [
+                layer[mode]["utility"]
+                for mode, layer in zip(selection["modes"], candidates_by_layer)
+            ]
+        for mode, selected_utility, layer, tensors in zip(
+            selection["modes"],
+            selection["selected_utilities"],
+            candidates_by_layer,
+            tensor_candidates,
+        ):
+            wrapper, q_candidates, v_candidates, momentum_q, momentum_v = tensors
+            with torch.no_grad():
+                q_gradient = q_candidates[mode]
+                v_gradient = v_candidates[mode]
+                if momentum_q is not None:
+                    q_gradient = q_gradient - momentum * momentum_q
+                if momentum_v is not None:
+                    v_gradient = v_gradient - momentum * momentum_v
+                wrapper.a_q.weight.grad.copy_(q_gradient)
+                wrapper.a_v.weight.grad.copy_(v_gradient)
+            self._adaptive_a_last_modes[wrapper.layer_index] = mode
+            self._adaptive_a_observations.append(
+                {
+                    "layer": wrapper.layer_index,
+                    "mode": mode,
+                    "gate": {"frozen": 0.0, "tangent": 0.5, "live": 1.0}[mode],
+                    "current_impact": selected_utility,
+                    "historical_impact": layer[mode]["risk"],
+                    "perpendicular_retention": float(mode == "live"),
+                    "selected_utility": selected_utility,
+                    "selected_risk": layer[mode]["risk"],
+                }
+            )
+        self._adaptive_a_previous_gradients = raw_gradients
+        diagnostics = self.adaptive_a_diagnostics()
+        if diagnostics is None:
+            return None
+        result = {**diagnostics, "selection": selection}
+        if self.adaptive_a_strategy == "function_safe_pareto":
+            result["functional_safety"] = self._functional_safety_diagnostics()
+        return result
+
+    def _functional_safety_diagnostics(self):
+        observations = self._functional_halfspace_observations
+        if not observations:
+            return {
+                "observations": 0,
+                "conflicts": 0,
+                "normal_projections": 0,
+                "full_fallbacks": 0,
+                "degenerate_noops": 0,
+                "mean_pre_cosine": 0.0,
+                "mean_correction_ratio": 0.0,
+            }
+        modes = [item["mode"] for item in observations]
+        return {
+            "observations": len(observations),
+            "conflicts": sum(
+                mode in ("normal", "full") for mode in modes
+            ),
+            "normal_projections": sum(mode == "normal" for mode in modes),
+            "full_fallbacks": sum(mode == "full" for mode in modes),
+            "degenerate_noops": sum(mode == "degenerate" for mode in modes),
+            "mean_pre_cosine": sum(
+                item["pre_cosine"] for item in observations
+            )
+            / len(observations),
+            "mean_correction_ratio": sum(
+                item["correction_ratio"] for item in observations
+            )
+            / len(observations),
+        }
+
+    def adaptive_a_diagnostics(self) -> dict | None:
+        """Return aggregate task-local Adaptive-A gate diagnostics."""
+        if self.adaptive_a_strategy == "operator_energy_partition":
+            if self._hoep_partition_diagnostics is None:
+                return None
+            diagnostics = dict(self._hoep_partition_diagnostics)
+            diagnostics["steps"] = self._hoep_step_count
+            diagnostics.update(self._hoep_step_maxima)
+            return diagnostics
+        if self.adaptive_a_strategy == "recoverability":
+            observations = self._recoverability_observations
+            if not observations:
+                return None
+            gammas = [
+                gamma
+                for observation in observations
+                for gamma in observation["selected_gammas"]
+            ]
+            return {
+                "strategy": "recoverability",
+                "stage": self.recoverability_stage,
+                "observations": len(observations),
+                "budget": self.recoverability_budget,
+                "step_size": self.recoverability_step_size,
+                "interval": self.recoverability_interval,
+                "sketch_rank": self.recoverability_sketch_rank,
+                "mean_gamma": sum(gammas) / len(gammas) if gammas else 0.0,
+                "min_gamma": min(gammas) if gammas else 0.0,
+                "max_gamma": max(gammas) if gammas else 0.0,
+                "fraction_zero_gamma": (
+                    sum(gamma == 0.0 for gamma in gammas) / len(gammas)
+                    if gammas
+                    else 0.0
+                ),
+                "fraction_full_gamma": (
+                    sum(gamma == 1.0 for gamma in gammas) / len(gammas)
+                    if gammas
+                    else 0.0
+                ),
+                "mean_risk": sum(item["risk"] for item in observations)
+                / len(observations),
+                "max_risk": max(item["risk"] for item in observations),
+                "mean_utility": sum(item["utility"] for item in observations)
+                / len(observations),
+            }
+        if self.adaptive_a_strategy == "functional_halfspace":
+            observations = self._functional_halfspace_observations
+            if not observations:
+                return None
+            modes = [item["mode"] for item in observations]
+            return {
+                "strategy": "functional_halfspace",
+                "observations": len(observations),
+                "conflicts": sum(
+                    item["pre_inner"] < -self.functional_conflict_tol
+                    for item in observations
+                ),
+                "normal_projections": sum(mode == "normal" for mode in modes),
+                "full_fallbacks": sum(mode == "full" for mode in modes),
+                "degenerate_noops": sum(
+                    mode == "degenerate" for mode in modes
+                ),
+                "mean_pre_inner": sum(
+                    item["pre_inner"] for item in observations
+                )
+                / len(observations),
+                "mean_post_inner": sum(
+                    item["post_inner"] for item in observations
+                )
+                / len(observations),
+                "mean_normal_fraction": sum(
+                    item["normal_fraction"] for item in observations
+                )
+                / len(observations),
+                "mean_correction_ratio": sum(
+                    item["correction_ratio"] for item in observations
+                )
+                / len(observations),
+            }
+        if not self.adaptive_a_enabled or not self._adaptive_a_observations:
+            return None
+        observations = self._adaptive_a_observations
+        gates = [item["gate"] for item in observations]
+        per_layer = {}
+        for item in observations:
+            per_layer.setdefault(item["layer"], []).append(item["gate"])
+        diagnostics = {
+            "observations": len(observations),
+            "mean_gate": sum(gates) / len(gates),
+            "min_gate": min(gates),
+            "max_gate": max(gates),
+            "fraction_gate_below_0_1": sum(gate < 0.1 for gate in gates)
+            / len(gates),
+            "fraction_gate_above_0_9": sum(gate > 0.9 for gate in gates)
+            / len(gates),
+            "mean_current_impact": sum(
+                item["current_impact"] for item in observations
+            )
+            / len(observations),
+            "mean_historical_impact": sum(
+                item["historical_impact"] for item in observations
+            )
+            / len(observations),
+            "mean_perpendicular_retention": sum(
+                item["perpendicular_retention"] for item in observations
+            )
+            / len(observations),
+            "per_layer_mean_gate": [
+                sum(per_layer[layer]) / len(per_layer[layer])
+                for layer in sorted(per_layer)
+            ],
+        }
+        if self.adaptive_a_strategy in (
+            "risk_budgeted",
+            "pareto_knee",
+            "function_safe_pareto",
+        ):
+            mode_counts = {
+                mode: sum(item.get("mode") == mode for item in observations)
+                for mode in ADAPTIVE_A_MODES
+            }
+            diagnostics.update(
+                {
+                    "strategy": self.adaptive_a_strategy,
+                    "mode_counts": mode_counts,
+                    "mode_fractions": {
+                        mode: mode_counts[mode] / len(observations)
+                        for mode in ADAPTIVE_A_MODES
+                    },
+                    "mean_selected_utility": sum(
+                        item["selected_utility"] for item in observations
+                    )
+                    / len(observations),
+                    "mean_selected_risk": sum(
+                        item["selected_risk"] for item in observations
+                    )
+                    / len(observations),
+                    "risk_budget_mode": self.adaptive_a_risk_budget_mode,
+                    "effective_risk_budget": self._adaptive_a_last_effective_budget,
+                    "live_risk_reference": self._adaptive_a_last_live_risk,
+                    "implied_risk_ratio": self._adaptive_a_last_implied_risk_ratio,
+                    "pareto_points": self._adaptive_a_last_pareto_points,
+                    "mean_implied_risk_ratio": (
+                        sum(self._adaptive_a_risk_ratios)
+                        / len(self._adaptive_a_risk_ratios)
+                        if self._adaptive_a_risk_ratios
+                        else None
+                    ),
+                    "min_implied_risk_ratio": (
+                        min(self._adaptive_a_risk_ratios)
+                        if self._adaptive_a_risk_ratios
+                        else None
+                    ),
+                    "max_implied_risk_ratio": (
+                        max(self._adaptive_a_risk_ratios)
+                        if self._adaptive_a_risk_ratios
+                        else None
+                    ),
+                    "mean_pareto_points": (
+                        sum(self._adaptive_a_pareto_point_counts)
+                        / len(self._adaptive_a_pareto_point_counts)
+                        if self._adaptive_a_pareto_point_counts
+                        else None
+                    ),
+                }
+            )
+            if self.adaptive_a_strategy == "function_safe_pareto":
+                diagnostics["functional_safety"] = (
+                    self._functional_safety_diagnostics()
+                )
+        return diagnostics
+
+    def live_a_gradient_diagnostics(self, x) -> dict | None:
+        """First-batch Live-A training-path diagnostics.
+
+        Returns norms of the historical/current branch gradients w.r.t. the
+        shared A and the per-branch G/A/B/scale norms, or None when the model
+        is not in Live-A mode.
+        """
+        if self.cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B:
+            return None
+        wrappers = [
+            blk.attn.qkv
+            for blk in self.lora_vit.blocks
+            if isinstance(blk.attn.qkv, _LiveAAggregateQKV)
+        ]
+        if not wrappers:
+            return None
+        a_params = [w.weight for w in self.w_As]
+        if not all(p.requires_grad for p in a_params):
+            # Frozen-A ablation (P4-C): the Live-A gradient path is disabled
+            # by construction; there is no A gradient to report.
+            return None
+
+        hist_loss = torch.zeros((), device=x.device)
+        cur_loss = torch.zeros((), device=x.device)
+        g_norm = 0.0
+        a_norm = 0.0
+        b_norm = 0.0
+        for wrapper in wrappers:
+            hq, hv = wrapper.historical_output(x)
+            cq, cv = wrapper.current_output(x)
+            hist_loss = hist_loss + hq.square().sum() + hv.square().sum()
+            cur_loss = cur_loss + cq.square().sum() + cv.square().sum()
+            g_norm = g_norm + (
+                wrapper.aggregate_q.square().sum()
+                + wrapper.aggregate_v.square().sum()
+            ).item()
+            a_norm = a_norm + (
+                wrapper.a_q.weight.square().sum()
+                + wrapper.a_v.weight.square().sum()
+            ).item()
+            b_norm = b_norm + (
+                wrapper.b_q.weight.square().sum()
+                + wrapper.b_v.weight.square().sum()
+            ).item()
+        hist_grads = (
+            torch.autograd.grad(
+                hist_loss, a_params, retain_graph=True, allow_unused=True
+            )
+            if hist_loss.requires_grad
+            else (None,) * len(a_params)
+        )
+        cur_grads = torch.autograd.grad(
+            cur_loss, a_params, retain_graph=True
+        )
+        hist_da_norm = sum(
+            g.detach().square().sum().item() for g in hist_grads if g is not None
+        ) ** 0.5
+        cur_da_norm = sum(
+            g.detach().square().sum().item() for g in cur_grads
+        ) ** 0.5
+        return {
+            "historical_dL_dA": hist_da_norm,
+            "current_dL_dA": cur_da_norm,
+            "ratio_hist_cur": (
+                hist_da_norm / max(cur_da_norm, 1e-12)
+            ),
+            "mean_G_norm": (g_norm / len(wrappers)) ** 0.5,
+            "mean_A_norm": (a_norm / len(wrappers)) ** 0.5,
+            "mean_B_norm": (b_norm / len(wrappers)) ** 0.5,
+            "scale": float(self.wrapped_param[0].param.detach().item()),
+        }
+
+    def _fold_live_a_teacher_aggregate(self):
+        """Return ``G_prev`` per Q/V branch from the task-start model state.
+
+        The in-memory Live-A semantics keep ``aggregate_up == G_{t-2}`` while
+        the current raw ``B_{t-1}`` is still in the wrappers.  The teacher
+        snapshot for task ``t`` needs ``G_{t-1} = G_{t-2} + s B_{t-1}/||B_{t-1}||``,
+        i.e. exactly what ``_save_live_a_state`` writes to disk.
+        """
+        if self.cumulative_merge != SA_MERGE_MODE_LIVE_A_AGGREGATE_B:
+            raise ValueError(
+                "HBD teacher requires sa_cumulative_merge=live_a_aggregate_b"
+            )
+        folded = []
+        for idx, w_b in enumerate(self.w_Bs):
+            b = w_b.weight.detach().cpu().float()
+            scale = (
+                self.wrapped_param[0]
+                .param.detach()
+                .cpu()
+                .float()
+                .reshape(())
+            )
+            g_old = (
+                self.aggregate_up[idx]
+                if idx < len(self.aggregate_up)
+                else torch.zeros_like(b)
+            )
+            current_up, _ = absorb_live_a_current_projection(
+                self.w_As[idx].weight.detach().cpu().float(),
+                b,
+                scale,
+                mode=self.live_a_absorb_mode,
+            )
+            folded.append(g_old + current_up)
+        return folded
+
+    def build_hbd_teacher(self):
+        """Build the frozen task-start teacher (``A_prev``, ``G_prev``, zero B).
+
+        The teacher is a deep copy of the current model with:
+          * shared A frozen at the current (task-start) value;
+          * historical aggregate folded to ``G_prev = G_{t-2} + s B_{t-1}/||B_{t-1}||``;
+          * current-task B zeroed so the full forward equals ``G_prev A/||A||``.
+        It is not registered anywhere, never saved, and must be released at
+        the end of the task.
+        """
+        teacher = copy.deepcopy(self)
+        teacher.eval()
+        for parameter in teacher.parameters():
+            parameter.requires_grad_(False)
+        folded = self._fold_live_a_teacher_aggregate()
+        wrappers = [
+            blk.attn.qkv
+            for blk in teacher.lora_vit.blocks
+            if isinstance(blk.attn.qkv, _LiveAAggregateQKV)
+        ]
+        if len(wrappers) * 2 != len(folded):
+            raise ValueError(
+                "HBD teacher branch mismatch: {} wrappers vs {} folded".format(
+                    len(wrappers), len(folded)
+                )
+            )
+        for wrapper_index, wrapper in enumerate(wrappers):
+            wrapper.aggregate_q.copy_(
+                folded[2 * wrapper_index].to(wrapper.aggregate_q.device)
+            )
+            wrapper.aggregate_v.copy_(
+                folded[2 * wrapper_index + 1].to(
+                    wrapper.aggregate_v.device
+                )
+            )
+        for w_b in teacher.w_Bs:
+            w_b.weight.zero_()
+        return teacher
+
+    def _load_state(self):
+        path = _join_path(self.save_file, SA_STATE_FILENAME)
+        if os.path.exists(path):
+            state = torch.load(path, map_location="cpu", weights_only=True)
+            version = int(state.get("version", -1))
+            if version not in (
+                SA_STATE_VERSION_LEGACY,
+                SA_STATE_VERSION,
+                SA_STATE_VERSION_UNION,
+                SA_STATE_VERSION_LIVE_A,
+                SA_STATE_VERSION_CUO,
+                SA_STATE_VERSION_SBGC,
+                SA_STATE_VERSION_SBGC_GUARD,
+                SA_STATE_VERSION_SBGC_GLOBAL,
+                SA_STATE_VERSION_SBGC_TRAIN_PROJECTED,
+            ):
+                raise ValueError("unsupported shared-A state version")
+            return state
+        return {"version": -1, "shared_a": [], "scales": {}}
+
+    def reset_parameters(self):
+        if self.task_id == 0:
+            for w_a in self.w_As:
+                if not self.shared_a_orthogonal:
+                    nn.init.kaiming_uniform_(w_a.weight, a=math.sqrt(5))
+        for w_b in self.w_Bs:
+            nn.init.zeros_(w_b.weight)
+
+    def _sbgc_wrappers(self):
+        wrappers = [
+            block.attn.qkv
+            for block in self.lora_vit.blocks
+            if isinstance(block.attn.qkv, _SensitivityBudgetedGQKV)
+        ]
+        if len(wrappers) != len(self.w_As) // 2:
+            raise RuntimeError("SBGC wrapper topology does not match Q/V factors")
+        return wrappers
+
+    @staticmethod
+    def _sbgc_distributed():
+        return dist.is_available() and dist.is_initialized()
+
+    def prepare_sbgc_calibration(self):
+        """Canonicalize Task 0 exactly, then begin deterministic collection."""
+        if self.cumulative_merge != SA_MERGE_MODE_SBGC:
+            raise RuntimeError("prepare_sbgc_calibration requires SBGC")
+        wrappers = self._sbgc_wrappers()
+        is_main = not self._sbgc_distributed() or dist.get_rank() == 0
+        max_error = 0.0
+        if self.task_id == 0 and is_main:
+            with torch.no_grad():
+                scale = self.wrapped_param[0].param.detach().reshape(())
+                for wrapper in wrappers:
+                    for a_module, b_module, projection in (
+                        (wrapper.a_q, wrapper.b_q, wrapper.projection_q),
+                        (wrapper.a_v, wrapper.b_v, wrapper.projection_v),
+                    ):
+                        old_a = a_module.weight.detach().clone()
+                        old_b = b_module.weight.detach().clone()
+                        before = scale * (old_b @ old_a)
+                        canonical_a, triangular = canonical_down_projection(old_a)
+                        canonical_a = canonical_a.to(old_a)
+                        transformed_b = old_b @ triangular.to(old_b).t()
+                        a_module.weight.copy_(canonical_a)
+                        b_module.weight.copy_(transformed_b)
+                        projection.copy_(canonical_a.to(projection))
+                        after = scale * (transformed_b @ canonical_a)
+                        relative = torch.linalg.matrix_norm(
+                            after - before
+                        ) / torch.linalg.matrix_norm(before).clamp_min(1e-12)
+                        max_error = max(max_error, float(relative))
+        if self._sbgc_distributed():
+            for wrapper in wrappers:
+                for tensor in (
+                    wrapper.a_q.weight,
+                    wrapper.b_q.weight,
+                    wrapper.projection_q,
+                    wrapper.a_v.weight,
+                    wrapper.b_v.weight,
+                    wrapper.projection_v,
+                ):
+                    dist.broadcast(tensor, src=0)
+            error_tensor = self.wrapped_param[0].param.new_tensor(max_error)
+            dist.broadcast(error_tensor, src=0)
+            max_error = float(error_tensor)
+        self._sbgc_task0_operator_error = max_error
+        for wrapper in wrappers:
+            if self.task_id > 0:
+                if not torch.equal(
+                    wrapper.a_q.weight.detach(), wrapper.projection_q
+                ) or not torch.equal(
+                    wrapper.a_v.weight.detach(), wrapper.projection_v
+                ):
+                    raise RuntimeError("SBGC current A must equal the frozen P")
+                if wrapper.a_q.weight.requires_grad or wrapper.a_v.weight.requires_grad:
+                    raise RuntimeError("SBGC P must be frozen after Task 0")
+            wrapper.begin_sbgc_calibration()
+        self._sbgc_calibration_prepared = True
+        self._sbgc_calibration_finalized = False
+
+    def sbgc_calibration_outputs(self):
+        """Return Q/V residual tensors from the most recent calibration forward."""
+        outputs = []
+        for wrapper in self._sbgc_wrappers():
+            outputs.extend(wrapper.calibration_outputs())
+        return outputs
+
+    def accumulate_sbgc_sensitivities(self, gradients, batch_size):
+        wrappers = self._sbgc_wrappers()
+        if len(gradients) != 2 * len(wrappers):
+            raise ValueError("SBGC gradient count does not match Q/V branches")
+        for index, wrapper in enumerate(wrappers):
+            wrapper.accumulate_sensitivity(
+                gradients[2 * index], gradients[2 * index + 1], batch_size
+            )
+
+    def _reduce_sbgc_statistics(
+        self, covariance_sum, sensitivity_sum, covariance_count, sensitivity_count
+    ):
+        counts = covariance_sum.new_tensor(
+            [covariance_count, sensitivity_count], dtype=torch.float64
+        )
+        if self._sbgc_distributed():
+            dist.all_reduce(covariance_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(sensitivity_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(counts, op=dist.ReduceOp.SUM)
+        return (
+            covariance_sum,
+            sensitivity_sum,
+            int(counts[0].item()),
+            int(counts[1].item()),
+        )
+
+    def _broadcast_sbgc_branch_state(
+        self, projection, unified_up, covariance, sensitivity, counts
+    ):
+        if not self._sbgc_distributed():
+            return counts
+        for tensor in (projection, unified_up, covariance, sensitivity):
+            dist.broadcast(tensor, src=0)
+        count_tensor = unified_up.new_tensor(counts, dtype=torch.float64)
+        dist.broadcast(count_tensor, src=0)
+        return float(count_tensor[0]), float(count_tensor[1])
+
+    def finalize_sbgc_calibration(self):
+        """Solve, deploy and synchronize all fixed-coordinate G branches."""
+        if self.cumulative_merge != SA_MERGE_MODE_SBGC:
+            raise RuntimeError("finalize_sbgc_calibration requires SBGC")
+        if not self._sbgc_calibration_prepared:
+            raise RuntimeError("SBGC calibration must be prepared before finalization")
+        is_main = not self._sbgc_distributed() or dist.get_rank() == 0
+        guard_problems = (
+            []
+            if is_main and self.task_id > 0
+            and getattr(self, "_sbgc_guard_capture", False)
+            else None
+        )
+        scale = self.wrapped_param[0].param.detach().reshape(())
+        branch_diagnostics = []
+        boundary_candidates = (
+            {"additive": [], "uniform": [], "fisher": []}
+            if getattr(self, "_sbgc_capture_boundary_candidates", False)
+            else None
+        )
+        solver_seconds = 0.0
+        wrappers = self._sbgc_wrappers()
+        global_problems = [] if is_main and self.g_budget_scope == "global" and self.task_id > 0 else None
+        global_destinations = []
+        global_fisher_hist_sens = []
+        for wrapper in wrappers:
+            q_statistics, v_statistics = wrapper.consume_sbgc_statistics()
+            branch_specs = (
+                (
+                    wrapper.projection_q,
+                    wrapper.unified_up_q,
+                    wrapper.projected_covariance_q,
+                    wrapper.sensitivity_q,
+                    wrapper.b_q.weight,
+                    "q",
+                    q_statistics,
+                    wrapper.covariance_count_q,
+                    wrapper.sensitivity_count_q,
+                ),
+                (
+                    wrapper.projection_v,
+                    wrapper.unified_up_v,
+                    wrapper.projected_covariance_v,
+                    wrapper.sensitivity_v,
+                    wrapper.b_v.weight,
+                    "v",
+                    v_statistics,
+                    wrapper.covariance_count_v,
+                    wrapper.sensitivity_count_v,
+                ),
+            )
+            for (
+                projection,
+                unified_up,
+                historical_covariance,
+                historical_sensitivity,
+                current_b,
+                branch_name,
+                statistics,
+                historical_covariance_count,
+                historical_sensitivity_count,
+            ) in branch_specs:
+                covariance_sum, sensitivity_sum, covariance_count, sensitivity_count = (
+                    statistics
+                )
+                (
+                    covariance_sum,
+                    sensitivity_sum,
+                    covariance_count,
+                    sensitivity_count,
+                ) = self._reduce_sbgc_statistics(
+                    covariance_sum,
+                    sensitivity_sum,
+                    covariance_count,
+                    sensitivity_count,
+                )
+                if covariance_count <= 0 or sensitivity_count <= 0:
+                    raise RuntimeError("SBGC calibration collected no valid observations")
+                if is_main:
+                    current_covariance = covariance_sum / float(covariance_count)
+                    current_covariance = 0.5 * (
+                        current_covariance + current_covariance.t()
+                    )
+                    current_sensitivity = normalize_sensitivity(
+                        sensitivity_sum / float(sensitivity_count),
+                        floor=self.g_sensitivity_floor,
+                    )
+                    old = unified_up.detach().to(torch.float64)
+                    if self.g_train_projected and self.task_id > 0:
+                        with torch.no_grad():
+                            effective_up, final_alpha, raw_train_risk = (
+                                wrapper.projected_current_up(branch_name)
+                            )
+                        effective_up = effective_up.detach().to(torch.float64)
+                    else:
+                        effective_up = scale.to(torch.float64) * current_b.detach().to(
+                            torch.float64
+                        )
+                        final_alpha = effective_up.new_ones(())
+                        raw_train_risk = effective_up.new_zeros(())
+                    target = old + effective_up
+                    fisher_diagnostics = {
+                        "eta": 0.0,
+                        "target_risk": 0.0,
+                        "achieved_risk": 0.0,
+                        "current_distortion": 0.0,
+                        "constraint_active": False,
+                    }
+                    uniform_diagnostics = dict(fisher_diagnostics)
+                    fisher_candidate = target
+                    uniform_candidate = target
+                    if self.task_id > 0:
+                        hist_cov = historical_covariance.detach().to(torch.float64)
+                        hist_sens = historical_sensitivity.detach().to(torch.float64)
+                        if not bool(torch.isfinite(hist_sens).all()) or not bool(
+                            hist_sens.mean() > 0
+                        ):
+                            raise RuntimeError(
+                                "SBGC historical sensitivity is missing or invalid"
+                            )
+                        if global_problems is not None:
+                            global_hist_sens = (
+                                hist_sens if self.g_sensitivity_metric == "fisher_diag"
+                                else torch.ones_like(hist_sens)
+                            )
+                            global_cur_sens = (
+                                current_sensitivity
+                                if self.g_sensitivity_metric == "fisher_diag"
+                                else torch.ones_like(current_sensitivity)
+                            )
+                            global_problems.append((
+                                old.clone(), target.clone(), hist_cov.clone(),
+                                current_covariance.clone(), global_hist_sens.clone(),
+                                global_cur_sens.clone(),
+                            ))
+                            global_destinations.append(unified_up)
+                            global_fisher_hist_sens.append(hist_sens.clone())
+                        if guard_problems is not None:
+                            guard_problems.append(
+                                {
+                                    "historical": old.clone(),
+                                    "target": target.clone(),
+                                    "historical_covariance": hist_cov.clone(),
+                                    "current_covariance": current_covariance.clone(),
+                                    "historical_sensitivity": hist_sens.clone(),
+                                    "current_sensitivity": current_sensitivity.clone(),
+                                }
+                            )
+                        if old.is_cuda:
+                            torch.cuda.synchronize(old.device)
+                        solver_started = time.perf_counter()
+                        fisher_candidate, fisher_diagnostics = (
+                            solve_sensitivity_budgeted_g(
+                                old,
+                                target,
+                                hist_cov,
+                                current_covariance,
+                                hist_sens,
+                                current_sensitivity,
+                                risk_budget=self.g_risk_budget,
+                                ridge=self.g_solver_ridge,
+                                bisection_steps=self.g_bisection_steps,
+                            )
+                        )
+                        ones_old = torch.ones_like(hist_sens)
+                        ones_current = torch.ones_like(current_sensitivity)
+                        uniform_candidate, uniform_diagnostics = (
+                            solve_sensitivity_budgeted_g(
+                                old,
+                                target,
+                                hist_cov,
+                                current_covariance,
+                                ones_old,
+                                ones_current,
+                                risk_budget=self.g_risk_budget,
+                                ridge=self.g_solver_ridge,
+                                bisection_steps=self.g_bisection_steps,
+                            )
+                        )
+                        if old.is_cuda:
+                            torch.cuda.synchronize(old.device)
+                        solver_seconds += time.perf_counter() - solver_started
+                    selected = (
+                        fisher_candidate
+                        if self.g_sensitivity_metric == "fisher_diag"
+                        else uniform_candidate
+                    )
+                    selected_diagnostics = (
+                        fisher_diagnostics
+                        if self.g_sensitivity_metric == "fisher_diag"
+                        else uniform_diagnostics
+                    )
+                    if self.g_shadow_only:
+                        selected = target
+                    if boundary_candidates is not None:
+                        for name, candidate in (
+                            ("additive", target),
+                            ("uniform", uniform_candidate),
+                            ("fisher", fisher_candidate),
+                        ):
+                            boundary_candidates[name].append(
+                                candidate.detach().cpu().float().clone()
+                            )
+                    deployed = selected.to(unified_up)
+                    before_operator = target @ projection.detach().to(torch.float64)
+                    after_operator = deployed.to(torch.float64) @ projection.detach().to(
+                        torch.float64
+                    )
+                    absorption_error = float(
+                        torch.linalg.matrix_norm(after_operator - before_operator)
+                        / torch.linalg.matrix_norm(before_operator).clamp_min(1e-12)
+                    )
+                    if self.g_train_projected and self.task_id > 0 and absorption_error > 1e-6:
+                        raise RuntimeError(
+                            "train-projected SBGC changed the task-boundary operator: "
+                            "{:.3e}".format(absorption_error)
+                        )
+                    deployed_risk = 0.0
+                    deployed_fisher_risk = 0.0
+                    deployed_uniform_risk = 0.0
+                    if self.task_id > 0:
+                        deployed_fisher_risk = float(
+                            historical_response_risk(
+                                deployed.to(torch.float64),
+                                old,
+                                historical_covariance.detach().to(torch.float64),
+                                historical_sensitivity.detach().to(torch.float64),
+                            )
+                        )
+                        deployed_uniform_risk = float(
+                            historical_response_risk(
+                                deployed.to(torch.float64),
+                                old,
+                                historical_covariance.detach().to(torch.float64),
+                                torch.ones_like(hist_sens),
+                            )
+                        )
+                        deployed_risk = (
+                            deployed_fisher_risk
+                            if self.g_sensitivity_metric == "fisher_diag"
+                            else deployed_uniform_risk
+                        )
+                        if (
+                            not self.g_shadow_only
+                            and deployed_risk > self.g_risk_budget + 1e-6
+                        ):
+                            raise RuntimeError(
+                                "SBGC FP32 deployment violates the historical "
+                                "risk budget: {:.9e} > {:.9e}".format(
+                                    deployed_risk, self.g_risk_budget
+                                )
+                            )
+                    unified_up.copy_(deployed)
+                    updated_covariance, updated_covariance_count = (
+                        update_running_moment(
+                            historical_covariance.detach().to(torch.float64),
+                            historical_covariance_count,
+                            current_covariance,
+                            covariance_count,
+                        )
+                    )
+                    updated_sensitivity, updated_sensitivity_count = (
+                        update_running_moment(
+                            historical_sensitivity.detach().to(torch.float64),
+                            historical_sensitivity_count,
+                            current_sensitivity,
+                            sensitivity_count,
+                        )
+                    )
+                    historical_covariance.copy_(updated_covariance.to(historical_covariance))
+                    historical_sensitivity.copy_(
+                        normalize_sensitivity(
+                            updated_sensitivity,
+                            floor=self.g_sensitivity_floor,
+                        ).to(historical_sensitivity)
+                    )
+                    candidate_gap = torch.linalg.matrix_norm(
+                        fisher_candidate - uniform_candidate
+                    ) / torch.linalg.matrix_norm(fisher_candidate).clamp_min(1e-12)
+                    branch_diagnostics.append(
+                        {
+                            "layer": wrapper.layer_index,
+                            "branch": branch_name,
+                            "covariance_count": covariance_count,
+                            "sensitivity_count": sensitivity_count,
+                            "sensitivity_cv": float(
+                                current_sensitivity.std(unbiased=False)
+                                / current_sensitivity.mean().clamp_min(1e-12)
+                            ),
+                            "sensitivity_max": float(current_sensitivity.max()),
+                            "candidate_relative_gap": float(candidate_gap),
+                            "fisher": fisher_diagnostics,
+                            "uniform": uniform_diagnostics,
+                            "selected_metric": self.g_sensitivity_metric,
+                            "selected": selected_diagnostics,
+                            "deployed_historical_risk": deployed_risk,
+                            "deployed_fisher_risk": deployed_fisher_risk,
+                            "deployed_uniform_risk": deployed_uniform_risk,
+                            "deployed_update_norm": float(
+                                torch.linalg.matrix_norm(selected - old)
+                            ),
+                            "training_projection": {
+                                **wrapper.projection_training_stats(branch_name),
+                                "final_alpha": float(final_alpha),
+                                "raw_final_risk": float(raw_train_risk),
+                                "absorption_relative_error": absorption_error,
+                            } if self.g_train_projected else None,
+                        }
+                    )
+                    counts = (
+                        updated_covariance_count,
+                        updated_sensitivity_count,
+                    )
+                else:
+                    counts = (0.0, 0.0)
+                counts = self._broadcast_sbgc_branch_state(
+                    projection,
+                    unified_up,
+                    historical_covariance,
+                    historical_sensitivity,
+                    counts,
+                )
+                if branch_name == "q":
+                    wrapper.covariance_count_q = counts[0]
+                    wrapper.sensitivity_count_q = counts[1]
+                else:
+                    wrapper.covariance_count_v = counts[0]
+                    wrapper.sensitivity_count_v = counts[1]
+
+        self._last_sbgc_global_diagnostics = None
+        if global_problems is not None:
+            if len(global_problems) != 2 * len(wrappers):
+                raise RuntimeError("global SBGC problem count differs from Q/V branches")
+            if global_destinations[0].is_cuda:
+                torch.cuda.synchronize(global_destinations[0].device)
+            global_started = time.perf_counter()
+            global_candidates, global_result = solve_global_sensitivity_budgeted_g(
+                global_problems,
+                risk_budget=self.g_risk_budget,
+                ridge=self.g_solver_ridge,
+                bisection_steps=self.g_bisection_steps,
+            )
+            if global_destinations[0].is_cuda:
+                torch.cuda.synchronize(global_destinations[0].device)
+            solver_seconds += time.perf_counter() - global_started
+            numerator = 0.0
+            denominator = 0.0
+            for index, (destination, candidate, problem) in enumerate(zip(
+                global_destinations, global_candidates, global_problems
+            )):
+                old, target, hist_cov, cur_cov, hist_sens, cur_sens = problem
+                deployed = candidate.to(destination)
+                destination.copy_(deployed)
+                numerator += float(weighted_response_energy(
+                    deployed.double() - old, hist_cov, hist_sens
+                ))
+                denominator += float(weighted_response_energy(old, hist_cov, hist_sens))
+                branch_risk = float(historical_response_risk(
+                    deployed.double(), old, hist_cov, hist_sens
+                ))
+                branch = branch_diagnostics[index]
+                branch["selected"] = {
+                    "eta": global_result["eta"],
+                    "target_risk": float(historical_response_risk(
+                        target, old, hist_cov, hist_sens
+                    )),
+                    "achieved_risk": branch_risk,
+                    "current_distortion": global_result["branch_current_distortions"][index],
+                    "constraint_active": global_result["constraint_active"],
+                }
+                branch["deployed_historical_risk"] = branch_risk
+                branch["deployed_fisher_risk"] = float(historical_response_risk(
+                    deployed.double(), old, hist_cov, global_fisher_hist_sens[index]
+                )) if self.g_sensitivity_metric == "uniform" else branch_risk
+                branch["deployed_uniform_risk"] = float(historical_response_risk(
+                    deployed.double(), old, hist_cov, torch.ones_like(hist_sens)
+                ))
+                branch["deployed_update_norm"] = float(torch.linalg.matrix_norm(
+                    deployed.double() - old
+                ))
+            deployed_global_risk = numerator / (denominator + 1e-12)
+            if deployed_global_risk > self.g_risk_budget + 1e-6:
+                raise RuntimeError("FP32 global SBGC deployment violates risk budget")
+            global_result["deployed_aggregate_risk"] = deployed_global_risk
+            self._last_sbgc_global_diagnostics = global_result
+            if boundary_candidates is not None:
+                boundary_candidates["fisher"] = [
+                    tensor.detach().cpu().float().clone()
+                    for tensor in global_destinations
+                ]
+        if self.g_budget_scope == "global" and self._sbgc_distributed():
+            for wrapper in wrappers:
+                dist.broadcast(wrapper.unified_up_q, src=0)
+                dist.broadcast(wrapper.unified_up_v, src=0)
+
+        self.sbgc_projection_down = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.projection_q, wrapper.projection_v)
+        ]
+        self.sbgc_unified_up = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+        ]
+        self.sbgc_projected_covariance = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (
+                wrapper.projected_covariance_q,
+                wrapper.projected_covariance_v,
+            )
+        ]
+        self.sbgc_sensitivity_diag = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.sensitivity_q, wrapper.sensitivity_v)
+        ]
+        self.sbgc_covariance_count = [
+            value
+            for wrapper in wrappers
+            for value in (wrapper.covariance_count_q, wrapper.covariance_count_v)
+        ]
+        self.sbgc_sensitivity_count = [
+            value
+            for wrapper in wrappers
+            for value in (wrapper.sensitivity_count_q, wrapper.sensitivity_count_v)
+        ]
+        with torch.no_grad():
+            for weight in self.w_Bs:
+                weight.weight.zero_()
+        self._sbgc_calibration_prepared = False
+        self._sbgc_calibration_finalized = True
+        self._sbgc_boundary_candidates = boundary_candidates if is_main else None
+        self._sbgc_guard_problems = guard_problems
+        self._last_sbgc_branch_diagnostics = branch_diagnostics if is_main else None
+        if is_main:
+            active = [
+                item
+                for item in branch_diagnostics
+                if item["selected"]["constraint_active"]
+            ]
+            self._last_sbgc_calibration_stats = {
+                "branch_count": len(branch_diagnostics),
+                "task0_operator_error": self._sbgc_task0_operator_error,
+                "active_constraints": len(active),
+                "max_achieved_risk": max(
+                    (
+                        item["deployed_historical_risk"]
+                        for item in branch_diagnostics
+                    ),
+                    default=0.0,
+                ),
+                "mean_current_distortion": sum(
+                    item["selected"]["current_distortion"]
+                    for item in branch_diagnostics
+                )
+                / max(len(branch_diagnostics), 1),
+                "mean_sensitivity_cv": sum(
+                    item["sensitivity_cv"] for item in branch_diagnostics
+                )
+                / max(len(branch_diagnostics), 1),
+                "mean_candidate_gap": sum(
+                    item["candidate_relative_gap"] for item in branch_diagnostics
+                )
+                / max(len(branch_diagnostics), 1),
+                "solver_seconds": solver_seconds,
+                "aggregate_achieved_risk": (
+                    self._last_sbgc_global_diagnostics["deployed_aggregate_risk"]
+                    if self._last_sbgc_global_diagnostics is not None else None
+                ),
+            }
+            if self.g_train_projected:
+                projections = [
+                    item["training_projection"] for item in branch_diagnostics
+                ]
+                self._last_sbgc_calibration_stats.update({
+                    "mean_training_alpha": sum(
+                        item["mean_alpha"] for item in projections
+                    ) / max(len(projections), 1),
+                    "min_training_alpha": min(
+                        (item["min_alpha"] for item in projections), default=1.0
+                    ),
+                    "mean_active_projection_fraction": sum(
+                        item["active_fraction"] for item in projections
+                    ) / max(len(projections), 1),
+                    "max_absorption_relative_error": max(
+                        (item["absorption_relative_error"] for item in projections),
+                        default=0.0,
+                    ),
+                })
+        else:
+            self._last_sbgc_calibration_stats = None
+        return self._last_sbgc_calibration_stats
+
+    def _cuo_wrappers(self):
+        wrappers = [
+            block.attn.qkv
+            for block in self.lora_vit.blocks
+            if isinstance(block.attn.qkv, _CUOLowRankQKV)
+        ]
+        if len(wrappers) != len(self.w_As) // 2:
+            raise RuntimeError("cuo_lowrank wrapper topology does not match Q/V factors")
+        return wrappers
+
+    @staticmethod
+    def _cuo_distributed():
+        return dist.is_available() and dist.is_initialized()
+
+    def prepare_cuo_calibration(self):
+        """Freeze Task-0 P from the trained A and begin local FP64 collection."""
+        if self.cumulative_merge != SA_MERGE_MODE_CUO_LOWRANK:
+            raise RuntimeError("prepare_cuo_calibration requires cuo_lowrank")
+        wrappers = self._cuo_wrappers()
+        if self.task_id == 0:
+            is_main = not self._cuo_distributed() or dist.get_rank() == 0
+            if is_main:
+                with torch.no_grad():
+                    for wrapper in wrappers:
+                        projection_q = row_orthonormal_projection(
+                            wrapper.a_q.weight.detach()
+                        ).to(
+                            device=wrapper.projection_q.device,
+                            dtype=wrapper.projection_q.dtype,
+                        )
+                        projection_v = row_orthonormal_projection(
+                            wrapper.a_v.weight.detach()
+                        ).to(
+                            device=wrapper.projection_v.device,
+                            dtype=wrapper.projection_v.dtype,
+                        )
+                        wrapper.projection_q.copy_(projection_q)
+                        wrapper.projection_v.copy_(projection_v)
+            if self._cuo_distributed():
+                for wrapper in wrappers:
+                    dist.broadcast(wrapper.projection_q, src=0)
+                    dist.broadcast(wrapper.projection_v, src=0)
+        for wrapper in wrappers:
+            wrapper.begin_cuo_calibration()
+        self._cuo_calibration_prepared = True
+        self._cuo_calibration_finalized = False
+
+    def _reduce_cuo_branch_statistics(self, gram, cross, count):
+        """All-reduce one branch's C, D, and observation count exactly once."""
+        count_tensor = torch.tensor(
+            [count], dtype=torch.float64, device=gram.device
+        )
+        if self._cuo_distributed():
+            dist.all_reduce(gram, op=dist.ReduceOp.SUM)
+            dist.all_reduce(cross, op=dist.ReduceOp.SUM)
+            dist.all_reduce(count_tensor, op=dist.ReduceOp.SUM)
+        return gram, cross, int(count_tensor.item())
+
+    def _broadcast_cuo_branch_state(self, projection, unified_up, projected_gram):
+        if self._cuo_distributed():
+            dist.broadcast(projection, src=0)
+            dist.broadcast(unified_up, src=0)
+            dist.broadcast(projected_gram, src=0)
+
+    def finalize_cuo_calibration(self):
+        """Advance projected normal equations and synchronize deployment state."""
+        if self.cumulative_merge != SA_MERGE_MODE_CUO_LOWRANK:
+            raise RuntimeError("finalize_cuo_calibration requires cuo_lowrank")
+        if not self._cuo_calibration_prepared:
+            raise RuntimeError(
+                "cuo_lowrank calibration must be prepared before finalization"
+            )
+        is_main = not self._cuo_distributed() or dist.get_rank() == 0
+        branch_stats = []
+        for wrapper in self._cuo_wrappers():
+            q_statistics, v_statistics = wrapper.consume_cuo_statistics()
+            for projection, unified_up, projected_gram, statistics in (
+                (
+                    wrapper.projection_q,
+                    wrapper.unified_up_q,
+                    wrapper.projected_gram_q,
+                    q_statistics,
+                ),
+                (
+                    wrapper.projection_v,
+                    wrapper.unified_up_v,
+                    wrapper.projected_gram_v,
+                    v_statistics,
+                ),
+            ):
+                local_gram, local_cross, local_count = statistics
+                gram, cross, count = self._reduce_cuo_branch_statistics(
+                    local_gram, local_cross, local_count
+                )
+                if is_main:
+                    old_gram = projected_gram.to(dtype=torch.float64)
+                    identity = torch.eye(
+                        old_gram.shape[0],
+                        dtype=torch.float64,
+                        device=old_gram.device,
+                    )
+                    old_cross = unified_up.to(dtype=torch.float64) @ (
+                        old_gram + self.cuo_lambda * identity
+                    )
+                    new_gram = old_gram + gram
+                    new_cross = old_cross + cross
+                    new_up, diagnostics = solve_projected_cuo(
+                        new_gram, new_cross, self.cuo_lambda
+                    )
+                    unified_up.copy_(new_up.to(dtype=unified_up.dtype))
+                    projected_gram.copy_(
+                        new_gram.to(dtype=projected_gram.dtype)
+                    )
+                    branch_stats.append(
+                        {
+                            "token_count": count,
+                            "condition_number": float(
+                                diagnostics["condition_number"].item()
+                            ),
+                            "residual_norm": float(
+                                diagnostics["residual_norm"].item()
+                            ),
+                        }
+                    )
+                self._broadcast_cuo_branch_state(
+                    projection, unified_up, projected_gram
+                )
+        self.cuo_projection_down = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in self._cuo_wrappers()
+            for tensor in (wrapper.projection_q, wrapper.projection_v)
+        ]
+        self.cuo_unified_up = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in self._cuo_wrappers()
+            for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+        ]
+        self.cuo_projected_gram = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in self._cuo_wrappers()
+            for tensor in (wrapper.projected_gram_q, wrapper.projected_gram_v)
+        ]
+        with torch.no_grad():
+            for weight in self.w_Bs:
+                weight.weight.zero_()
+        self._cuo_calibration_prepared = False
+        self._cuo_calibration_finalized = True
+        if is_main:
+            self._last_cuo_calibration_stats = {
+                "token_count": branch_stats[0]["token_count"] if branch_stats else 0,
+                "branch_count": len(branch_stats),
+                "max_condition_number": max(
+                    (item["condition_number"] for item in branch_stats), default=0.0
+                ),
+                "max_residual_norm": max(
+                    (item["residual_norm"] for item in branch_stats), default=0.0
+                ),
+            }
+        else:
+            self._last_cuo_calibration_stats = None
+        return self._last_cuo_calibration_stats
+
+    def generate_fc(self, in_dim, out_dim):
+        return SimpleLinear(in_dim, out_dim)
+
+    def save_lora_parameters(self, filename: str, task_id) -> None:
+        if self.cumulative_state:
+            if self.cumulative_merge == SA_MERGE_MODE_SBGC:
+                self._save_sbgc_state(filename, task_id)
+                return
+            if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+                self._save_cuo_lowrank_state(filename, task_id)
+                return
+            if (
+                self.cumulative_merge
+                == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+            ):
+                self._save_live_a_state(filename, task_id)
+            else:
+                self._save_cumulative_state(filename, task_id)
+            return
+        self.task_id += 1
+        if not os.path.exists(filename):
+            os.makedirs(filename)
+        torch.save(
+            [w.weight.detach().cpu() for w in self.w_Bs],
+            _join_path(filename, "sa_lora_w_b_{}.pt".format(task_id)),
+        )
+        scales = {}
+        for idx, residual_task_id in enumerate(range(self.task_id - 1)):
+            scales[residual_task_id] = self.wrapped_param_prev[
+                idx
+            ].param.detach().cpu()
+        scales[task_id] = self.wrapped_param[0].param.detach().cpu()
+        torch.save(
+            {
+                "version": SA_STATE_VERSION_LEGACY,
+                "shared_a": [w.weight.detach().cpu() for w in self.w_As],
+                "scales": scales,
+            },
+            _join_path(filename, SA_STATE_FILENAME),
+        )
+        self.save_merged_lora(filename)
+
+    def _save_sbgc_state(self, filename: str, task_id) -> None:
+        """Persist SBGC's fixed coordinates and task-constant moments."""
+        if task_id != self.task_id:
+            raise ValueError(
+                "SBGC state save called with task_id={} but task_id is {}".format(
+                    task_id, self.task_id
+                )
+            )
+        if not self._sbgc_calibration_finalized:
+            raise RuntimeError(
+                "SBGC state save requires finalized all-rank calibration"
+            )
+        if not os.path.exists(filename):
+            os.makedirs(filename)
+        wrappers = self._sbgc_wrappers()
+        projection_down = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.projection_q, wrapper.projection_v)
+        ]
+        unified_up = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+        ]
+        projected_covariance = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (
+                wrapper.projected_covariance_q,
+                wrapper.projected_covariance_v,
+            )
+        ]
+        sensitivity_diag = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.sensitivity_q, wrapper.sensitivity_v)
+        ]
+        covariance_count = torch.tensor(
+            [
+                value
+                for wrapper in wrappers
+                for value in (
+                    wrapper.covariance_count_q,
+                    wrapper.covariance_count_v,
+                )
+            ],
+            dtype=torch.float64,
+        )
+        sensitivity_count = torch.tensor(
+            [
+                value
+                for wrapper in wrappers
+                for value in (
+                    wrapper.sensitivity_count_q,
+                    wrapper.sensitivity_count_v,
+                )
+            ],
+            dtype=torch.float64,
+        )
+        self.task_id += 1
+        state = {
+            "version": (
+                SA_STATE_VERSION_SBGC_GLOBAL if self.g_budget_scope == "global"
+                else SA_STATE_VERSION_SBGC_GUARD if self.g_plasticity_guard
+                else SA_STATE_VERSION_SBGC_TRAIN_PROJECTED if self.g_train_projected
+                else SA_STATE_VERSION_SBGC
+            ),
+            "task_id": self.task_id,
+            "rank": self.rank,
+            "merge_mode": SA_MERGE_MODE_SBGC,
+            "projection_down": projection_down,
+            "unified_up": unified_up,
+            "projected_covariance": projected_covariance,
+            "sensitivity_diag": sensitivity_diag,
+            "covariance_count": covariance_count,
+            "sensitivity_count": sensitivity_count,
+            "risk_budget": self.g_risk_budget,
+            "sensitivity_metric": self.g_sensitivity_metric,
+            "sensitivity_floor": self.g_sensitivity_floor,
+            "solver_ridge": self.g_solver_ridge,
+            "bisection_steps": self.g_bisection_steps,
+            "shadow_only": self.g_shadow_only,
+        }
+        if self.g_budget_scope == "global":
+            state["budget_scope"] = "global"
+        if self.g_train_projected:
+            state["train_projected"] = True
+        if self.g_plasticity_guard:
+            selection = self._sbgc_guard_selection or {
+                "name": None,
+                "budget": None,
+                "aggregate_risk": 0.0,
+                "max_branch_risk": 0.0,
+            }
+            state.update({
+                "guard_enabled": True,
+                "guard_selected_name": selection["name"],
+                "guard_selected_budget": selection["budget"],
+                "guard_selected_aggregate_risk": selection["aggregate_risk"],
+                "guard_selected_max_branch_risk": selection["max_branch_risk"],
+                "guard_holdout_fraction": self.g_holdout_fraction,
+                "guard_ce_tolerance": self.g_guard_ce_tolerance,
+            })
+        torch.save(state, _join_path(filename, SA_STATE_FILENAME))
+        self.sbgc_projection_down = projection_down
+        self.sbgc_unified_up = unified_up
+        self.sbgc_projected_covariance = projected_covariance
+        self.sbgc_sensitivity_diag = sensitivity_diag
+        self.sbgc_covariance_count = covariance_count.tolist()
+        self.sbgc_sensitivity_count = sensitivity_count.tolist()
+        self._sbgc_deployment_saved = True
+        self.save_merged_lora(filename)
+
+    def _save_cuo_lowrank_state(self, filename: str, task_id) -> None:
+        """Persist only CUO's fixed P, solved H, and projected Gram matrices."""
+        if task_id != self.task_id:
+            raise ValueError(
+                "cuo_lowrank state save called with task_id={} but task_id is {}".format(
+                    task_id, self.task_id
+                )
+            )
+        if not self._cuo_calibration_finalized:
+            raise RuntimeError(
+                "cuo_lowrank state save requires finalized all-rank calibration"
+            )
+        if not os.path.exists(filename):
+            os.makedirs(filename)
+        wrappers = self._cuo_wrappers()
+        projection_down = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.projection_q, wrapper.projection_v)
+        ]
+        unified_up = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+        ]
+        projected_gram = [
+            tensor.detach().cpu().float().clone()
+            for wrapper in wrappers
+            for tensor in (wrapper.projected_gram_q, wrapper.projected_gram_v)
+        ]
+        self.task_id += 1
+        state = {
+            "version": SA_STATE_VERSION_CUO,
+            "task_id": self.task_id,
+            "rank": self.rank,
+            "merge_mode": SA_MERGE_MODE_CUO_LOWRANK,
+            "projection_down": projection_down,
+            "unified_up": unified_up,
+            "projected_gram": projected_gram,
+            "cuo_lambda": self.cuo_lambda,
+        }
+        torch.save(state, _join_path(filename, SA_STATE_FILENAME))
+        self.cuo_projection_down = projection_down
+        self.cuo_unified_up = unified_up
+        self.cuo_projected_gram = projected_gram
+        with torch.no_grad():
+            for weight in self.w_Bs:
+                weight.weight.zero_()
+        self._cuo_deployment_saved = True
+        self.save_merged_lora(filename)
+
+    def _save_cumulative_state(self, filename: str, task_id) -> None:
+        """Fold the current task into the canonical cumulative state.
+
+        The historical operator ``H_old Q_old^T`` is aligned to the new
+        canonical basis with the closed-form gauge solution, then the current
+        task's normalized LoRA contribution is added.  Per-task B files are
+        never written; the only artifact is the v2 state file.
+        """
+        if task_id != self.task_id:
+            raise ValueError(
+                "cumulative state save called with task_id={} but "
+                "task_id is {}".format(task_id, self.task_id)
+            )
+        self.task_id += 1
+        if not os.path.exists(filename):
+            os.makedirs(filename)
+        # Capture the *pre-save* gauge diagnostics against the newly trained
+        # shared A before the historical state is overwritten below.
+        if len(self.cumulative_up) > 0:
+            q_t_list = [
+                canonical_down_projection(w_a.weight.detach().cpu())[0]
+                for w_a in self.w_As
+            ]
+            self._last_cumulative_gauge_diagnostics = (
+                self._compute_gauge_diagnostics_between(
+                    self.cumulative_up, self.canonical_down, q_t_list
+                )
+            )
+        else:
+            self._last_cumulative_gauge_diagnostics = {
+                "residual": 0.0,
+                "rotation_fro": 0.0,
+                "preservation": 0.0,
+                "branches": 0,
+            }
+        canonical_down = []
+        cumulative_up = []
+        triangular_r = []
+        if self.cumulative_merge == SA_MERGE_MODE_UNION_SVD:
+            self._last_union_svd_truncation_error = 0.0
+            for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
+                a = w_a.weight.detach().cpu().float()
+                b = w_b.weight.detach().cpu().float()
+                s = (
+                    self.wrapped_param[0]
+                    .param.detach()
+                    .cpu()
+                    .float()
+                    .reshape(())
+                )
+                norm_a = torch.linalg.vector_norm(a)
+                norm_b = torch.linalg.vector_norm(b) + 1e-8
+                left = []
+                right = []
+                if idx < len(self.cumulative_up):
+                    left.append(self.cumulative_up[idx])
+                    right.append(self.canonical_down[idx].t())
+                left.append(s * b / (norm_a * norm_b))
+                right.append(a.t())
+                q_t, h_t, _, rel_err = union_svd_factors(
+                    left, right, rank=self.cumulative_rank
+                )
+                self._last_union_svd_truncation_error = max(
+                    self._last_union_svd_truncation_error, rel_err
+                )
+                canonical_down.append(q_t)
+                cumulative_up.append(h_t)
+                triangular_r.append(
+                    torch.eye(self.cumulative_rank, dtype=torch.float32)
+                )
+        else:
+            for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
+                a = w_a.weight.detach().cpu().float()
+                b = w_b.weight.detach().cpu().float()
+                s = (
+                    self.wrapped_param[0]
+                    .param.detach()
+                    .cpu()
+                    .float()
+                    .reshape(())
+                )
+                q_t, r = canonical_down_projection(a)
+                if idx < len(self.cumulative_up) and self.task_id > 1:
+                    if self.cumulative_gauge:
+                        h_hist = gauge_align_up_projection(
+                            self.cumulative_up[idx],
+                            self.canonical_down[idx],
+                            q_t,
+                        )
+                    else:
+                        # Ablation: keep the old cumulative up projection
+                        # without aligning it to the new canonical basis.
+                        h_hist = self.cumulative_up[idx]
+                else:
+                    h_hist = torch.zeros_like(b)
+                norm_a = torch.linalg.vector_norm(a)
+                norm_b = torch.linalg.vector_norm(b) + 1e-8
+                h_cur_raw = s * b / (norm_a * norm_b)
+                h_cur = canonicalize_effective_up_projection(h_cur_raw, r)
+                cumulative_up.append(h_hist + h_cur)
+                canonical_down.append(q_t)
+                triangular_r.append(r)
+
+        self.cumulative_up = cumulative_up
+        self.canonical_down = canonical_down
+        self.triangular_r = triangular_r
+        state = {
+            "version": (
+                SA_STATE_VERSION_UNION
+                if self.cumulative_merge == SA_MERGE_MODE_UNION_SVD
+                else SA_STATE_VERSION
+            ),
+            "task_id": self.task_id,
+            "rank": self.cumulative_rank,
+            "merge_mode": self.cumulative_merge,
+            "canonical_down": canonical_down,
+            "cumulative_up": cumulative_up,
+            "triangular_r": triangular_r,
+        }
+        torch.save(
+            state,
+            _join_path(filename, SA_STATE_FILENAME),
+        )
+        self.save_merged_lora(filename)
+
+    def _save_live_a_state(self, filename: str, task_id) -> None:
+        """Save the Live-A Aggregate-B state.
+
+        Folds the current raw operator into the configured fixed-state
+        representation and saves it with the current shared A. The in-memory
+        aggregate remains unchanged until the deployment backbone is rebuilt.
+        """
+        if task_id != self.task_id:
+            raise ValueError(
+                "live-a state save called with task_id={} but "
+                "task_id is {}".format(task_id, self.task_id)
+            )
+        self.task_id += 1
+        if not os.path.exists(filename):
+            os.makedirs(filename)
+        aggregate_up = []
+        shared_a = []
+        g_sum = 0.0
+        a_sum = 0.0
+        b_sum = 0.0
+        scale_value = None
+        gamma_sum = 0.0
+        norm_product_sum = 0.0
+        consolidation_gain_sum = 0.0
+        consolidation_gain_min = float("inf")
+        consolidation_gain_max = 0.0
+        absorption_error = 0.0
+        coordinate_diagnostics = []
+        joint_truncation_errors = []
+        recoverability_online_aligned = (
+            self.adaptive_a_strategy == "recoverability"
+            and self.recoverability_stage
+            in ("anchor_realign", "global_budget")
+        )
+        live_wrappers = (
+            self._recoverability_wrappers()
+            if recoverability_online_aligned
+            else []
+        )
+        for idx, (w_a, w_b) in enumerate(zip(self.w_As, self.w_Bs)):
+            b = w_b.weight.detach().cpu().float()
+            current_a = w_a.weight.detach().cpu().float()
+            s = (
+                self.wrapped_param[0]
+                .param.detach()
+                .cpu()
+                .float()
+                .reshape(())
+            )
+            if recoverability_online_aligned:
+                wrapper = live_wrappers[idx // 2]
+                source = (
+                    wrapper.aggregate_q
+                    if idx % 2 == 0
+                    else wrapper.aggregate_v
+                )
+                g_old = source.detach().cpu().float()
+            else:
+                g_old = (
+                    self.aggregate_up[idx]
+                    if idx < len(self.aggregate_up)
+                    else torch.zeros_like(b)
+                )
+            current_up, absorption = absorb_live_a_current_projection(
+                current_a,
+                b,
+                s,
+                mode=self.live_a_absorb_mode,
+            )
+            selected_a = current_a
+            if self.live_a_boundary_merge == "joint_svd" and task_id > 0:
+                if idx >= len(self._live_a_previous_shared_a):
+                    raise RuntimeError("joint_svd requires the previous shared A")
+                selected_a, g_new, diagnostics = joint_live_a_boundary_factors(
+                    self._live_a_previous_shared_a[idx],
+                    g_old,
+                    current_a,
+                    current_up,
+                )
+                joint_truncation_errors.append(
+                    diagnostics["relative_truncation_error"]
+                )
+            else:
+                g_history = g_old
+                if (
+                    not recoverability_online_aligned
+                    and self.live_a_coordinate_align
+                    and idx < len(self._live_a_previous_shared_a)
+                ):
+                    g_history, diagnostics = align_live_a_aggregate(
+                        g_old,
+                        self._live_a_previous_shared_a[idx],
+                        current_a,
+                    )
+                    if self.adaptive_a_strategy == "operator_energy_partition":
+                        old_down = self._live_a_previous_shared_a[idx].double()
+                        old_down = old_down / (
+                            torch.linalg.vector_norm(old_down)
+                            + self.adaptive_a_eps
+                        )
+                        new_down = current_a.double()
+                        new_down = new_down / (
+                            torch.linalg.vector_norm(new_down)
+                            + self.adaptive_a_eps
+                        )
+                        old_operator = g_old.double() @ old_down
+                        aligned_operator = g_history.double() @ new_down
+                        diagnostics["old_operator_energy"] = float(
+                            old_operator.square().sum()
+                        )
+                        diagnostics["residual_energy"] = float(
+                            (aligned_operator - old_operator).square().sum()
+                        )
+                    coordinate_diagnostics.append(diagnostics)
+                g_new = g_history + current_up
+            aggregate_up.append(g_new)
+            shared_a.append(selected_a)
+            g_sum = g_sum + g_new.square().sum().item()
+            a_sum = a_sum + selected_a.square().sum().item()
+            b_sum = b_sum + b.square().sum().item()
+            scale_value = float(s)
+            gamma_sum += absorption["gamma"]
+            norm_product_sum += absorption["norm_product"]
+            consolidation_gain_sum += absorption["consolidation_gain"]
+            consolidation_gain_min = min(
+                consolidation_gain_min,
+                absorption["consolidation_gain"],
+            )
+            consolidation_gain_max = max(
+                consolidation_gain_max,
+                absorption["consolidation_gain"],
+            )
+            absorption_error = max(
+                absorption_error,
+                absorption["absorption_relative_error"],
+            )
+        n = len(aggregate_up)
+        self._last_live_a_save_stats = {
+            "mean_G_norm": (g_sum / n) ** 0.5,
+            "mean_A_norm": (a_sum / n) ** 0.5,
+            "mean_B_norm": (b_sum / n) ** 0.5,
+            "scale": scale_value,
+            "mean_gamma": gamma_sum / n,
+            "mean_norm_product": norm_product_sum / n,
+            "mean_consolidation_gain": consolidation_gain_sum / n,
+            "min_consolidation_gain": consolidation_gain_min,
+            "max_consolidation_gain": consolidation_gain_max,
+            "absorption_relative_error": absorption_error,
+            "absorb_mode": self.live_a_absorb_mode,
+        }
+        if coordinate_diagnostics:
+            old_operator_energy = sum(
+                item.get("old_operator_energy", 0.0)
+                for item in coordinate_diagnostics
+            )
+            residual_energy = sum(
+                item.get("residual_energy", 0.0)
+                for item in coordinate_diagnostics
+            )
+            self._last_live_a_coordinate_diagnostics = {
+                "branches": len(coordinate_diagnostics),
+                "before_relative_error": sum(
+                    item["before_relative_error"]
+                    for item in coordinate_diagnostics
+                )
+                / len(coordinate_diagnostics),
+                "after_relative_error": sum(
+                    item["after_relative_error"]
+                    for item in coordinate_diagnostics
+                )
+                / len(coordinate_diagnostics),
+                "max_condition": max(
+                    item["condition"] for item in coordinate_diagnostics
+                ),
+                "global_squared_residual_ratio": (
+                    residual_energy
+                    / max(old_operator_energy, self.adaptive_a_eps)
+                ),
+                "predicted_energy_budget": (
+                    self.hoep_energy_budget
+                    if self.adaptive_a_strategy
+                    == "operator_energy_partition"
+                    and self.hoep_energy_metric == "operator"
+                    else None
+                ),
+            }
+        else:
+            self._last_live_a_coordinate_diagnostics = {
+                "branches": 0,
+                "before_relative_error": 0.0,
+                "after_relative_error": 0.0,
+                "max_condition": 0.0,
+                "global_squared_residual_ratio": 0.0,
+                "predicted_energy_budget": (
+                    self.hoep_energy_budget
+                    if self.adaptive_a_strategy
+                    == "operator_energy_partition"
+                    and self.hoep_energy_metric == "operator"
+                    else None
+                ),
+            }
+        self._last_saved_live_a_aggregate = [
+            tensor.detach().clone() for tensor in aggregate_up
+        ]
+        self._last_saved_live_a_shared_a = [
+            tensor.detach().clone() for tensor in shared_a
+        ]
+        self._last_live_a_joint_svd_diagnostics = {
+            "branches": len(joint_truncation_errors),
+            "mean_relative_error": (
+                sum(joint_truncation_errors) / len(joint_truncation_errors)
+                if joint_truncation_errors else 0.0
+            ),
+            "max_relative_error": max(joint_truncation_errors, default=0.0),
+        }
+        wrappers = [
+            block.attn.qkv
+            for block in self.lora_vit.blocks
+            if isinstance(block.attn.qkv, _LiveAAggregateQKV)
+        ]
+        input_sketches = [wrapper.merged_input_sketch() for wrapper in wrappers]
+        state = {
+                "version": SA_STATE_VERSION_LIVE_A,
+                "task_id": self.task_id,
+                "rank": self.rank,
+                "merge_mode": SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
+                "aggregate_up": aggregate_up,
+                "shared_a": shared_a,
+                "history_groups": self.live_a_history_groups,
+                "coordinate_aligned": self.live_a_coordinate_align,
+                "absorb_mode": self.live_a_absorb_mode,
+            }
+        if self.live_a_boundary_merge == "joint_svd":
+            state["boundary_merge"] = "joint_svd"
+        if self.live_a_history_forward == "anchored":
+            state["history_forward"] = "anchored"
+        if self.adaptive_a_strategy in (
+            "risk_budgeted",
+            "pareto_knee",
+            "function_safe_pareto",
+        ) or (
+            self.adaptive_a_strategy == "operator_energy_partition"
+            and (
+                self.hoep_energy_metric == "functional_diag"
+                or self.hoep_functional_diagnostics
+            )
+        ):
+            state.update(
+                {
+                "adaptive_a_input_rms": [
+                    rms.detach().cpu().float() for rms, _ in input_sketches
+                ],
+                "adaptive_a_input_counts": torch.tensor(
+                    [count for _, count in input_sketches], dtype=torch.float64
+                ),
+                }
+            )
+        torch.save(
+            state,
+            _join_path(filename, SA_STATE_FILENAME),
+        )
+        self.save_merged_lora(filename)
+
+    def cleanup_per_task_files(self, filename: str) -> None:
+        """Delete per-task B files after the final task; merged LoRA remains."""
+        if not self.delete_per_task_files:
+            return
+        for task_id in range(self.task_id):
+            path = _join_path(filename, "sa_lora_w_b_{}.pt".format(task_id))
+            if os.path.exists(path):
+                os.remove(path)
+
+    def save_merged_lora(self, filename: str) -> None:
+        """Store the exact combined bank as one B per layer (storage metric)."""
+        if self.cumulative_merge == SA_MERGE_MODE_SBGC:
+            if not (
+                self._sbgc_calibration_finalized or self._sbgc_deployment_saved
+            ):
+                raise RuntimeError(
+                    "SBGC merged save requires finalized all-rank calibration"
+                )
+            if not os.path.exists(filename):
+                os.makedirs(filename)
+            wrappers = self._sbgc_wrappers()
+            torch.save(
+                {
+                    "version": (
+                        SA_STATE_VERSION_SBGC_GLOBAL if self.g_budget_scope == "global"
+                        else SA_STATE_VERSION_SBGC_GUARD if self.g_plasticity_guard
+                        else SA_STATE_VERSION_SBGC_TRAIN_PROJECTED if self.g_train_projected
+                        else SA_STATE_VERSION_SBGC
+                    ),
+                    "task_id": (
+                        self.task_id - 1
+                        if self._sbgc_deployment_saved
+                        else self.task_id
+                    ),
+                    "rank": self.rank,
+                    "merge_mode": SA_MERGE_MODE_SBGC,
+                    "projection_down": [
+                        tensor.detach().cpu().float().clone()
+                        for wrapper in wrappers
+                        for tensor in (wrapper.projection_q, wrapper.projection_v)
+                    ],
+                    "unified_up": [
+                        tensor.detach().cpu().float().clone()
+                        for wrapper in wrappers
+                        for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+                    ],
+                },
+                _join_path(filename, SA_MERGED_FILENAME),
+            )
+            return
+        if self.cumulative_merge == SA_MERGE_MODE_CUO_LOWRANK:
+            if not (
+                self._cuo_calibration_finalized or self._cuo_deployment_saved
+            ):
+                raise RuntimeError(
+                    "cuo_lowrank merged save requires finalized all-rank calibration"
+                )
+            if not os.path.exists(filename):
+                os.makedirs(filename)
+            wrappers = self._cuo_wrappers()
+            torch.save(
+                {
+                    "version": SA_STATE_VERSION_CUO,
+                    "task_id": (
+                        self.task_id - 1
+                        if self._cuo_deployment_saved
+                        else self.task_id
+                    ),
+                    "rank": self.rank,
+                    "merge_mode": SA_MERGE_MODE_CUO_LOWRANK,
+                    "projection_down": [
+                        tensor.detach().cpu().float().clone()
+                        for wrapper in wrappers
+                        for tensor in (wrapper.projection_q, wrapper.projection_v)
+                    ],
+                    "unified_up": [
+                        tensor.detach().cpu().float().clone()
+                        for wrapper in wrappers
+                        for tensor in (wrapper.unified_up_q, wrapper.unified_up_v)
+                    ],
+                },
+                _join_path(filename, SA_MERGED_FILENAME),
+            )
+            return
+        if not os.path.exists(filename):
+            os.makedirs(filename)
+        current_task = self.task_id - 1
+        if self.cumulative_state:
+            if (
+                self.cumulative_merge
+                == SA_MERGE_MODE_LIVE_A_AGGREGATE_B
+            ):
+                aggregate_total = []
+                if self._last_saved_live_a_aggregate is not None:
+                    aggregate_total = [
+                        tensor.detach().cpu().float().clone()
+                        for tensor in self._last_saved_live_a_aggregate
+                    ]
+                else:
+                    for idx, w_b in enumerate(self.w_Bs):
+                        b = w_b.weight.detach().cpu().float()
+                        s = (
+                            self.wrapped_param[0]
+                            .param.detach()
+                            .cpu()
+                            .float()
+                            .reshape(())
+                        )
+                        g_old = (
+                            self.aggregate_up[idx]
+                            if idx < len(self.aggregate_up)
+                            else torch.zeros_like(b)
+                        )
+                        current_up, _ = absorb_live_a_current_projection(
+                            self.w_As[idx].weight.detach().cpu().float(),
+                            b,
+                            s,
+                            mode=self.live_a_absorb_mode,
+                        )
+                        g_total = g_old + current_up
+                        aggregate_total.append(g_total)
+                shared_a = (
+                    [tensor.detach().cpu().float().clone()
+                     for tensor in self._last_saved_live_a_shared_a]
+                    if self._last_saved_live_a_shared_a is not None
+                    else [w.weight.detach().cpu().float() for w in self.w_As]
+                )
+                merged_b = [
+                    g / (torch.linalg.vector_norm(a) + 1e-8)
+                    for g, a in zip(aggregate_total, shared_a)
+                ]
+                merged_state = {
+                        "version": SA_STATE_VERSION_LIVE_A,
+                        "merge_mode": SA_MERGE_MODE_LIVE_A_AGGREGATE_B,
+                        "shared_a": shared_a,
+                        "merged_b": merged_b,
+                        "aggregate_up": aggregate_total,
+                        "task_id": current_task,
+                        "absorb_mode": self.live_a_absorb_mode,
+                    }
+                if self.live_a_boundary_merge == "joint_svd":
+                    merged_state["boundary_merge"] = "joint_svd"
+                if self.live_a_history_forward == "anchored":
+                    merged_state["history_forward"] = "anchored"
+                torch.save(merged_state, _join_path(filename, SA_MERGED_FILENAME))
+                return
+            torch.save(
+                {
+                    "version": (
+                        SA_STATE_VERSION_UNION
+                        if self.cumulative_merge == SA_MERGE_MODE_UNION_SVD
+                        else SA_STATE_VERSION
+                    ),
+                    "merge_mode": self.cumulative_merge,
+                    "shared_a": [q.clone() for q in self.canonical_down],
+                    "merged_b": [h.clone() for h in self.cumulative_up],
+                    "canonical_down": [q.clone() for q in self.canonical_down],
+                    "cumulative_up": [h.clone() for h in self.cumulative_up],
+                    "triangular_r": [r.clone() for r in self.triangular_r],
+                    "rank": self.cumulative_rank,
+                    "task_id": current_task,
+                },
+                _join_path(filename, SA_MERGED_FILENAME),
+            )
+            return
+        num_saved = len(self.saved_b_tasks)
+        merged_b = []
+        for idx, w_b in enumerate(self.w_Bs):
+            total = torch.zeros(
+                w_b.weight.shape, dtype=torch.float32
+            )
+            a_w = self.w_As[idx].weight.detach().cpu().float()
+            norm_a = torch.norm(a_w)
+            # All tasks loaded from disk (0..num_saved-1). In the post-training
+            # state the current task is not yet in saved_b_tasks and its B is
+            # non-zero; in a rebuilt eval backbone the current B is zero and the
+            # last task is already in saved_b_tasks, so it must not be skipped.
+            for task_id in range(num_saved):
+                b_i = self.saved_b_tasks[task_id][idx].cpu().float()
+                s_i = self.wrapped_param_prev[task_id].param.detach().cpu().float()
+                total = total + s_i * b_i / (norm_a * torch.norm(b_i) + 1e-8)
+            if torch.any(w_b.weight != 0):
+                s_cur = self.wrapped_param[0].param.detach().cpu().float()
+                total = total + s_cur * w_b.weight.detach().cpu().float()
+            merged_b.append(total.cpu())
+        torch.save(
+            {
+                "version": SA_STATE_VERSION_LEGACY,
+                "shared_a": [w.weight.detach().cpu() for w in self.w_As],
+                "merged_b": merged_b,
+                "task_id": current_task,
+            },
+            _join_path(filename, SA_MERGED_FILENAME),
+        )
+
+    @contextmanager
+    def historical_only_forward(self):
+        """Temporarily evaluate live-A wrappers without current-task B."""
+        wrappers = [
+            block.attn.qkv
+            for block in getattr(self.lora_vit, "blocks", [])
+            if isinstance(block.attn.qkv, _LiveAAggregateQKV)
+        ]
+        previous_states = [wrapper.current_branch_enabled for wrapper in wrappers]
+        for wrapper in wrappers:
+            wrapper.current_branch_enabled = False
+        try:
+            yield
+        finally:
+            for wrapper, previous in zip(wrappers, previous_states):
+                wrapper.current_branch_enabled = previous
+
+    def forward(self, x: Tensor, loss=False, eval=False) -> Tensor:
+        if loss:
+            return self.lora_vit(x), torch.tensor(0.0, device=x.device)
+        return self.lora_vit(x)

@@ -1,38 +1,16 @@
-# SD-LoRA: Scalable Decoupled Low-Rank Adaptation for Class Incremental Learning
+# Adaptive-A continual learning: codex/hoep-cifar-ablation-20261008
 
-Welcome to the official code repository for [SD-LoRA: Scalable Decoupled Low-Rank Adaptation for Class Incremental Learning **(ICLR 2025, Oral)**](https://openreview.net/pdf?id=5U1rlpX68A).
+This branch preserves its original implementation, tests, launch scripts and
+training input configurations. Generated experiment records, result reports,
+metrics, logs and checkpoint files are excluded from the current tree.
 
-If you find this code useful in your research then please cite  
-```bibtex
-@inproceedings{
-wu2025sdlora,
-title={{SD}-Lo{RA}: Scalable Decoupled Low-Rank Adaptation for Class Incremental Learning},
-author={Yichen Wu and Hongming Piao and Long-Kai Huang and Renzhen Wang and Wanhua Li and Hanspeter Pfister and Deyu Meng and Kede Ma and Ying Wei},
-booktitle={The Thirteenth International Conference on Learning Representations},
-year={2025},
-url={https://openreview.net/forum?id=5U1rlpX68A}
-}
-``` 
+For the current HOEP source and setup documentation, see the
+[default branch](https://github.com/hongshan123/SD-Lora-CL-adaptive-a).
 
-## 👀 Introduction
-![SD-LoRA](imgs/intro.jpg)
+Install dependencies from `requirements.no_torch.txt` after selecting a
+compatible PyTorch build. Prepare datasets and pretrained weights locally,
+update any machine-specific paths in a copied input configuration, and run
+`python main.py --config=/path/to/config.json`.
 
-- SD-LoRA introduces a decoupled learning strategy for the magnitude and direction of LoRA components to achieve scalable continual learning without rehearsal of huge sample features.
-- It demonstrates a strong stability-plasticity trade-off by converging to overlapping low-loss regions across sequential tasks, supported by empirical and theoretical analysis.
-- SD-LoRA and its two variants enable end-to-end optimization and efficient inference without component selection, achieving state-of-the-art performance on multiple CL benchmarks and foundation models.
-
-## 📜 Results
-![SD-LoRA](imgs/results1.jpg)
-![SD-LoRA](imgs/results2.jpg)
-- To run the experiments, download the datasets to /data/ and execute:
-   ```bash
-  bash run.sh
-- For your convenience, we have provided the running logs in the log file, where you can find detailed performance results for all streaming tasks.
-
-
-
-## 🙏 Acknowledgement
-This repo is built upon the following projects:
-
-* [LoRA-ViT](https://github.com/JamesQFreeman/LoRA-ViT)
-* [PILOT](https://github.com/sun-hailong/LAMDA-PILOT)
+This is research code derived from SD-LoRA; retain the original license and
+cite the upstream SD-LoRA paper when using it.

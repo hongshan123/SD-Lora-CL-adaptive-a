@@ -95,7 +95,9 @@ offline_subspace_validation_*/
 
 # Per-run ledgers, integrity checks and diagnostic state.
 records/
+experiment_ledger/
 b_metric/
+a_gain/
 prototype_state/
 registry.json
 EXPERIMENTS.md
@@ -104,3 +106,7 @@ p0_hashes.json
 complete.json
 *.json.tmp
 *.md.tmp
+*.jsonl
+*_audit.json
+*_go_no_go.json
+imgs/results*.jpg

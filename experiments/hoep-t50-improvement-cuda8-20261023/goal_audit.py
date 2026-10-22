@@ -1,6 +1,7 @@
 """Audit paired full-horizon evidence for the user goal; never select a seed."""
 import hashlib
 import json
+import math
 from pathlib import Path
 
 from journal import write_json
@@ -9,10 +10,28 @@ from run_job import parse_curve
 ROOT=Path(__file__).resolve().parent
 OPERATIONAL={'prefix','filepath','sa_p0_run_id','config'}
 METHOD={'sa_train_a_all_tasks','sa_adaptive_a_enabled','sa_total_history_weight',
-        'sa_allseen_proto_weight','sa_b_metric_kind','sa_b_metric_damping','sa_b_metric_history_mix'}
+        'sa_allseen_proto_weight','sa_b_metric_kind','sa_b_metric_damping','sa_b_metric_history_mix',
+        'sa_a_gain_experiment','sa_a_gradient_multiplier'}
 
 
 def read(path):return json.loads(Path(path).read_text())
+
+
+def rounding_evidence(mean_difference, threshold, score_half_width=.005):
+    """Bound paired-mean error from two scores rounded to 0.01 percentage point."""
+    if not math.isfinite(threshold) or not math.isfinite(score_half_width) or score_half_width<0:
+        raise ValueError('finite threshold and nonnegative rounding width required')
+    if mean_difference is None:
+        return dict(lower_bound_pp=None,upper_bound_pp=None,
+                    robustly_above_threshold=False,requires_exact_evaluation=False)
+    if not math.isfinite(mean_difference):raise ValueError('nonfinite mean difference')
+    uncertainty=2*score_half_width
+    lower=mean_difference-uncertainty;upper=mean_difference+uncertainty
+    robust=lower>threshold+1e-12
+    return dict(lower_bound_pp=lower,upper_bound_pp=upper,
+                uncertainty_in_paired_mean_pp=uncertainty,
+                robustly_above_threshold=robust,
+                requires_exact_evaluation=not robust and upper>threshold+1e-12)
 
 
 def validated_score(root,manifest,job,record):
@@ -46,6 +65,16 @@ def validated_score(root,manifest,job,record):
         for task,record in enumerate(metrics['b_metric_diagnostics']):
             assert read(out/'b_metric'/f'task_{task:03d}.json')==record
             if task:assert record['applied_branches']>0 and record['max_relative_norm_error']<1e-5
+    if config.get('sa_a_gain_experiment'):
+        assert len(metrics['a_gain_diagnostics'])==50
+        multiplier=config['sa_a_gradient_multiplier']
+        assert multiplier in (10.,100.) and metrics['a_gradient_multiplier']==multiplier
+        for task,record in enumerate(metrics['a_gain_diagnostics']):
+            assert read(out/'a_gain'/f'task_{task:03d}.json')==record
+            if task:
+                assert record['nonzero_scaled_branches']>0 and record['steps']>0
+                assert record['max_relative_direction_error']<1e-4
+                assert abs(record['observed_norm_multiplier']/multiplier-1.)<1e-4
     return config,metrics
 
 
@@ -64,8 +93,18 @@ def audit(root=ROOT):
             assert path.read_bytes()==(extra/'source'/relative).read_bytes(),('shared core differs',str(relative))
         jobs=[dict(j,arm='bmetric_'+j['kind']) for j in other['jobs']]
         families.append((extra,other,read(extra/'status.json'),jobs))
+    a_step=root.parent/'hoep-a-step-t50-cuda8-20261023'
+    if (a_step/'status.json').exists():
+        other=read(a_step/'manifest.json')
+        for path in (root/'source').rglob('*.py'):
+            relative=path.relative_to(root/'source')
+            if str(relative)=='utils/factory.py':continue
+            assert path.read_bytes()==(a_step/'source'/relative).read_bytes(),('A-step shared core differs',str(relative))
+        families.append((a_step,other,read(a_step/'status.json'),other['jobs']))
     all_jobs=[]
     for family_root,family_manifest,family_status,jobs in families:
+        for relative,digest in family_manifest['file_sha256'].items():
+            assert hashlib.sha256((family_root/relative).read_bytes()).hexdigest()==digest,('frozen experiment file changed',str(family_root),relative)
         for job in jobs:
             if job['phase']!='formal':continue
             all_jobs.append(job)
@@ -98,12 +137,14 @@ def audit(root=ROOT):
                                  difference_to_current_hoep_pp=None if current is None else cmet['final_top1']-current[2]['final_top1'],
                                  frozen_AAA=fmet['average_accuracy'],candidate_AAA=cmet['average_accuracy']))
             mean=None if not rows else sum(row['difference_pp'] for row in rows)/len(rows)
+            rounding=rounding_evidence(mean,threshold)
             datasets[dataset]=dict(pairs=rows,missing_seeds=missing,mean_difference_pp=mean,
-                                   confirmed_pass=not missing and mean is not None and mean>threshold)
+                                   rounding_evidence=rounding,
+                                   confirmed_pass=not missing and rounding['robustly_above_threshold'])
         candidates[arm]=dict(datasets=datasets,
                              confirmed_pass=all(item['confirmed_pass'] for item in datasets.values()))
     result=dict(quantitative_target_verified=any(c['confirmed_pass'] for c in candidates.values()),
-                criterion='same method; both datasets; all prespecified paired seeds; mean Final difference > 0.5pp',
+                criterion='same method; both datasets; all prespecified paired seeds; true mean Final difference > 0.5pp; ambiguous rounded gaps require exact evaluation',
                 threshold_pp=threshold,candidates=candidates,incomplete_jobs=incomplete)
     write_json(root/'records/goal_audit.json',result)
     return result

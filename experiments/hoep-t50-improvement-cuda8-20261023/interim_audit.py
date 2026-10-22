@@ -12,6 +12,9 @@ ROOT=Path(__file__).resolve().parent
 
 def collect():
     roots=[ROOT,ROOT.parent/'hoep-bmetric-t50-cuda8-20261023']
+    a_step=ROOT.parent/'hoep-a-step-t50-cuda8-20261023'
+    if (a_step/'manifest.json').exists() and (a_step/'status.json').exists():
+        roots.append(a_step)
     progress=[];curves={};groups={};entries=[]
     for root in roots:
         manifest=json.loads((root/'manifest.json').read_text())

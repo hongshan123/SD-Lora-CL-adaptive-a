@@ -1,0 +1,122 @@
+{
+  "gpus": [
+    0,
+    1,
+    3,
+    4,
+    5,
+    7
+  ],
+  "goal": {
+    "datasets": [
+      "cub",
+      "imagenetr"
+    ],
+    "tasks": 50,
+    "primary_metric": "final_top1",
+    "required_margin_pp": 0.5,
+    "comparison": "paired Frozen-A with identical NCoff, PTon, rank10, e20, single GPU batch128",
+    "confirmation_seeds": {
+      "cub": [
+        1,
+        2,
+        3
+      ],
+      "imagenetr": [
+        1995,
+        1996,
+        1997
+      ]
+    }
+  },
+  "hypotheses": {
+    "a_gain10": "Task1+ projected A gradient x10; B/head/scales retain original SGD learning rate",
+    "a_gain100": "Task1+ projected A gradient x100; B/head/scales retain original SGD learning rate"
+  },
+  "formula": "after HOEP projection g <- k*(g+wd*A)-wd*A; under the existing SGD this scales A tangent steps while preserving radial weight-decay cancellation",
+  "references": [
+    "https://proceedings.mlr.press/v235/hayou24a.html"
+  ],
+  "jobs": [
+    {
+      "name": "cub_seed1_t50_control_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "control",
+      "multiplier": 1
+    },
+    {
+      "name": "imagenetr_seed1995_t50_control_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "control",
+      "multiplier": 1
+    },
+    {
+      "name": "cub_seed1_t50_a_gain10_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "a_gain10",
+      "multiplier": 10
+    },
+    {
+      "name": "imagenetr_seed1995_t50_a_gain10_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "a_gain10",
+      "multiplier": 10
+    },
+    {
+      "name": "cub_seed1_t50_a_gain100_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "a_gain100",
+      "multiplier": 100
+    },
+    {
+      "name": "imagenetr_seed1995_t50_a_gain100_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "a_gain100",
+      "multiplier": 100
+    },
+    {
+      "name": "cub_seed1_t50_a_gain10_formal_20261023",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "a_gain10",
+      "multiplier": 10
+    },
+    {
+      "name": "imagenetr_seed1995_t50_a_gain10_formal_20261023",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "a_gain10",
+      "multiplier": 10
+    },
+    {
+      "name": "cub_seed1_t50_a_gain100_formal_20261023",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "a_gain100",
+      "multiplier": 100
+    },
+    {
+      "name": "imagenetr_seed1995_t50_a_gain100_formal_20261023",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "a_gain100",
+      "multiplier": 100
+    }
+  ]
+}

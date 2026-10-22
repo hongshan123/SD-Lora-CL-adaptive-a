@@ -12,9 +12,11 @@ def digest(path):
 def prepare(root, data_root, primary_root=None, gpus=None):
     root, data_root = Path(root).resolve(), Path(data_root).resolve()
     plan = json.loads((root / 'queue_plan.json').read_text())
-    extension = 'formula' in plan
+    a_step = any('multiplier' in job for job in plan['jobs'])
+    b_metric = 'formula' in plan and not a_step
+    extension = a_step or b_metric
     if extension and primary_root is None:
-        raise ValueError('B-metric preparation requires --primary-root')
+        raise ValueError('Extension preparation requires --primary-root')
     primary = Path(primary_root).resolve() if primary_root is not None else None
     for dataset in ('cub', 'imagenet-r'):
         for split in ('train', 'test'):
@@ -25,7 +27,7 @@ def prepare(root, data_root, primary_root=None, gpus=None):
     devices = list(plan['gpus'] if gpus is None else gpus)
     if not devices or len(devices) != len(set(devices)) or any(g < 0 for g in devices):
         raise ValueError('Provide distinct nonnegative physical GPU IDs')
-    if extension and len(devices) != len(plan['gpus']):
+    if b_metric and len(devices) != len(plan['gpus']):
         raise ValueError('B-metric queue requires one GPU per configured lane')
     data_link = root / 'source/data'
     if data_link.exists() or data_link.is_symlink():
@@ -58,8 +60,9 @@ def prepare(root, data_root, primary_root=None, gpus=None):
         job.update(config=str(local_config), output=str(output),
                    log=str(root / 'logs' / (name + '.log')), signature=signature)
         if extension:
-            lane = plan['gpus'].index(spec['gpu'])
-            job['gpu'] = devices[lane]
+            if b_metric:
+                lane = plan['gpus'].index(spec['gpu'])
+                job['gpu'] = devices[lane]
             prefix = f"{job['dataset']}_seed{job['seed']}_t50_"
             for key, arm in [('matched_frozen', 'frozen'), ('matched_hoep', 'hoep')]:
                 job[key] = str(primary / 'outputs' / (prefix + arm + '_formal_20261023'))

@@ -13,15 +13,22 @@ def write_json(path,record):
 
 def render(manifest,status,root=ROOT):
     root=Path(root)
+    context=json.loads((root/'records/context.json').read_text())
     lines=['# HOEP T50 改进实验记录','',
            '目标：在 cuda8 对 CUB-200 和 ImageNet-R 完成 T50 改进；Final Top-1 相对同协议 Frozen-A 超过 0.5 个百分点。优先修改 LoRA 适配，记录全部尝试和失败，避免重复实验。','',
            '## 固定协议','',
-           '- rank10、每任务20 epoch、单卡 batch128、SGD 原学习率；HOEP 能量预算5%、历史 LS 开、NormCap 关、Coordinate Transport 开。每项独占一张 GPU，调度范围以生成的 manifest 为准。',
+           '- rank10、每任务20 epoch、单卡 batch128、SGD 原学习率；HOEP 能量预算5%、历史 LS 开、NormCap 关、Coordinate Transport 开。每项独占一张 GPU，调度范围0、1、3、4；2号卡交叉检查出现非有限结果，排除本轮调度。',
            '- 首轮 CUB seed1、ImageNet-R seed1995。候选达标后在 CUB seeds1–3、ImageNet-R seeds1995–1997 做配对确认；各 seed 均报告，主目标按两数据集各自平均差值评估。',
            '- Frozen-A 与候选共享分类器、Transport、训练集预处理、任务划分和训练时长，仅冻结 Task0 后的 A。Frozen 快照检查 A 逐元素不变。',
            '- 完整训练20 epoch的旧双卡轨迹仅作背景，不复用为本轮单卡的配对对照。测试集只做评估；原型和历史输入统计仅来自任务当时可用的训练集。','',
-           '## 不重复规则','']
-    lines+=[
+           '## 已有证据与不重复规则','',
+           '| 既有尝试 | 证据/结果 | 决定 |','|---|---|---|']
+    for item in context['previous_attempts']:
+        evidence=item.get('reason',item.get('decision',''))
+        if 'combined_final' in item:
+            evidence=f"ImageNet-R 两任务1epoch：baseline {item['baseline_final']:.2f}%，combined {item['combined_final']:.2f}%；历史约束损失均值 {item['history_weighted_loss_mean']:.3f}、最大 {item['history_weighted_loss_max']:.3f}"
+        lines.append(f"| {item['id']} | {evidence} | {item.get('decision',item['state'])} |")
+    lines+=['','旧 Frozen-A（PT关）参考：ImageNet-R 75.83%，CUB 80.77%；当前 HOEP（PT开）为76.6667%和81.6707%。这是跨配置数值，不能据此宣称同协议达标。','',
             '每项由训练源码哈希、有效配置和执行协议生成 signature；相同 signature 的完成项复用，已有输出拒绝覆盖。短测与正式实验明确区分，短测不用于挑选测试集最高配置。','',
             '## 本轮假设','',
             '| 方法 | 改动 | 训练期额外状态 |','|---|---|---|',

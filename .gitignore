@@ -110,3 +110,17 @@ complete.json
 *_audit.json
 *_go_no_go.json
 imgs/results*.jpg
+
+# Additional generated archives, weights and training service state.
+*.tar
+*.zip
+*.bin
+*.h5
+*.hdf5
+*.onnx
+*.tfevents.*
+wandb/
+mlruns/
+tensorboard/
+.coverage
+nohup.out

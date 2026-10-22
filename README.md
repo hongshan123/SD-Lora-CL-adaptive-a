@@ -24,6 +24,14 @@ manifests and experiment reports are generated locally and ignored by Git.
   preconditioning of current-task B gradients, with current/history variants.
 - `experiments/hoep-a-step-t50-cuda8-20261023/`: shared-A gradient step
   multipliers with decay cancellation and paired numerical checks.
+- `experiments/hoep-budget-allocation-t50-cuda8-20261023/`: optional branch
+  coverage within HOEP's fixed global historical-energy budget, including
+  allocation checks and paired A-step variants.
+- `experiments/hoep-t50-confirmation-tools-20261023/`: source and tests for
+  preparing paired seed configurations without starting training.
+- `experiments/hoep-t50-*-confirmation-inputs-cuda8-20261023/` and
+  `experiments/hoep-t50-confirmation-inputs-cuda8-20261023/`: additional seed
+  configuration templates. Execution manifests are generated locally.
 - Other `experiments/` directories: snapshot, prototype replay, transport and
   resume utilities. Runtime inputs and outputs are not distributed.
 - `variants/live_frozen/`: the separate Live-A/Frozen-A implementation family,

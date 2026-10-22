@@ -1,0 +1,154 @@
+{
+  "gpus": [
+    0,
+    1,
+    3,
+    4,
+    5,
+    7
+  ],
+  "goal": {
+    "datasets": [
+      "cub",
+      "imagenetr"
+    ],
+    "tasks": 50,
+    "primary_metric": "final_top1",
+    "required_margin_pp": 0.5,
+    "comparison": "paired Frozen-A with identical NCoff, PTon, rank10, e20, single GPU batch128",
+    "confirmation_seeds": {
+      "cub": [
+        1,
+        2,
+        3
+      ],
+      "imagenetr": [
+        1995,
+        1996,
+        1997
+      ]
+    }
+  },
+  "hypotheses": {
+    "coverage_gain1": "Minimum branch coverage inside the original 5% global energy cap",
+    "coverage_gain10": "Same allocation plus the prespecified A gradient multiplier10"
+  },
+  "intentional_core_changes": [
+    "backbone/sa_lora.py",
+    "models/sa_sdlora.py",
+    "utils/inc_net.py"
+  ],
+  "new_training_modules": [
+    "backbone/budget_allocation.py"
+  ],
+  "jobs": [
+    {
+      "name": "cub_seed1_t50_global_gain1_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "global_gain1",
+      "multiplier": 1,
+      "allocation": "global"
+    },
+    {
+      "name": "imagenetr_seed1995_t50_global_gain1_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "global_gain1",
+      "multiplier": 1,
+      "allocation": "global"
+    },
+    {
+      "name": "cub_seed1_t50_global_gain10_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "global_gain10",
+      "multiplier": 10,
+      "allocation": "global"
+    },
+    {
+      "name": "imagenetr_seed1995_t50_global_gain10_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "global_gain10",
+      "multiplier": 10,
+      "allocation": "global"
+    },
+    {
+      "name": "cub_seed1_t50_coverage_gain1_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "coverage_gain1",
+      "multiplier": 1,
+      "allocation": "coverage"
+    },
+    {
+      "name": "imagenetr_seed1995_t50_coverage_gain1_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "coverage_gain1",
+      "multiplier": 1,
+      "allocation": "coverage"
+    },
+    {
+      "name": "cub_seed1_t50_coverage_gain10_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "coverage_gain10",
+      "multiplier": 10,
+      "allocation": "coverage"
+    },
+    {
+      "name": "imagenetr_seed1995_t50_coverage_gain10_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "coverage_gain10",
+      "multiplier": 10,
+      "allocation": "coverage"
+    },
+    {
+      "name": "cub_seed1_t50_coverage_gain1_formal_20261023",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "coverage_gain1",
+      "multiplier": 1,
+      "allocation": "coverage"
+    },
+    {
+      "name": "imagenetr_seed1995_t50_coverage_gain1_formal_20261023",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "coverage_gain1",
+      "multiplier": 1,
+      "allocation": "coverage"
+    },
+    {
+      "name": "cub_seed1_t50_coverage_gain10_formal_20261023",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "coverage_gain10",
+      "multiplier": 10,
+      "allocation": "coverage"
+    },
+    {
+      "name": "imagenetr_seed1995_t50_coverage_gain10_formal_20261023",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "coverage_gain10",
+      "multiplier": 10,
+      "allocation": "coverage"
+    }
+  ]
+}

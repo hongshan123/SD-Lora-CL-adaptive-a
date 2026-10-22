@@ -1,5 +1,6 @@
 """Audit paired full-horizon evidence for the user goal; never select a seed."""
 import hashlib
+import importlib.util
 import json
 import math
 from pathlib import Path
@@ -12,6 +13,7 @@ OPERATIONAL={'prefix','filepath','sa_p0_run_id','config'}
 METHOD={'sa_train_a_all_tasks','sa_adaptive_a_enabled','sa_total_history_weight',
         'sa_allseen_proto_weight','sa_b_metric_kind','sa_b_metric_damping','sa_b_metric_history_mix',
         'sa_a_gain_experiment','sa_a_gradient_multiplier'}
+METHOD.add('sa_hoep_budget_allocation')
 
 
 def read(path):return json.loads(Path(path).read_text())
@@ -75,6 +77,20 @@ def validated_score(root,manifest,job,record):
                 assert record['nonzero_scaled_branches']>0 and record['steps']>0
                 assert record['max_relative_direction_error']<1e-4
                 assert abs(record['observed_norm_multiplier']/multiplier-1.)<1e-4
+    if config.get('sa_hoep_budget_allocation')=='coverage':
+        spec=importlib.util.spec_from_file_location('_goal_allocation_checks',root/'allocation_checks.py')
+        checker=importlib.util.module_from_spec(spec);spec.loader.exec_module(checker)
+        assert metrics['budget_allocation']=='coverage'
+        assert len(metrics['allocation_diagnostics'])==49
+        assert metrics['allocation_protected_rows_verified'] is True
+        assert metrics['allocation_changed_plastic_branches']>0
+        for task,record in enumerate(metrics['allocation_diagnostics'],start=1):
+            path=out/'task_snapshots'/f'task_{task:03d}'/'hoep_partition_schedule.json'
+            assert read(path)['diagnostics'][str(task)]==record
+            checker.validate_allocation_diagnostic(record,config)
+        assert metrics['allocation_changed_tasks']==sum(
+            d['coverage_changed_from_global'] for d in metrics['allocation_diagnostics'])
+        assert metrics['allocation_changed_tasks']>0
     return config,metrics
 
 
@@ -101,6 +117,25 @@ def audit(root=ROOT):
             if str(relative)=='utils/factory.py':continue
             assert path.read_bytes()==(a_step/'source'/relative).read_bytes(),('A-step shared core differs',str(relative))
         families.append((a_step,other,read(a_step/'status.json'),other['jobs']))
+    allocation=root.parent/'hoep-budget-allocation-t50-cuda8-20261023'
+    if (allocation/'status.json').exists():
+        other=read(allocation/'manifest.json')
+        allowed={'backbone/sa_lora.py','models/sa_sdlora.py','utils/inc_net.py'}
+        assert other['source_reference']==str(a_step)
+        assert set(other['intentional_core_changes'])==allowed
+        assert set(other['new_training_modules'])=={'backbone/budget_allocation.py'}
+        reference_files={p.relative_to(a_step/'source') for p in (a_step/'source').rglob('*.py')}
+        actual_files={p.relative_to(allocation/'source') for p in (allocation/'source').rglob('*.py')}
+        assert {str(p) for p in actual_files-reference_files}=={'backbone/budget_allocation.py'}
+        assert not reference_files-actual_files
+        for relative in reference_files:
+            if str(relative) not in allowed:
+                assert (a_step/'source'/relative).read_bytes()==(allocation/'source'/relative).read_bytes(),('unrelated allocation source change',str(relative))
+        assert (allocation/'source/data').resolve()==(a_step/'source/data').resolve()
+        assert read(allocation/'proofs/source_scope.json')['unchanged_files']==len(reference_files)-3
+        for path,digest in other['reference_smoke_hashes'].items():
+            assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest
+        families.append((allocation,other,read(allocation/'status.json'),other['jobs']))
     all_jobs=[]
     for family_root,family_manifest,family_status,jobs in families:
         for relative,digest in family_manifest['file_sha256'].items():

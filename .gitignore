@@ -92,3 +92,15 @@ offline_subspace_validation_*/
 .env.*
 *.pem
 *.key
+
+# Per-run ledgers, integrity checks and diagnostic state.
+records/
+b_metric/
+prototype_state/
+registry.json
+EXPERIMENTS.md
+RESEARCH_LOG.md
+p0_hashes.json
+complete.json
+*.json.tmp
+*.md.tmp

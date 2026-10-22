@@ -18,6 +18,10 @@ manifests and experiment reports are generated locally and ignored by Git.
 - `experiments/hoep-lora-adaptation-t50-cuda8-20261022/`: isolated historical-input
   total-update regularization and all-seen-class prototype training, with a
   paired queue and mathematical tests.
+- `experiments/hoep-t50-improvement-cuda8-20261023/`: CUB/ImageNet-R paired
+  Frozen-A, HOEP and optional training-objective implementations.
+- `experiments/hoep-bmetric-t50-cuda8-20261023/`: optional input-metric
+  preconditioning of current-task B gradients, with current/history variants.
 - Other `experiments/` directories: snapshot, prototype replay, transport and
   resume utilities. Runtime inputs and outputs are not distributed.
 - `variants/live_frozen/`: the separate Live-A/Frozen-A implementation family,
@@ -59,8 +63,9 @@ Older configuration templates contain server-specific paths; update them
 before use. Record effective batch size and single-GPU/distributed/accumulation
 settings when comparing runs.
 
-For the latest paired LoRA adaptation queue, see its
-[setup instructions](experiments/hoep-lora-adaptation-t50-cuda8-20261022/README.md).
+For the current paired LoRA adaptation queue, see its
+[setup instructions](experiments/hoep-t50-improvement-cuda8-20261023/README.md)
+and the [B-gradient extension](experiments/hoep-bmetric-t50-cuda8-20261023/README.md).
 See also [the method overview](docs/hoep_method.md). Experimental extensions are
 included for reproducibility; inclusion does not imply verified improvement.
 

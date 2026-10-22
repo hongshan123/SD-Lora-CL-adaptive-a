@@ -1,0 +1,191 @@
+{
+  "gpus": [
+    0,
+    1,
+    3,
+    4
+  ],
+  "goal": {
+    "datasets": [
+      "cub",
+      "imagenetr"
+    ],
+    "tasks": 50,
+    "primary_metric": "final_top1",
+    "required_margin_pp": 0.5,
+    "comparison": "paired Frozen-A with identical NCoff, PTon, rank10, e20, single GPU batch128",
+    "confirmation_seeds": {
+      "cub": [
+        1,
+        2,
+        3
+      ],
+      "imagenetr": [
+        1995,
+        1996,
+        1997
+      ]
+    }
+  },
+  "hypotheses": {
+    "history": "HOEP + total operator update weighted by historical input moments, lambda=0.001",
+    "prototype": "HOEP + all-seen prototype CE, lambda=0.05, temperature=0.1, EMA=0.1",
+    "combined": "history + prototype with the same coefficients"
+  },
+  "jobs": [
+    {
+      "phase": "smoke",
+      "dataset": "cub",
+      "arm": "frozen",
+      "seed": 1,
+      "name": "cub_seed1_t50_frozen_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "arm": "frozen",
+      "seed": 1995,
+      "name": "imagenetr_seed1995_t50_frozen_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "arm": "hoep",
+      "seed": 1995,
+      "name": "imagenetr_seed1995_t50_hoep_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "arm": "history",
+      "seed": 1995,
+      "name": "imagenetr_seed1995_t50_history_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "cub",
+      "arm": "prototype",
+      "seed": 1,
+      "name": "cub_seed1_t50_prototype_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "arm": "prototype",
+      "seed": 1995,
+      "name": "imagenetr_seed1995_t50_prototype_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "cub",
+      "arm": "combined",
+      "seed": 1,
+      "name": "cub_seed1_t50_combined_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "arm": "combined",
+      "seed": 1995,
+      "name": "imagenetr_seed1995_t50_combined_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "cub",
+      "arm": "original",
+      "seed": 1,
+      "name": "cub_seed1_t50_original_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "arm": "original",
+      "seed": 1995,
+      "name": "imagenetr_seed1995_t50_original_smoke_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "cub",
+      "arm": "frozen",
+      "seed": 1,
+      "name": "cub_seed1_t50_frozen_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "arm": "frozen",
+      "seed": 1995,
+      "name": "imagenetr_seed1995_t50_frozen_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "cub",
+      "arm": "history",
+      "seed": 1,
+      "name": "cub_seed1_t50_history_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "arm": "history",
+      "seed": 1995,
+      "name": "imagenetr_seed1995_t50_history_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "cub",
+      "arm": "hoep",
+      "seed": 1,
+      "name": "cub_seed1_t50_hoep_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "arm": "hoep",
+      "seed": 1995,
+      "name": "imagenetr_seed1995_t50_hoep_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "cub",
+      "arm": "prototype",
+      "seed": 1,
+      "name": "cub_seed1_t50_prototype_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "arm": "prototype",
+      "seed": 1995,
+      "name": "imagenetr_seed1995_t50_prototype_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "cub",
+      "arm": "combined",
+      "seed": 1,
+      "name": "cub_seed1_t50_combined_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "arm": "combined",
+      "seed": 1995,
+      "name": "imagenetr_seed1995_t50_combined_formal_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "cub",
+      "arm": "hoep",
+      "seed": 1,
+      "name": "cub_seed1_t50_hoep_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "cub",
+      "arm": "history",
+      "seed": 1,
+      "name": "cub_seed1_t50_history_smoke_20261023"
+    }
+  ]
+}

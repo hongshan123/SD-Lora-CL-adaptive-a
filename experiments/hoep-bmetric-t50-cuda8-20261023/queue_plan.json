@@ -1,0 +1,77 @@
+{
+  "gpus": [
+    5,
+    7
+  ],
+  "formula": "grad_B <- grad_B inverse(metric), then preserve instantaneous per-branch gradient Frobenius norm",
+  "references": [
+    "https://proceedings.iclr.cc/paper_files/paper/2025/hash/bcbc0f660d2dde42f9d1d0ecb14a6f9a-Abstract-Conference.html",
+    "https://proceedings.iclr.cc/paper_files/paper/2025/hash/ea184f920a0f0f8d8030aa1bd7ac9fd4-Abstract-Conference.html"
+  ],
+  "jobs": [
+    {
+      "phase": "smoke",
+      "dataset": "cub",
+      "seed": 1,
+      "kind": "current",
+      "gpu": 5,
+      "name": "cub_seed1_t50_bmetric_current_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "kind": "current",
+      "gpu": 7,
+      "name": "imagenetr_seed1995_t50_bmetric_current_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "cub",
+      "seed": 1,
+      "kind": "history",
+      "gpu": 5,
+      "name": "cub_seed1_t50_bmetric_history_smoke_20261023"
+    },
+    {
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "kind": "history",
+      "gpu": 7,
+      "name": "imagenetr_seed1995_t50_bmetric_history_smoke_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 1,
+      "kind": "current",
+      "gpu": 5,
+      "name": "cub_seed1_t50_bmetric_current_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "kind": "current",
+      "gpu": 7,
+      "name": "imagenetr_seed1995_t50_bmetric_current_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 1,
+      "kind": "history",
+      "gpu": 5,
+      "name": "cub_seed1_t50_bmetric_history_formal_20261023"
+    },
+    {
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "kind": "history",
+      "gpu": 7,
+      "name": "imagenetr_seed1995_t50_bmetric_history_formal_20261023"
+    }
+  ]
+}

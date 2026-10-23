@@ -19,7 +19,7 @@
   "optimizer": "sgd",
   "scheduler": "constant",
   "min_lr": 0.005,
-  "filepath": "/home/hongzhijun/hongshan/hoep-t50-transportoff-cuda8-20261021/outputs/hoep_cub_T50_seed1_transport0_normcap0_ddp2_smoke_on_20261021/",
+  "filepath": "outputs/hoep_cub_T50_seed1_transport0_normcap0_ddp2_smoke_on_20261021/",
   "init_epoch": 1,
   "init_lr": 0.01,
   "init_milestones": [

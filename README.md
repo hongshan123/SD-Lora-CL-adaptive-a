@@ -27,8 +27,13 @@ manifests and experiment reports are generated locally and ignored by Git.
 - `experiments/hoep-budget-allocation-t50-cuda8-20261023/`: optional branch
   coverage within HOEP's fixed global historical-energy budget, including
   allocation checks and paired A-step variants.
+- `experiments/hoep-operator-average-t50-cuda8-20261023/`: averaging of late
+  current-branch operators, followed by projection onto the final A row space,
+  with numerical checks and input configuration templates.
 - `experiments/hoep-t50-confirmation-tools-20261023/`: source and tests for
   preparing paired seed configurations without starting training.
+- `experiments/hoep-t50-confirmation-controls-cuda8-20261023/`: preparation and
+  queue tools for additional paired Frozen-A seed configurations.
 - `experiments/hoep-t50-*-confirmation-inputs-cuda8-20261023/` and
   `experiments/hoep-t50-confirmation-inputs-cuda8-20261023/`: additional seed
   configuration templates. Execution manifests are generated locally.

@@ -1,4 +1,4 @@
-"""Merge the two isolated queues into one live Markdown research record."""
+"""Merge isolated queues into one live Markdown research record."""
 import json
 from pathlib import Path
 import shlex
@@ -8,6 +8,9 @@ import time
 MAIN=Path(__file__).resolve().parent
 EXTRA=MAIN.parent/'hoep-bmetric-t50-cuda8-20261023'
 A_STEP=MAIN.parent/'hoep-a-step-t50-cuda8-20261023'
+ALLOCATION=MAIN.parent/'hoep-budget-allocation-t50-cuda8-20261023'
+CONTROLS=MAIN.parent/'hoep-t50-confirmation-controls-cuda8-20261023'
+AVERAGE=MAIN.parent/'hoep-operator-average-t50-cuda8-20261023'
 HOST='hongzhijun@192.168.10.208'
 
 
@@ -22,8 +25,9 @@ def mirror_extra():
              '--include=/outputs/*/','--include=/outputs/*/metrics.json','--include=/outputs/*/b_metric/',
              '--include=/outputs/*/b_metric/*.json','--include=/outputs/*/a_gain/',
              '--include=/outputs/*/a_gain/*.json','--include=/outputs/*/adaptation_state/',
-             '--include=/outputs/*/adaptation_state/*.json','--exclude=*']
-    for root in (MAIN,EXTRA,A_STEP):
+             '--include=/outputs/*/adaptation_state/*.json','--include=/outputs/*/branch_average/',
+             '--include=/outputs/*/branch_average/*.json','--exclude=*']
+    for root in (MAIN,EXTRA,A_STEP,ALLOCATION,CONTROLS,AVERAGE):
         if not (root/'manifest.json').exists():continue
         subprocess.run(command+[HOST+':'+str(root)+'/',str(root)+'/'],check=True,timeout=50)
 
@@ -63,7 +67,7 @@ def render():
     payload=live_progress();progress=payload['progress']
     lines=['# HOEP T50 统一实验记录','',
            '目标：改进 LoRA 适配，在 CUB-200 和 ImageNet-R 的 T50 上，相对同协议 Frozen-A 的 Final Top-1 提升超过0.5个百分点。这里汇总所有已启动假设、失败、参数和最终结果；完整配对结果缺失时不宣称达标。','',
-           f"镜像更新时间：{time.strftime('%F %T %Z')}。训练权威数据位于 cuda8 同名目录；三组队列共享GPU锁，新任务等待健康显卡空闲，部署适配器参数形状保持固定。",'',
+           f"镜像更新时间：{time.strftime('%F %T %Z')}。训练权威数据位于 cuda8 同名目录；各组队列共享GPU锁，新任务等待健康显卡空闲，部署适配器参数形状保持固定。",'',
            '## 当前进程与真实快照进度','',
            '| 实验 | GPU | PID | 进程状态 | 身份匹配 | 完整边界快照数 |','|---|---|---|---|---|---|']
     for item in progress:
@@ -103,6 +107,12 @@ def render():
             '## 第二组：当前B的输入度量','',demote(component_text(EXTRA,payload)),'']
     if (A_STEP/'EXPERIMENTS.md').exists():
         lines+=['','## 第三组：A步幅倍率','',demote(component_text(A_STEP,payload)),'']
+    if (ALLOCATION/'EXPERIMENTS.md').exists():
+        lines+=['','## 第四组：分支覆盖与A步幅','',demote(component_text(ALLOCATION,payload)),'']
+    if (CONTROLS/'EXPERIMENTS.md').exists():
+        lines+=['','## 第五组：追加seed的Frozen配对对照','',demote(component_text(CONTROLS,payload)),'']
+    if (AVERAGE/'EXPERIMENTS.md').exists():
+        lines+=['','## 第六组：当前分支的后段算子平均','',demote(component_text(AVERAGE,payload)),'']
     path=MAIN/'RESEARCH_LOG.md';temporary=path.with_suffix('.md.tmp')
     temporary.write_text('\n'.join(lines));temporary.replace(path)
     subprocess.run(['rsync','-a','--timeout=25',str(path),HOST+':'+str(path)],check=True,timeout=35)
@@ -113,6 +123,9 @@ def main():
         try:
             mirror_extra();render()
             roots=[MAIN,EXTRA]+([A_STEP] if (A_STEP/'manifest.json').exists() else [])
+            if (ALLOCATION/'manifest.json').exists():roots.append(ALLOCATION)
+            if (CONTROLS/'manifest.json').exists():roots.append(CONTROLS)
+            if (AVERAGE/'manifest.json').exists():roots.append(AVERAGE)
             states=[json.loads((root/'status.json').read_text())['state'] if (root/'status.json').exists()
                     else 'prepared' for root in roots]
             print(time.strftime('%F %T'),states,flush=True)

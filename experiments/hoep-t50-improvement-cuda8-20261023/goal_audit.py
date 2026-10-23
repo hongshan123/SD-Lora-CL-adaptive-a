@@ -14,6 +14,7 @@ METHOD={'sa_train_a_all_tasks','sa_adaptive_a_enabled','sa_total_history_weight'
         'sa_allseen_proto_weight','sa_b_metric_kind','sa_b_metric_damping','sa_b_metric_history_mix',
         'sa_a_gain_experiment','sa_a_gradient_multiplier'}
 METHOD.add('sa_hoep_budget_allocation')
+METHOD.update({'sa_current_branch_average','sa_branch_average_fraction'})
 
 
 def read(path):return json.loads(Path(path).read_text())
@@ -91,6 +92,12 @@ def validated_score(root,manifest,job,record):
         assert metrics['allocation_changed_tasks']==sum(
             d['coverage_changed_from_global'] for d in metrics['allocation_diagnostics'])
         assert metrics['allocation_changed_tasks']>0
+    if config.get('sa_current_branch_average'):
+        spec=importlib.util.spec_from_file_location('_goal_average_checks',root/'average_checks.py')
+        checker=importlib.util.module_from_spec(spec);spec.loader.exec_module(checker)
+        assert metrics['current_branch_average'] is True
+        assert metrics['branch_average_fraction']==config['sa_branch_average_fraction']==.25
+        assert metrics['branch_average_diagnostics']==checker.validate_average_run(config,out,50)
     return config,metrics
 
 
@@ -136,6 +143,36 @@ def audit(root=ROOT):
         for path,digest in other['reference_smoke_hashes'].items():
             assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest
         families.append((allocation,other,read(allocation/'status.json'),other['jobs']))
+    controls=root.parent/'hoep-t50-confirmation-controls-cuda8-20261023'
+    if (controls/'status.json').exists():
+        other=read(controls/'manifest.json')
+        assert other['source_reference']==str(root)
+        assert other['training_source_sha256']==manifest['training_source_sha256']
+        assert hashlib.sha256((root/'manifest.json').read_bytes()).hexdigest()==other['source_reference_manifest_sha256']
+        assert (controls/'source').resolve()==(root/'source').resolve()
+        assert (controls/'run_job.py').read_bytes()==(root/'run_job.py').read_bytes()
+        assert {(j['dataset'],j['seed'],j['arm']) for j in other['jobs']}=={
+            ('cub',2,'frozen'),('cub',3,'frozen'),
+            ('imagenetr',1996,'frozen'),('imagenetr',1997,'frozen')}
+        assert len(other['jobs'])==4 and other['activates_existing_planned_inputs'] is True
+        families.append((controls,other,read(controls/'status.json'),other['jobs']))
+    average=root.parent/'hoep-operator-average-t50-cuda8-20261023'
+    if (average/'status.json').exists():
+        other=read(average/'manifest.json')
+        assert other['source_reference']==str(root)
+        reference_files={p.relative_to(root/'source') for p in (root/'source').rglob('*.py')}
+        actual_files={p.relative_to(average/'source') for p in (average/'source').rglob('*.py')}
+        assert {str(p) for p in actual_files-reference_files}=={
+            'backbone/branch_operator_average.py','models/hoep_operator_average.py'}
+        assert not reference_files-actual_files
+        for relative in reference_files:
+            if str(relative)!='utils/factory.py':
+                assert (root/'source'/relative).read_bytes()==(average/'source'/relative).read_bytes(),relative
+        assert (average/'source/data').resolve()==(root/'source/data').resolve()
+        assert read(average/'proofs/source_scope.json')['unchanged_files']==len(reference_files)-1
+        for path,digest in other['reference_smoke_hashes'].items():
+            assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest
+        families.append((average,other,read(average/'status.json'),other['jobs']))
     all_jobs=[]
     for family_root,family_manifest,family_status,jobs in families:
         for relative,digest in family_manifest['file_sha256'].items():

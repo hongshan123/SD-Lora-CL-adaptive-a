@@ -124,3 +124,9 @@ mlruns/
 tensorboard/
 .coverage
 nohup.out
+
+# Operator-averaging witnesses and research execution notes.
+branch_average/
+ANALYSIS_NOTES.md
+*_diagnostics.json
+*_ledger.json

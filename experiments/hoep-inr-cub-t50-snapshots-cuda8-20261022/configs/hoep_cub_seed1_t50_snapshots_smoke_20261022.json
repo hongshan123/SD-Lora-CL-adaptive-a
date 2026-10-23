@@ -19,7 +19,7 @@
   "optimizer": "sgd",
   "scheduler": "constant",
   "min_lr": 0.005,
-  "filepath": "/home/hongzhijun/hongshan/hoep-inr-cub-t50-snapshots-cuda8-20261022/outputs/hoep_cub_seed1_t50_snapshots_smoke_20261022/",
+  "filepath": "outputs/hoep_cub_seed1_t50_snapshots_smoke_20261022/",
   "init_epoch": 20,
   "init_lr": 0.01,
   "init_milestones": [

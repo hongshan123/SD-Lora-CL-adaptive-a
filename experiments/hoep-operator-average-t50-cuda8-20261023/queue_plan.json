@@ -1,0 +1,76 @@
+{
+  "gpus": [
+    0,
+    1,
+    3,
+    4,
+    5,
+    7
+  ],
+  "goal": {
+    "datasets": [
+      "cub",
+      "imagenetr"
+    ],
+    "tasks": 50,
+    "primary_metric": "final_top1",
+    "required_margin_pp": 0.5,
+    "comparison": "paired Frozen-A with identical NCoff, PTon, rank10, e20, single GPU batch128",
+    "confirmation_seeds": {
+      "cub": [
+        1,
+        2,
+        3
+      ],
+      "imagenetr": [
+        1995,
+        1996,
+        1997
+      ]
+    }
+  },
+  "jobs": [
+    {
+      "name": "cub_seed1_t50_control_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "control"
+    },
+    {
+      "name": "imagenetr_seed1995_t50_control_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "control"
+    },
+    {
+      "name": "cub_seed1_t50_operator_average_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "operator_average"
+    },
+    {
+      "name": "imagenetr_seed1995_t50_operator_average_smoke_20261023",
+      "phase": "smoke",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "operator_average"
+    },
+    {
+      "name": "cub_seed1_t50_operator_average_formal_20261023",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "operator_average"
+    },
+    {
+      "name": "imagenetr_seed1995_t50_operator_average_formal_20261023",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1995,
+      "arm": "operator_average"
+    }
+  ]
+}

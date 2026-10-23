@@ -9,7 +9,7 @@ import fcntl
 import os
 from pathlib import Path
 
-LOCK_DIR = Path.home() / '.cache' / 'codex-training-gpu-locks'
+LOCK_DIR = Path('/home/hongzhijun/.cache/codex-training-gpu-locks')
 
 
 class GpuLease:

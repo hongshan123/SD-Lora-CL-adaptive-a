@@ -1,0 +1,90 @@
+{
+  "goal": {
+    "datasets": [
+      "cub",
+      "imagenetr"
+    ],
+    "tasks": 50,
+    "primary_metric": "final_top1",
+    "required_margin_pp": 0.5,
+    "comparison": "paired Frozen-A with identical NCoff, PTon, rank10, e20, single GPU batch128",
+    "confirmation_seeds": {
+      "cub": [
+        1,
+        2,
+        3
+      ],
+      "imagenetr": [
+        1995,
+        1996,
+        1997
+      ]
+    }
+  },
+  "jobs": [
+    {
+      "name": "cub_seed2_t50_coverage_gain1_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 2,
+      "arm": "coverage_gain1",
+      "source_family": "allocation"
+    },
+    {
+      "name": "cub_seed3_t50_coverage_gain1_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 3,
+      "arm": "coverage_gain1",
+      "source_family": "allocation"
+    },
+    {
+      "name": "cub_seed2_t50_coverage_gain10_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 2,
+      "arm": "coverage_gain10",
+      "source_family": "allocation"
+    },
+    {
+      "name": "cub_seed3_t50_coverage_gain10_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 3,
+      "arm": "coverage_gain10",
+      "source_family": "allocation"
+    },
+    {
+      "name": "imagenetr_seed1996_t50_coverage_gain1_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1996,
+      "arm": "coverage_gain1",
+      "source_family": "allocation"
+    },
+    {
+      "name": "imagenetr_seed1997_t50_coverage_gain1_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1997,
+      "arm": "coverage_gain1",
+      "source_family": "allocation"
+    },
+    {
+      "name": "imagenetr_seed1996_t50_coverage_gain10_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1996,
+      "arm": "coverage_gain10",
+      "source_family": "allocation"
+    },
+    {
+      "name": "imagenetr_seed1997_t50_coverage_gain10_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1997,
+      "arm": "coverage_gain10",
+      "source_family": "allocation"
+    }
+  ]
+}

@@ -34,158 +34,172 @@
   },
   "jobs": [
     {
+      "name": "cub_seed1_t50_frozen_smoke_20261023",
       "phase": "smoke",
       "dataset": "cub",
-      "arm": "frozen",
       "seed": 1,
-      "name": "cub_seed1_t50_frozen_smoke_20261023"
+      "arm": "frozen"
     },
     {
+      "name": "imagenetr_seed1995_t50_frozen_smoke_20261023",
       "phase": "smoke",
       "dataset": "imagenetr",
-      "arm": "frozen",
       "seed": 1995,
-      "name": "imagenetr_seed1995_t50_frozen_smoke_20261023"
+      "arm": "frozen"
     },
     {
+      "name": "cub_seed1_t50_hoep_smoke_20261023",
+      "phase": "invalid_attempt",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "hoep"
+    },
+    {
+      "name": "imagenetr_seed1995_t50_hoep_smoke_20261023",
       "phase": "smoke",
       "dataset": "imagenetr",
-      "arm": "hoep",
       "seed": 1995,
-      "name": "imagenetr_seed1995_t50_hoep_smoke_20261023"
+      "arm": "hoep"
     },
     {
+      "name": "cub_seed1_t50_history_smoke_20261023",
+      "phase": "invalid_attempt",
+      "dataset": "cub",
+      "seed": 1,
+      "arm": "history"
+    },
+    {
+      "name": "imagenetr_seed1995_t50_history_smoke_20261023",
       "phase": "smoke",
       "dataset": "imagenetr",
-      "arm": "history",
       "seed": 1995,
-      "name": "imagenetr_seed1995_t50_history_smoke_20261023"
+      "arm": "history"
     },
     {
+      "name": "cub_seed1_t50_prototype_smoke_20261023",
       "phase": "smoke",
       "dataset": "cub",
-      "arm": "prototype",
       "seed": 1,
-      "name": "cub_seed1_t50_prototype_smoke_20261023"
+      "arm": "prototype"
     },
     {
+      "name": "imagenetr_seed1995_t50_prototype_smoke_20261023",
       "phase": "smoke",
       "dataset": "imagenetr",
-      "arm": "prototype",
       "seed": 1995,
-      "name": "imagenetr_seed1995_t50_prototype_smoke_20261023"
+      "arm": "prototype"
     },
     {
+      "name": "cub_seed1_t50_combined_smoke_20261023",
       "phase": "smoke",
       "dataset": "cub",
-      "arm": "combined",
       "seed": 1,
-      "name": "cub_seed1_t50_combined_smoke_20261023"
+      "arm": "combined"
     },
     {
+      "name": "imagenetr_seed1995_t50_combined_smoke_20261023",
       "phase": "smoke",
       "dataset": "imagenetr",
-      "arm": "combined",
       "seed": 1995,
-      "name": "imagenetr_seed1995_t50_combined_smoke_20261023"
+      "arm": "combined"
     },
     {
+      "name": "cub_seed1_t50_original_smoke_20261023",
       "phase": "smoke",
       "dataset": "cub",
-      "arm": "original",
       "seed": 1,
-      "name": "cub_seed1_t50_original_smoke_20261023"
+      "arm": "original"
     },
     {
+      "name": "imagenetr_seed1995_t50_original_smoke_20261023",
       "phase": "smoke",
       "dataset": "imagenetr",
-      "arm": "original",
       "seed": 1995,
-      "name": "imagenetr_seed1995_t50_original_smoke_20261023"
+      "arm": "original"
     },
     {
+      "name": "cub_seed1_t50_frozen_formal_20261023",
       "phase": "formal",
       "dataset": "cub",
-      "arm": "frozen",
       "seed": 1,
-      "name": "cub_seed1_t50_frozen_formal_20261023"
+      "arm": "frozen"
     },
     {
+      "name": "imagenetr_seed1995_t50_frozen_formal_20261023",
       "phase": "formal",
       "dataset": "imagenetr",
-      "arm": "frozen",
       "seed": 1995,
-      "name": "imagenetr_seed1995_t50_frozen_formal_20261023"
+      "arm": "frozen"
     },
     {
+      "name": "cub_seed1_t50_history_formal_20261023",
       "phase": "formal",
       "dataset": "cub",
-      "arm": "history",
       "seed": 1,
-      "name": "cub_seed1_t50_history_formal_20261023"
+      "arm": "history"
     },
     {
+      "name": "imagenetr_seed1995_t50_history_formal_20261023",
       "phase": "formal",
       "dataset": "imagenetr",
-      "arm": "history",
       "seed": 1995,
-      "name": "imagenetr_seed1995_t50_history_formal_20261023"
+      "arm": "history"
     },
     {
+      "name": "cub_seed1_t50_hoep_formal_20261023",
       "phase": "formal",
       "dataset": "cub",
-      "arm": "hoep",
       "seed": 1,
-      "name": "cub_seed1_t50_hoep_formal_20261023"
+      "arm": "hoep"
     },
     {
+      "name": "imagenetr_seed1995_t50_hoep_formal_20261023",
       "phase": "formal",
       "dataset": "imagenetr",
-      "arm": "hoep",
       "seed": 1995,
-      "name": "imagenetr_seed1995_t50_hoep_formal_20261023"
+      "arm": "hoep"
     },
     {
+      "name": "cub_seed1_t50_prototype_formal_20261023",
       "phase": "formal",
       "dataset": "cub",
-      "arm": "prototype",
       "seed": 1,
-      "name": "cub_seed1_t50_prototype_formal_20261023"
+      "arm": "prototype"
     },
     {
+      "name": "imagenetr_seed1995_t50_prototype_formal_20261023",
       "phase": "formal",
       "dataset": "imagenetr",
-      "arm": "prototype",
       "seed": 1995,
-      "name": "imagenetr_seed1995_t50_prototype_formal_20261023"
+      "arm": "prototype"
     },
     {
+      "name": "cub_seed1_t50_combined_formal_20261023",
       "phase": "formal",
       "dataset": "cub",
-      "arm": "combined",
       "seed": 1,
-      "name": "cub_seed1_t50_combined_formal_20261023"
+      "arm": "combined"
     },
     {
+      "name": "imagenetr_seed1995_t50_combined_formal_20261023",
       "phase": "formal",
       "dataset": "imagenetr",
-      "arm": "combined",
       "seed": 1995,
-      "name": "imagenetr_seed1995_t50_combined_formal_20261023"
+      "arm": "combined"
     },
     {
+      "name": "cub_seed1_t50_hoep_smoke_20261023_retry_healthy_gpu",
       "phase": "smoke",
       "dataset": "cub",
-      "arm": "hoep",
       "seed": 1,
-      "name": "cub_seed1_t50_hoep_smoke_20261023"
+      "arm": "hoep"
     },
     {
+      "name": "cub_seed1_t50_history_smoke_20261023_retry_healthy_gpu",
       "phase": "smoke",
       "dataset": "cub",
-      "arm": "history",
       "seed": 1,
-      "name": "cub_seed1_t50_history_smoke_20261023"
+      "arm": "history"
     }
   ]
 }

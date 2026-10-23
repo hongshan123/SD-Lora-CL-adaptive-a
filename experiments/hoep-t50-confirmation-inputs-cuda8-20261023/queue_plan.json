@@ -1,0 +1,282 @@
+{
+  "goal": {
+    "datasets": [
+      "cub",
+      "imagenetr"
+    ],
+    "tasks": 50,
+    "primary_metric": "final_top1",
+    "required_margin_pp": 0.5,
+    "comparison": "paired Frozen-A with identical NCoff, PTon, rank10, e20, single GPU batch128",
+    "confirmation_seeds": {
+      "cub": [
+        1,
+        2,
+        3
+      ],
+      "imagenetr": [
+        1995,
+        1996,
+        1997
+      ]
+    }
+  },
+  "jobs": [
+    {
+      "name": "cub_seed2_t50_frozen_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 2,
+      "arm": "frozen",
+      "source_family": "main"
+    },
+    {
+      "name": "cub_seed3_t50_frozen_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 3,
+      "arm": "frozen",
+      "source_family": "main"
+    },
+    {
+      "name": "cub_seed2_t50_history_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 2,
+      "arm": "history",
+      "source_family": "main"
+    },
+    {
+      "name": "cub_seed3_t50_history_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 3,
+      "arm": "history",
+      "source_family": "main"
+    },
+    {
+      "name": "cub_seed2_t50_prototype_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 2,
+      "arm": "prototype",
+      "source_family": "main"
+    },
+    {
+      "name": "cub_seed3_t50_prototype_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 3,
+      "arm": "prototype",
+      "source_family": "main"
+    },
+    {
+      "name": "cub_seed2_t50_combined_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 2,
+      "arm": "combined",
+      "source_family": "main"
+    },
+    {
+      "name": "cub_seed3_t50_combined_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 3,
+      "arm": "combined",
+      "source_family": "main"
+    },
+    {
+      "name": "cub_seed2_t50_bmetric_current_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 2,
+      "arm": "bmetric_current",
+      "source_family": "b_metric"
+    },
+    {
+      "name": "cub_seed3_t50_bmetric_current_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 3,
+      "arm": "bmetric_current",
+      "source_family": "b_metric"
+    },
+    {
+      "name": "cub_seed2_t50_bmetric_history_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 2,
+      "arm": "bmetric_history",
+      "source_family": "b_metric"
+    },
+    {
+      "name": "cub_seed3_t50_bmetric_history_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 3,
+      "arm": "bmetric_history",
+      "source_family": "b_metric"
+    },
+    {
+      "name": "cub_seed2_t50_a_gain10_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 2,
+      "arm": "a_gain10",
+      "source_family": "a_step"
+    },
+    {
+      "name": "cub_seed3_t50_a_gain10_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 3,
+      "arm": "a_gain10",
+      "source_family": "a_step"
+    },
+    {
+      "name": "cub_seed2_t50_a_gain100_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 2,
+      "arm": "a_gain100",
+      "source_family": "a_step"
+    },
+    {
+      "name": "cub_seed3_t50_a_gain100_confirmation",
+      "phase": "formal",
+      "dataset": "cub",
+      "seed": 3,
+      "arm": "a_gain100",
+      "source_family": "a_step"
+    },
+    {
+      "name": "imagenetr_seed1996_t50_frozen_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1996,
+      "arm": "frozen",
+      "source_family": "main"
+    },
+    {
+      "name": "imagenetr_seed1997_t50_frozen_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1997,
+      "arm": "frozen",
+      "source_family": "main"
+    },
+    {
+      "name": "imagenetr_seed1996_t50_history_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1996,
+      "arm": "history",
+      "source_family": "main"
+    },
+    {
+      "name": "imagenetr_seed1997_t50_history_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1997,
+      "arm": "history",
+      "source_family": "main"
+    },
+    {
+      "name": "imagenetr_seed1996_t50_prototype_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1996,
+      "arm": "prototype",
+      "source_family": "main"
+    },
+    {
+      "name": "imagenetr_seed1997_t50_prototype_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1997,
+      "arm": "prototype",
+      "source_family": "main"
+    },
+    {
+      "name": "imagenetr_seed1996_t50_combined_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1996,
+      "arm": "combined",
+      "source_family": "main"
+    },
+    {
+      "name": "imagenetr_seed1997_t50_combined_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1997,
+      "arm": "combined",
+      "source_family": "main"
+    },
+    {
+      "name": "imagenetr_seed1996_t50_bmetric_current_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1996,
+      "arm": "bmetric_current",
+      "source_family": "b_metric"
+    },
+    {
+      "name": "imagenetr_seed1997_t50_bmetric_current_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1997,
+      "arm": "bmetric_current",
+      "source_family": "b_metric"
+    },
+    {
+      "name": "imagenetr_seed1996_t50_bmetric_history_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1996,
+      "arm": "bmetric_history",
+      "source_family": "b_metric"
+    },
+    {
+      "name": "imagenetr_seed1997_t50_bmetric_history_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1997,
+      "arm": "bmetric_history",
+      "source_family": "b_metric"
+    },
+    {
+      "name": "imagenetr_seed1996_t50_a_gain10_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1996,
+      "arm": "a_gain10",
+      "source_family": "a_step"
+    },
+    {
+      "name": "imagenetr_seed1997_t50_a_gain10_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1997,
+      "arm": "a_gain10",
+      "source_family": "a_step"
+    },
+    {
+      "name": "imagenetr_seed1996_t50_a_gain100_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1996,
+      "arm": "a_gain100",
+      "source_family": "a_step"
+    },
+    {
+      "name": "imagenetr_seed1997_t50_a_gain100_confirmation",
+      "phase": "formal",
+      "dataset": "imagenetr",
+      "seed": 1997,
+      "arm": "a_gain100",
+      "source_family": "a_step"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "jobs": [
+    {
+      "name": "hoep_imagenetr_T50_seed1995_transport0_normcap0_ddp2",
+      "dataset": "imagenetr",
+      "seed": 1995
+    },
+    {
+      "name": "hoep_cub_T50_seed1_transport0_normcap0_ddp2",
+      "dataset": "cub",
+      "seed": 1
+    },
+    {
+      "name": "hoep_cifar224_T50_seed1993_transport0_normcap0_ddp2",
+      "dataset": "cifar224",
+      "seed": 1993
+    }
+  ]
+}

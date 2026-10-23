@@ -18,6 +18,12 @@ def collect():
     allocation=ROOT.parent/'hoep-budget-allocation-t50-cuda8-20261023'
     if (allocation/'manifest.json').exists() and (allocation/'status.json').exists():
         roots.append(allocation)
+    controls=ROOT.parent/'hoep-t50-confirmation-controls-cuda8-20261023'
+    if (controls/'manifest.json').exists() and (controls/'status.json').exists():
+        roots.append(controls)
+    average=ROOT.parent/'hoep-operator-average-t50-cuda8-20261023'
+    if (average/'manifest.json').exists() and (average/'status.json').exists():
+        roots.append(average)
     progress=[];curves={};groups={};entries=[]
     for root in roots:
         manifest=json.loads((root/'manifest.json').read_text())

@@ -33,10 +33,6 @@
     "a_gain10": "Task1+ projected A gradient x10; B/head/scales retain original SGD learning rate",
     "a_gain100": "Task1+ projected A gradient x100; B/head/scales retain original SGD learning rate"
   },
-  "formula": "after HOEP projection g <- k*(g+wd*A)-wd*A; under the existing SGD this scales A tangent steps while preserving radial weight-decay cancellation",
-  "references": [
-    "https://proceedings.mlr.press/v235/hayou24a.html"
-  ],
   "jobs": [
     {
       "name": "cub_seed1_t50_control_smoke_20261023",
